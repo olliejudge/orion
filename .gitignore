@@ -1,0 +1,21 @@
+# Build output
+/bin/
+/dist/
+/web/dist/
+/coverage/
+*.out
+
+# Dependencies
+node_modules/
+
+# Local tooling / agent scratch
+.superpowers/
+.playwright-mcp/
+.claude/worktrees/
+.claude/settings.local.json
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
