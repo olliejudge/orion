@@ -70,6 +70,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fs.Usage()
 		return 2
 	}
+	if *port < 0 || *port > server.MaxPort {
+		fmt.Fprintf(stderr, "orion: invalid --port %d: must be 1-%d\n", *port, server.MaxPort)
+		return 2
+	}
 	path := "."
 	if len(positional) == 1 {
 		path = positional[0]

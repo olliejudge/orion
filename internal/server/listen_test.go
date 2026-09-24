@@ -2,6 +2,7 @@ package server
 
 import (
 	"net"
+	"strings"
 	"testing"
 )
 
@@ -33,5 +34,18 @@ func TestListenFallsBackToNextPort(t *testing.T) {
 	got := ln.Addr().(*net.TCPAddr).Port
 	if got <= taken || got > taken+20 {
 		t.Fatalf("port = %d, want in (%d, %d]", got, taken, taken+20)
+	}
+}
+
+func TestListenRejectsOutOfRangePort(t *testing.T) {
+	for _, port := range []int{-1, 65536} {
+		ln, err := listen(port)
+		if err == nil {
+			_ = ln.Close()
+			t.Fatalf("listen(%d) succeeded on %v, want error", port, ln.Addr())
+		}
+		if strings.Contains(err.Error(), "%!") {
+			t.Fatalf("listen(%d) error is misformatted: %q", port, err)
+		}
 	}
 }

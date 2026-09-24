@@ -565,3 +565,21 @@ func readJSON(t *testing.T, c *websocket.Conn, v any) {
 		t.Fatal(err)
 	}
 }
+
+func TestRunRejectsOutOfRangePort(t *testing.T) {
+	for _, port := range []string{"-1", "65536", "99999"} {
+		t.Run(port, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := run([]string{"--no-open", "--port", port, t.TempDir()}, &stdout, &stderr); code != 2 {
+				t.Fatalf("exit code = %d, want 2", code)
+			}
+			msg := stderr.String()
+			if !strings.HasPrefix(msg, "orion: ") || !strings.Contains(msg, "--port") || strings.Count(msg, "\n") != 1 {
+				t.Fatalf("stderr = %q, want one line naming --port", msg)
+			}
+			if stdout.Len() != 0 {
+				t.Fatalf("stdout = %q, want nothing", stdout.String())
+			}
+		})
+	}
+}
