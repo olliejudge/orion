@@ -26,12 +26,14 @@ function packedFor(state: RepoState, width: number, height: number): PackedTree 
  * camera `scale` (1 = whole repo fits). Culling thresholds are on-screen
  * pixels, so they are divided by the scale. `pad` keeps the root circle that
  * far inside the viewport (room for the floating panels); the root stays
- * centred on the viewport so the identity camera still fits it.
+ * centred on the viewport so the identity camera still fits it. `linger`
+ * paths (e.g. files shimmering after a merge) are kept like touched files,
+ * so a merge never reads as a deletion at low zoom.
  */
-export function computeFrame(state: RepoState, width: number, height: number, scale: number, pad = 0): Frame {
+export function computeFrame(state: RepoState, width: number, height: number, scale: number, pad = 0, linger?: ReadonlySet<string>): Frame {
   const k = Math.max(scale, 1e-6);
   const p = Math.max(0, Math.min(pad, width / 4, height / 4));
   const packed = packedFor(state, width - 2 * p, height - 2 * p);
-  const layout = cullLayout(packed, { minFileR: MIN_FILE_R / k, minDirR: MIN_DIR_R / k }, p, p);
+  const layout = cullLayout(packed, { minFileR: MIN_FILE_R / k, minDirR: MIN_DIR_R / k, keep: linger }, p, p);
   return { layout, visuals: encodeAll(state, layout) };
 }

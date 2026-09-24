@@ -53,4 +53,11 @@ describe("computeFrame", () => {
     const root = computeFrame(makeState(files), 100, 100, 1, 500).layout.get("")!;
     expect(root.r).toBeGreaterThan(20);
   });
+
+  it("keeps lingering paths (just merged, shimmering) in the cull like touched files", () => {
+    const f = computeFrame(makeState(files), 400, 400, 1, 0, new Set(["tiny.txt", "not/in/tree.ts"]));
+    expect(f.layout.get("tiny.txt")!.r).toBeGreaterThanOrEqual(1.5);
+    expect(f.visuals.get("tiny.txt")!.touches).toEqual([]);
+    expect(f.layout.has("not/in/tree.ts")).toBe(false);
+  });
 });

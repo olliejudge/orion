@@ -1,6 +1,7 @@
 import { CanvasSource, Texture } from "pixi.js";
 import { lighten, type ExtColor } from "../colors";
 import { arcLetterAngles, fitLabel } from "./geometry";
+import { LABEL_FONT_PX, LABEL_MAX_SPAN } from "./labels";
 
 const TEX_PX = 256; // crisp up to ~256px-wide bubbles when zoomed in
 
@@ -104,27 +105,37 @@ export interface ArcLabel {
   originY: number;
 }
 
-const LABEL_FONT_PX = 11;
-const LABEL_MAX_SPAN = Math.PI * 0.8;
+const LABEL_FONT = `500 ${LABEL_FONT_PX}px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif`;
+let probe: CanvasRenderingContext2D | null = null;
+
+function glyphWidths(chars: string[]): { widths: number[]; ellipsis: number } {
+  probe ??= makeCanvas(1, 1).ctx;
+  probe.font = LABEL_FONT;
+  const p = probe;
+  return { widths: chars.map((ch) => p.measureText(ch).width + 0.4), ellipsis: p.measureText("…").width };
+}
+
+/** Width in CSS px of a label's text as renderArcLabel sets it (before any truncation). */
+export function labelWidth(text: string): number {
+  return glyphWidths([...text]).widths.reduce((a, b) => a + b, 0);
+}
 
 /**
- * A folder name set along the top arc of a circle of `screenR` CSS px.
+ * A folder name set along the top of a circle, with the text's centre line at
+ * `textR` CSS px from the circle centre (the renderer puts it on the rim, and
+ * breaks the folder outline behind it).
  *
  * Pixi has no text-on-path, so each glyph is measured and drawn individually
  * into a 2D canvas, rotated to its angle from arcLetterAngles(); the canvas is
  * cropped to the glyphs' bounding box and uploaded once as a texture. The
- * renderer caches one texture per folder and re-renders only when the folder's
- * on-screen radius changes bucket while the camera is at rest.
+ * renderer caches one texture per folder and re-renders only when the text
+ * radius changes bucket while the camera is at rest.
  */
-export function renderArcLabel(text: string, screenR: number, color: string, dpr: number): ArcLabel | null {
-  const font = `500 ${LABEL_FONT_PX}px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif`;
-  const radius = screenR - LABEL_FONT_PX;
+export function renderArcLabel(text: string, textR: number, color: string, dpr: number): ArcLabel | null {
+  const radius = textR;
   if (radius <= LABEL_FONT_PX) return null;
-  const probe = makeCanvas(1, 1).ctx;
-  probe.font = font;
   const chars = [...text];
-  const widths = chars.map((ch) => probe.measureText(ch).width + 0.4);
-  const ellipsis = probe.measureText("…").width;
+  const { widths, ellipsis } = glyphWidths(chars);
   const keep = fitLabel(widths, radius, LABEL_MAX_SPAN, ellipsis);
   if (keep === 0) return null;
   const glyphs = keep < chars.length ? [...chars.slice(0, keep), "…"] : chars;
@@ -140,11 +151,12 @@ export function renderArcLabel(text: string, screenR: number, color: string, dpr
 
   const { canvas, ctx } = makeCanvas((maxX - minX) * dpr, (maxY - minY) * dpr);
   ctx.scale(dpr, dpr);
-  ctx.font = font;
+  ctx.font = LABEL_FONT;
   ctx.fillStyle = color;
-  // A soft dark shadow keeps names legible where they cross bright bubbles.
-  ctx.shadowColor = "rgba(0,0,0,0.6)";
-  ctx.shadowBlur = 3 * dpr;
+  // A faint, wide shadow: invisible on the dark background, it only lifts a
+  // name off a bright bubble where a pushed-in label crosses one.
+  ctx.shadowColor = "rgba(0,0,0,0.3)";
+  ctx.shadowBlur = 4 * dpr;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   glyphs.forEach((ch, i) => {

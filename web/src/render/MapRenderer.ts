@@ -1,12 +1,11 @@
-import { Application, Container, Graphics, Sprite, type FillInput, type Texture } from "pixi.js";
+import { Application, Container, Graphics, Sprite, type Texture } from "pixi.js";
 import { colorForExt, hexToNumber, lighten, worktreeColor } from "../colors";
 import type { NodeVisual, Touch } from "../layout/encoding";
 import type { Circle } from "../layout/pack";
 import type { WorktreeId } from "../protocol";
 import type { Change } from "../store";
+import { RING_GAP_PX, RING_W_PX, WHOLE, clipFor, dashed, disk, outline, solidArc, type Clip } from "./draw";
 import {
-  clipArc,
-  dashArcs,
   fitCamera,
   labelNames,
   pick,
@@ -16,23 +15,21 @@ import {
   zoomPath,
   type Camera,
   type Rect,
-  type RimView,
 } from "./geometry";
 import { Scene, type SceneNode } from "./scene";
-import { HALO_RING_FRAC, TextureBank, renderArcLabel } from "./sprites";
+import { labelSpan, placeLabels, type LabelCandidate, type LabelSpot, LABEL_LINE_PX } from "./labels";
+import { HALO_RING_FRAC, TextureBank, labelWidth, renderArcLabel } from "./sprites";
 import { SETTLE_EPS, SPRING_OMEGA, isSettled, makeSpring, retarget, stepSpring, type Spring } from "./springs";
 
 export type Theme = "vision" | "night";
 
 const NIGHT_IDLE = 0x3a3a44;
 const LABEL_MIN_R = 48; // on-screen px before a folder gets its name
-const LABEL_FADE_PX = 16;
+const LABEL_FADE_MS = 200; // labels fade in over time once placed at rest
+const LABEL_GAP_PAD_PX = 4; // outline clearance either side of a rim label
 const ISOLATE_DIM = 0.15;
-const RING_GAP_PX = 2.5; // ring sits this far outside the bubble, on screen
-const RING_W_PX = 1.5;
 const HALO_PX = 5; // halo peak this far outside the bubble, on screen
 const SPLIT_GAP_PX = 3;
-const MAX_DASHES = 4000; // per ring; a safety net, the visible-arc clip keeps real counts far lower
 const LOGK_EPS = 1e-4; // camera scale settles within 0.01%
 
 /** Settle epsilon for world-space springs at zoom k: half a screen pixel, or SETTLE_EPS if k is unusable. */
@@ -51,7 +48,8 @@ interface View {
   gKey: string;
   label: Sprite | null;
   labelKey: string;
-  labelR: number; // on-screen radius the label was rendered for
+  labelR: number; // on-screen text radius the label was rendered for
+  labelShownAt: number | null; // when the label last appeared (for its fade-in)
 }
 
 /**
@@ -66,15 +64,6 @@ interface CameraAnim {
   path: ((k: number) => { cx: number; cy: number }) | null;
 }
 
-/** Which part of a huge circle to draw: its fill, and its rim (outline and rings). */
-interface Clip {
-  fill: RimView;
-  stroke: RimView;
-  key: string;
-}
-
-const WHOLE: Clip = { fill: { kind: "full" }, stroke: { kind: "full" }, key: "" };
-
 interface FrameCtx {
   bank: TextureBank;
   k: number;
@@ -84,6 +73,7 @@ interface FrameCtx {
   big: number; // circles larger than this on screen are clipped to the viewport
   now: number;
   camBusy: boolean;
+  spots: Map<string, LabelSpot>; // label placements (from the last frame at rest while the camera moves)
 }
 
 /**
@@ -114,6 +104,9 @@ export class MapRenderer {
   #views = new Map<string, View>();
   #layout = new Map<string, Circle>();
   #labels = new Map<string, string>();
+  #labelWidths = new Map<string, number>();
+  #spots = new Map<string, LabelSpot>();
+  #labelsFading = false;
 
   #theme: Theme = "vision";
   #isolated: WorktreeId | null = null;
@@ -334,7 +327,10 @@ export class MapRenderer {
       big: Math.max(width, height),
       now,
       camBusy,
+      spots: this.#spots,
     };
+    if (!camBusy) f.spots = this.#spots = this.#placeLabels(f);
+    this.#labelsFading = false;
     for (const n of this.#scene.nodes.values()) this.#draw(n, f);
     for (const [path, v] of this.#views) {
       if (!this.#scene.nodes.has(path)) this.#dropView(path, v);
@@ -342,7 +338,7 @@ export class MapRenderer {
     this.#drawHighlight(f);
 
     // Stop the ticker once idle so an ambient dashboard costs ~0 GPU.
-    if (camBusy || sceneBusy) this.#idleFrames = 0;
+    if (camBusy || sceneBusy || this.#labelsFading) this.#idleFrames = 0;
     else if (++this.#idleFrames > 2) app.ticker.stop();
   }
 
@@ -368,7 +364,7 @@ export class MapRenderer {
     }
     root.addChild(g);
     (n.isDir ? this.#dirLayer : this.#fileLayer).addChild(root);
-    v = { kind, root, body, halo, flash: null, g, gKey: "", label: null, labelKey: "", labelR: 0 };
+    v = { kind, root, body, halo, flash: null, g, gKey: "", label: null, labelKey: "", labelR: 0, labelShownAt: null };
     this.#views.set(n.path, v);
     return v;
   }
@@ -397,7 +393,7 @@ export class MapRenderer {
     if (R < 0.3 || rimView(sx, sy, reach, f.rect).kind === "hidden") {
       if (existing) {
         existing.root.visible = false;
-        if (existing.label) existing.label.visible = false;
+        this.#hideLabel(existing);
       }
       return;
     }
@@ -450,87 +446,34 @@ export class MapRenderer {
       }
     }
 
+    // The label first: a name on the rim breaks the folder outline behind it.
+    const gap = plainDir ? this.#drawLabel(v, n, R, sx, sy, f) : 0;
+
     // Vector parts, redrawn only when their inputs change.
-    const clip = R > f.big ? this.#clip(sx, sy, R, f.rect) : WHOLE;
+    const clip = R > f.big ? clipFor(sx, sy, R, f.rect) : WHOLE;
     const sig = vis.touches.map((t) => `${t.worktree}:${t.colorIndex}:${t.stage}:${t.kind}`).join(",");
-    const gKey = `${Math.round(R * 2)}|${clip.key}|${this.#styleGen}|${sig}|${vis.ghost}|${vis.deleted}|${n.aggregate ?? -1}`;
+    const gKey = `${Math.round(R * 2)}|${clip.key}|${this.#styleGen}|${sig}|${vis.ghost}|${vis.deleted}|${n.aggregate ?? -1}|${gap.toFixed(3)}`;
     if (gKey !== v.gKey) {
       v.gKey = gKey;
       v.g.clear();
-      if (n.isDir) this.#drawDir(v.g, n, R, clip, sx, sy, f);
+      if (n.isDir) this.#drawDir(v.g, n, R, clip, sx, sy, f, gap);
       else this.#drawFileRings(v.g, vis, R, clip);
     }
 
     this.#drawShimmer(v, n, R, f);
-    this.#drawLabel(v, n, R, sx, sy, f.camBusy);
   }
 
-  /** Viewport clipping for a circle much larger than the screen. */
-  #clip(sx: number, sy: number, R: number, rect: Rect): Clip {
-    const fill = rimView(sx, sy, R, rect);
-    const stroke = rimView(sx, sy, R + RING_GAP_PX + RING_W_PX, rect);
-    const part = (v: RimView): string =>
-      v.kind === "arc" ? `${v.a0.toFixed(4)},${v.a1.toFixed(4)}` : v.kind === "covers" ? `${Math.round(sx)},${Math.round(sy)}` : v.kind;
-    return { fill, stroke, key: `${part(fill)}/${part(stroke)}` };
-  }
-
-  /** Fills the circle of radius R at the origin, or just its part on screen. */
-  #disk(g: Graphics, R: number, clip: Clip, sx: number, sy: number, rect: Rect, style: FillInput): void {
-    const v = clip.fill;
-    if (v.kind === "hidden") return;
-    if (v.kind === "covers") g.rect(rect.x0 - sx, rect.y0 - sy, rect.x1 - rect.x0, rect.y1 - rect.y0).fill(style);
-    else if (v.kind === "arc") g.moveTo(0, 0).arc(0, 0, R, v.a0, v.a1).closePath().fill(style);
-    else g.circle(0, 0, R).fill(style);
-  }
-
-  /** The parts of the arc a0..a1 (radius R) that can be on screen. */
-  #visibleParts(a0: number, a1: number, clip: Clip): [number, number][] {
-    const v = clip.stroke;
-    if (v.kind === "arc") return clipArc(a0, a1, v);
-    return v.kind === "full" ? [[a0, a1]] : [];
-  }
-
-  /** A solid outline of radius R (whole circle, or its visible arc). */
-  #outline(g: Graphics, R: number, clip: Clip, color: number, alpha: number, width: number): void {
-    if (clip.stroke.kind === "full") {
-      g.circle(0, 0, R).stroke({ color, alpha, width });
-      return;
-    }
-    this.#solidArc(g, R, -Math.PI / 2, Math.PI * 1.5, clip, color, alpha, width);
-  }
-
-  #solidArc(g: Graphics, R: number, a0: number, a1: number, clip: Clip, color: number, alpha: number, width: number): void {
-    const parts = this.#visibleParts(a0, a1, clip);
-    if (parts.length === 0) return;
-    for (const [s, e] of parts) g.moveTo(Math.cos(s) * R, Math.sin(s) * R).arc(0, 0, R, s, e);
-    g.stroke({ color, alpha, width });
-  }
-
-  /** Dashes of `dashPx` on / `gapPx` off along a0..a1, phase-locked to a0 so clipping never shifts them. */
-  #dashed(g: Graphics, R: number, a0: number, a1: number, clip: Clip, color: number, alpha: number, width: number, dashPx: number, gapPx: number): void {
-    const step = (dashPx + gapPx) / R;
-    let count = 0;
-    for (const [s, e] of this.#visibleParts(a0, a1, clip)) {
-      const start = a0 + Math.floor((s - a0) / step) * step;
-      for (const [ds, de] of dashArcs(R, dashPx, gapPx, start, e)) {
-        if (++count > MAX_DASHES) break;
-        g.moveTo(Math.cos(ds) * R, Math.sin(ds) * R).arc(0, 0, R, ds, de);
-      }
-    }
-    if (count > 0) g.stroke({ color, alpha, width });
-  }
-
-  #drawDir(g: Graphics, n: SceneNode, R: number, clip: Clip, sx: number, sy: number, f: FrameCtx): void {
+  #drawDir(g: Graphics, n: SceneNode, R: number, clip: Clip, sx: number, sy: number, f: FrameCtx, gap: number): void {
     const night = this.#theme === "night";
     if (n.aggregate !== undefined) {
-      this.#disk(g, R, clip, sx, sy, f.rect, { color: 0xffffff, alpha: night ? 0.05 : 0.07 });
-      this.#outline(g, R, clip, 0xffffff, 0.14, 1);
+      disk(g, R, clip, sx, sy, f.rect, { color: 0xffffff, alpha: night ? 0.05 : 0.07 });
+      outline(g, R, clip, 0xffffff, 0.14, 1);
       this.#drawRings(g, R, clip, n.visual.touches);
       return;
     }
     const isRoot = n.depth === 0;
-    if (!night) this.#disk(g, R, clip, sx, sy, f.rect, { color: 0xffffff, alpha: isRoot ? 0.02 : 0.03 });
-    this.#outline(g, R, clip, 0xffffff, night ? (isRoot ? 0.1 : 0.08) : isRoot ? 0.16 : 0.12, 1);
+    if (!night) disk(g, R, clip, sx, sy, f.rect, { color: 0xffffff, alpha: isRoot ? 0.02 : 0.03 });
+    outline(g, R, clip, 0xffffff, night ? (isRoot ? 0.1 : 0.08) : isRoot ? 0.16 : 0.12, 1, gap);
   }
 
   #drawFileRings(g: Graphics, vis: NodeVisual, R: number, clip: Clip): void {
@@ -538,7 +481,7 @@ export class MapRenderer {
     if (vis.deleted && lead) {
       // Faint outline that stays until the deletion reaches base.
       if (clip.fill.kind === "full") g.circle(0, 0, R).fill({ color: 0xffffff, alpha: 0.02 });
-      this.#outline(g, R, clip, hexToNumber(worktreeColor(lead.colorIndex)), 0.45 * this.#touchAlpha(lead), 1);
+      outline(g, R, clip, hexToNumber(worktreeColor(lead.colorIndex)), 0.45 * this.#touchAlpha(lead), 1);
       return;
     }
     if (vis.ghost && lead) {
@@ -547,7 +490,7 @@ export class MapRenderer {
       const color = hexToNumber(worktreeColor(ghostTouch.colorIndex));
       const a = this.#touchAlpha(ghostTouch);
       if (this.#theme === "vision" && clip.fill.kind === "full") g.circle(0, 0, R).fill({ color, alpha: 0.15 * a });
-      this.#dashed(g, R, -Math.PI / 2, Math.PI * 1.5, clip, color, a, 1, 2, 2);
+      dashed(g, R, -Math.PI / 2, Math.PI * 1.5, clip, color, a, 1, 2, 2);
       this.#drawRings(
         g,
         R,
@@ -568,9 +511,9 @@ export class MapRenderer {
       const [a0, a1] = segs[i]!;
       const color = hexToNumber(lighten(worktreeColor(t.colorIndex), 0.25));
       const alpha = this.#touchAlpha(t);
-      if (t.stage === "uncommitted") this.#dashed(g, RR, a0, a1, clip, color, alpha, RING_W_PX, 4, 3);
+      if (t.stage === "uncommitted") dashed(g, RR, a0, a1, clip, color, alpha, RING_W_PX, 4, 3);
       else if (touches.length === 1 && clip.stroke.kind === "full") g.circle(0, 0, RR).stroke({ color, alpha, width: RING_W_PX });
-      else this.#solidArc(g, RR, a0, a1, clip, color, alpha, RING_W_PX);
+      else solidArc(g, RR, a0, a1, clip, color, alpha, RING_W_PX);
     });
   }
 
@@ -590,19 +533,52 @@ export class MapRenderer {
     v.flash.width = v.flash.height = R * 2 * (1 + 0.25 * p);
   }
 
-  #drawLabel(v: View, n: SceneNode, R: number, sx: number, sy: number, camBusy: boolean): void {
-    const name = n.leaving ? undefined : this.#labels.get(n.path);
-    // Hide while the folder is still growing/shrinking so labels never balloon.
-    const nearTarget = Math.abs(n.r.value - n.r.target) <= 0.05 * Math.max(n.r.target, 1e-6);
-    if (name === undefined || R < LABEL_MIN_R || !nearTarget) {
-      if (v.label) v.label.visible = false;
-      return;
+  #labelWidth(name: string): number {
+    let w = this.#labelWidths.get(name);
+    if (w === undefined) this.#labelWidths.set(name, (w = labelWidth(name)));
+    return w;
+  }
+
+  /** At rest: where each visible folder's name goes, with collisions pushed inward or hidden. */
+  #placeLabels(f: FrameCtx): Map<string, LabelSpot> {
+    const cands: LabelCandidate[] = [];
+    for (const n of this.#scene.nodes.values()) {
+      if (!n.isDir || n.aggregate !== undefined || n.leaving) continue;
+      const name = this.#labels.get(n.path);
+      if (name === undefined) continue;
+      // Wait until the folder stops growing/shrinking so labels never balloon.
+      if (Math.abs(n.r.value - n.r.target) > 0.05 * Math.max(n.r.target, 1e-6)) continue;
+      const R = n.r.value * f.k;
+      if (R < LABEL_MIN_R) continue;
+      const pos = this.#scene.drawPosition(n);
+      const x = pos.x * f.k + f.ox;
+      const y = pos.y * f.k + f.oy;
+      const rim = rimView(x, y, R + LABEL_LINE_PX, f.rect);
+      if (rim.kind === "hidden" || rim.kind === "covers") continue;
+      cands.push({ path: n.path, x, y, r: R, width: this.#labelWidth(name) });
     }
+    return placeLabels(cands);
+  }
+
+  #hideLabel(v: View): void {
+    if (v.label) v.label.visible = false;
+    v.labelShownAt = null;
+  }
+
+  /** Draws a folder's name; returns the half-angle to break its outline by (0 if none). */
+  #drawLabel(v: View, n: SceneNode, R: number, sx: number, sy: number, f: FrameCtx): number {
+    const name = this.#labels.get(n.path);
+    const spot = f.spots.get(n.path);
+    if (name === undefined || spot === undefined || n.leaving || R < LABEL_MIN_R) {
+      this.#hideLabel(v);
+      return 0;
+    }
+    const textR = R - spot.inset * LABEL_LINE_PX;
     const dpr = this.#app?.renderer.resolution ?? 1;
-    const key = `${name}|${Math.round(R / 12)}|${this.#theme}`;
-    if (key !== v.labelKey && (!camBusy || !v.label)) {
-      const color = this.#theme === "night" ? "rgba(235,235,245,0.38)" : "rgba(235,235,245,0.62)";
-      const lbl = renderArcLabel(name, R, color, dpr);
+    const key = `${name}|${Math.round(textR / 12)}|${this.#theme}`;
+    if (key !== v.labelKey && (!f.camBusy || !v.label)) {
+      const color = this.#theme === "night" ? "rgba(235,235,245,0.55)" : "rgba(235,235,245,0.78)";
+      const lbl = renderArcLabel(name, textR, color, dpr);
       if (v.label) {
         v.label.texture.destroy(true);
         v.label.destroy();
@@ -614,20 +590,23 @@ export class MapRenderer {
         s.anchor.set(lbl.originX / lbl.texture.width, lbl.originY / lbl.texture.height);
         this.#labelLayer.addChild(s);
         v.label = s;
-        v.labelR = R;
+        v.labelR = textR;
       }
     }
-    if (!v.label) return;
     // Mid-zoom a cached label would balloon or shrink; hide it until it is re-rendered at rest.
-    const ratio = R / v.labelR;
-    if (camBusy && (ratio > 1.15 || ratio < 0.87)) {
-      v.label.visible = false;
-      return;
+    const ratio = textR / v.labelR;
+    if (!v.label || (f.camBusy && (ratio > 1.15 || ratio < 0.87))) {
+      this.#hideLabel(v);
+      return 0;
     }
+    v.labelShownAt ??= f.now;
+    const fade = Math.min(1, (f.now - v.labelShownAt) / LABEL_FADE_MS);
+    if (fade < 1) this.#labelsFading = true;
     v.label.visible = true;
     v.label.position.set(sx, sy);
-    v.label.scale.set(R / v.labelR / dpr);
-    v.label.alpha = Math.min(1, (R - LABEL_MIN_R) / LABEL_FADE_PX) * n.alpha.value;
+    v.label.scale.set(ratio / dpr);
+    v.label.alpha = fade * n.alpha.value;
+    return spot.inset === 0 ? labelSpan(this.#labelWidth(name), textR) / 2 + LABEL_GAP_PAD_PX / textR : 0;
   }
 
   #drawHighlight(f: FrameCtx): void {
