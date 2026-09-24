@@ -93,11 +93,34 @@ func parseNameStatus(out []byte) []Change {
 // unstaged and untracked, with staged renames). Untracked directory entries
 // (trailing "/", i.e. nested repos or nested worktrees) are dropped.
 func Status(ctx context.Context, r Runner, wtDir string) ([]Change, error) {
-	out, err := r.Run(ctx, wtDir, "status", "--porcelain=v2", "-z", "--untracked-files=all")
+	changes, _, err := StatusWithHead(ctx, r, wtDir)
+	return changes, err
+}
+
+// StatusWithHead is Status plus the HEAD commit the changes are relative to
+// ("" when HEAD is unborn). A caller that cached HEAD can tell from it that a
+// commit landed since.
+func StatusWithHead(ctx context.Context, r Runner, wtDir string) ([]Change, string, error) {
+	out, err := r.Run(ctx, wtDir, "status", "--porcelain=v2", "-z", "--untracked-files=all",
+		"--branch", "--no-ahead-behind")
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return parseStatus(out), nil
+	return parseStatus(out), statusHead(out), nil
+}
+
+// statusHead returns the "# branch.oid" header of porcelain v2 --branch
+// output, or "" for an unborn HEAD ("(initial)") or no header.
+func statusHead(out []byte) string {
+	for _, f := range bytes.Split(out, []byte{0}) {
+		if oid, ok := bytes.CutPrefix(f, []byte("# branch.oid ")); ok {
+			if s := string(oid); s != "(initial)" {
+				return s
+			}
+			return ""
+		}
+	}
+	return ""
 }
 
 func parseStatus(out []byte) []Change {

@@ -534,3 +534,23 @@ func TestRunPollsWhenWatcherCannotStart(t *testing.T) {
 		})
 	})
 }
+
+// Without a watcher, worktrees added later are found by polling too.
+func TestRunPollingDiscoversNewWorktrees(t *testing.T) {
+	orig := newWatcher
+	newWatcher = func() (watch.Watcher, error) { return nil, errors.New("too many open files") }
+	t.Cleanup(func() { newWatcher = orig })
+	r := initRepo(t, map[string]string{"README.md": "# demo\n"})
+	e, _ := startEngine(t, r.Path())
+	time.Sleep(debounce + minInterval) // let the startup rescan run first
+	wt := r.WorktreeAdd(filepath.Join(t.TempDir(), "later"), "later")
+	id := wtID(wt.Path())
+	waitFor(t, pollInterval+3*time.Second, func() bool {
+		for _, w := range e.Snapshot().Worktrees {
+			if w.ID == id {
+				return true
+			}
+		}
+		return false
+	})
+}

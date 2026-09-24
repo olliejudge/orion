@@ -277,3 +277,54 @@ func TestFireRoutesWorktreeOnceItsGitFileAppears(t *testing.T) {
 		t.Fatalf("route = %+v, want %+v once .git exists", got, want)
 	}
 }
+
+// A failed status must be retried by the next fire of any key, not only by
+// the next event on that worktree (spec §8).
+func TestFireRetriesFailedStatusOnAnyFire(t *testing.T) {
+	r := initRepo(t, map[string]string{"README.md": "# demo\n"})
+	e, ch := openEngine(t, r.Path())
+	id := wtID(r.Path())
+
+	r.Write("late.txt", "l\n")
+	e.r = gitx.Runner{Git: failingGit(t, "status")}
+	e.fire(context.Background(), string(id), ReasonFiles)
+	noPatch(t, ch)
+
+	e.r = gitx.Runner{}
+	e.fire(context.Background(), keyWorktrees, ReasonWorktrees) // an unrelated fire
+	if c, ok := findUpsert(nextPatch(t, ch), id, "late.txt"); !ok || c.Stage != model.Uncommitted {
+		t.Fatalf("late.txt = %+v (found %v), want uncommitted once git works again", c, ok)
+	}
+}
+
+// A commit can land between a worktree's last HEAD read and a files-only
+// status: status no longer lists the committed files, and publishing that
+// against the old HEAD would briefly drop them. The same fire must pick up
+// the new HEAD and move them to committed in one patch.
+func TestFireFilesSeesHeadMovedByStatus(t *testing.T) {
+	r := initRepo(t, map[string]string{"README.md": "# demo\n"})
+	wt := r.WorktreeAdd(filepath.Join(t.TempDir(), "feature"), "feature")
+	wt.Write("f.txt", "f\n")
+	e, ch := openEngine(t, r.Path())
+	id := wtID(wt.Path())
+	if c, ok := snapEntry(e, id, "f.txt"); !ok || c.Stage != model.Uncommitted {
+		t.Fatalf("f.txt = %+v (found %v), want uncommitted", c, ok)
+	}
+
+	wt.Add("f.txt")
+	sha := wt.Commit("add f") // no ref event reaches the engine
+	e.fire(context.Background(), string(id), ReasonFiles)
+	p := nextPatch(t, ch)
+	if c, ok := findUpsert(p, id, "f.txt"); !ok || c.Stage != model.Committed {
+		t.Fatalf("f.txt = %+v (found %v), want committed in the same patch", c, ok)
+	}
+	if rm := p.Overlays[id].Remove; len(rm) != 0 {
+		t.Fatalf("overlay remove = %v, want none", rm)
+	}
+	for _, w := range e.Snapshot().Worktrees {
+		if w.ID == id && (w.Head != sha || w.HeadSubject != "add f") {
+			t.Fatalf("worktree = %+v, want head %s with its subject", w, sha)
+		}
+	}
+	noPatch(t, ch)
+}

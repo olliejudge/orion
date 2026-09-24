@@ -40,9 +40,15 @@ func (e *Engine) fire(ctx context.Context, key string, r Reason) {
 			err = e.recomputeRefs(ctx, false)
 		}
 		// Status does not depend on base: run it even when the refs failed.
-		err = errors.Join(err, e.recomputeUncommitted(ctx, id))
+		moved, uerr := e.recomputeUncommitted(ctx, id)
+		err = errors.Join(err, uerr)
+		if moved {
+			// A commit landed without a ref event yet: pick up the new HEAD
+			// now, so this patch moves its files from uncommitted to committed.
+			err = errors.Join(err, e.recomputeRefs(ctx, false))
+		}
 	}
-	e.refreshAll(ctx)
+	err = errors.Join(err, e.refreshAllSynced(ctx))
 	if err != nil {
 		e.logf(ctx, "recompute %s: %v", key, err)
 	}
@@ -75,13 +81,15 @@ func (e *Engine) recomputeRefs(ctx context.Context, full bool) error {
 	return e.syncWorktrees(ctx, full)
 }
 
-func (e *Engine) recomputeUncommitted(ctx context.Context, id model.WorktreeID) error {
+// recomputeUncommitted reruns id's status and reports whether it saw a HEAD
+// other than the cached one.
+func (e *Engine) recomputeUncommitted(ctx context.Context, id model.WorktreeID) (bool, error) {
 	ws, ok := e.wts[id]
 	if !ok {
-		return nil
+		return false, nil
 	}
 	if _, err := os.Stat(ws.g.Path); err != nil {
-		return e.syncWorktrees(ctx, false) // directory gone: git now reports it prunable
+		return false, e.syncWorktrees(ctx, false) // directory gone: git now reports it prunable
 	}
 	return e.refreshStatus(ctx, ws)
 }

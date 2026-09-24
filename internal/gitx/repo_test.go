@@ -276,3 +276,16 @@ func TestMainWorktreeOfSeparateGitDir(t *testing.T) {
 		t.Errorf("ListWorktrees from a linked worktree of a separate-git-dir repo = %+v, want error", wts)
 	}
 }
+
+// A ref that is also a file name must not make `git log` ambiguous.
+func TestCommitSubjectRefNamedLikeFile(t *testing.T) {
+	r := testrepo.New(t)
+	r.Write("feature", "a file named like the branch")
+	r.Add()
+	r.Commit("base")
+	r.Branch("feature")
+	subj, err := CommitSubject(ctx, Runner{}, r.Path(), "feature")
+	if err != nil || subj != "base" {
+		t.Fatalf("CommitSubject = %q, %v; want base", subj, err)
+	}
+}

@@ -356,3 +356,25 @@ func TestPairMovesWithRealPlainMv(t *testing.T) {
 		{Path: "handbook/guide.md", From: "docs/guide.md", Kind: Renamed},
 	})
 }
+
+func TestStatusWithHead(t *testing.T) {
+	r := testrepo.New(t)
+	r.Write("a.txt", "a")
+	_, head, err := StatusWithHead(ctx, Runner{}, r.Path())
+	if err != nil || head != "" {
+		t.Fatalf("unborn: head = %q, %v; want \"\"", head, err)
+	}
+	r.Add("a.txt")
+	sha := r.Commit("base")
+	r.Write("b.txt", "b")
+	got, head, err := StatusWithHead(ctx, Runner{}, r.Path())
+	if err != nil || head != sha {
+		t.Fatalf("head = %q, %v; want %s", head, err, sha)
+	}
+	assertChanges(t, got, []Change{{Path: "b.txt", Kind: Added}})
+
+	r.Git("checkout", "--quiet", "--detach")
+	if _, head, err := StatusWithHead(ctx, Runner{}, r.Path()); err != nil || head != sha {
+		t.Fatalf("detached: head = %q, %v; want %s", head, err, sha)
+	}
+}

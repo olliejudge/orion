@@ -17,6 +17,7 @@ import (
 	"syscall"
 
 	"github.com/olliejudge/orion/internal/gitx"
+	"github.com/olliejudge/orion/internal/procgroup"
 	"github.com/olliejudge/orion/internal/repo"
 	"github.com/olliejudge/orion/internal/server"
 	"github.com/olliejudge/orion/internal/version"
@@ -151,6 +152,20 @@ func firstLine(err error) string {
 // openBrowser opens url with the platform's opener, without waiting for it.
 // Tests replace it.
 var openBrowser = func(url string) error {
+	cmd, err := browserCommand(url)
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() { _ = cmd.Wait() }()
+	return nil
+}
+
+// browserCommand builds the platform's opener for url, in its own process
+// group so a Ctrl-C at orion's terminal does not reach it.
+func browserCommand(url string) (*exec.Cmd, error) {
 	var name string
 	switch runtime.GOOS {
 	case "darwin":
@@ -158,12 +173,9 @@ var openBrowser = func(url string) error {
 	case "linux":
 		name = "xdg-open"
 	default:
-		return fmt.Errorf("unsupported platform %s", runtime.GOOS)
+		return nil, fmt.Errorf("unsupported platform %s", runtime.GOOS)
 	}
 	cmd := exec.Command(name, url)
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	go func() { _ = cmd.Wait() }()
-	return nil
+	procgroup.Isolate(cmd)
+	return cmd, nil
 }
