@@ -1,0 +1,41 @@
+{
+  "name": "orion-web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint . && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings"
+  },
+  "dependencies": {
+    "d3-hierarchy": "3.1.2",
+    "pixi.js": "8.21.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@sveltejs/vite-plugin-svelte": "7.3.0",
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/svelte": "5.4.2",
+    "@testing-library/user-event": "14.6.7",
+    "@tsconfig/svelte": "5.0.8",
+    "@types/d3-hierarchy": "3.1.7",
+    "@types/node": "24.13.6",
+    "eslint": "10.11.0",
+    "eslint-plugin-svelte": "3.23.0",
+    "globals": "17.12.0",
+    "jsdom": "30.1.1",
+    "svelte": "5.57.1",
+    "svelte-check": "4.7.6",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.70.1",
+    "vite": "8.3.0",
+    "vitest": "5.0.1"
+  }
+}
