@@ -89,7 +89,7 @@ Options: `--dir DIR`, `--agents N` (1–8), `--seed N`, `--speed X`, and `--once
 
 ## Building from source
 
-You need Go 1.27, Node 24 or newer, pnpm and git.
+You need Go 1.27, Node 22.12 or newer (CI uses Node 24), pnpm and git.
 
 ```sh
 make build   # builds the web UI into internal/webassets/static, then bin/orion

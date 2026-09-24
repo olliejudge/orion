@@ -1,7 +1,19 @@
 # Orion — Design Spec
 
 Date: 2026-09-23
-Status: Draft for review
+Status: Implemented (Phase 1)
+
+## As shipped (Phase 1)
+
+Phase 1 shipped as specified below, except for these deviations:
+
+- **`--dev` flag (§7).** `orion` also takes `--dev`, which serves no embedded assets so that `make dev` can put Vite's dev server in front of it.
+- **Embed folder (§10).** `internal/webassets/static/` holds only `.gitkeep`; instead of a committed placeholder `index.html`, the binary embeds a fallback page that is served when no web build is present, so `go build` and `go test` still work without Node.
+- **Release build (§10).** The web assets are built in a release workflow step, and GoReleaser runs with `--skip=before` rather than building them in a before-hook.
+- **Homebrew (§10).** GoReleaser publishes a Homebrew **cask** rather than a formula, since its `brews` section is deprecated. The install command is unchanged.
+- **Auth cookie (§7).** The cookie is named per port, `orion_t_<port>`, so orion instances on different ports do not overwrite each other's cookies.
+- **Worktree colours (§6).** A removed worktree frees its colour index, and a new worktree can reuse it.
+- **Real-repo polish (Task 16, after the plan's tasks).** A pass against real repos added, among other tweaks, a muted file-type palette for the Vision theme.
 
 ## 1. Intent
 

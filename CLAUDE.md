@@ -1,6 +1,6 @@
 # Orion
 
-Single Go binary that serves a live, animated bubble map of a git repo (all worktrees) in the browser. Frontend is TypeScript + PixiJS, built with Vite and embedded via `go:embed`. Released with GoReleaser to a Homebrew tap.
+Single Go binary that serves a live, animated bubble map of a git repo (all worktrees) in the browser. Frontend is TypeScript + Svelte 5 + PixiJS, built with Vite and embedded via `go:embed`. Released with GoReleaser to a Homebrew tap.
 
 Design spec: `docs/superpowers/specs/`. Implementation plans: `docs/superpowers/plans/`.
 
@@ -21,11 +21,15 @@ This repo is public. Repos we test against locally may be private: never copy th
 
 ## Commands
 
-- `make build`: build the web UI (when `web/` exists) into `internal/webassets/static/`, then `bin/orion`.
-- `make test`: `go test ./...` (plus `pnpm -C web test` once `web/` exists).
-- `make lint`: `go vet ./...` + `golangci-lint run` (plus `pnpm -C web lint` once `web/` exists).
-- `make web`: build `web/` only; it is skipped with a message while `web/` does not exist.
-- `make dev`: the Go server with `--dev` on port 7070 (it exits if 7070 is taken, since Vite proxies `/ws` there), plus Vite's dev server (needs `web/`). Use `REPO=/path/to/repo make dev` to map another repo. Open the `dev UI (Vite)` URL it prints; Ctrl-C stops both, and Vite also stops if the Go server exits.
+- `make build`: build the web UI into `internal/webassets/static/`, then `bin/orion`.
+- `make test`: `go test ./...` plus `pnpm -C web test`.
+- `make lint`: `go vet ./...` + `golangci-lint run` plus `pnpm -C web lint`.
+- `make web`: build `web/` only.
+- `make dev`: the Go server with `--dev` on port 7070 (it exits if 7070 is taken, since Vite proxies `/ws` there), plus Vite's dev server. Use `REPO=/path/to/repo make dev` to map another repo. Open the `dev UI (Vite)` URL it prints; Ctrl-C stops both, and Vite also stops if the Go server exits.
+- `make build && pnpm -C web e2e`: Playwright smoke test against `bin/orion` serving the synthetic demo repo (first time: `pnpm -C web exec playwright install chromium`).
 - One package or test: `go test ./internal/gitx -run TestStatus -v`.
-- What CI runs: `go vet ./... && golangci-lint run && go test -race -count=1 ./...` on macOS and Linux.
-- Toolchain: Go 1.27, git ≥ 2.30, golangci-lint v2.13.2 (`brew install golangci-lint` or `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2`), and pnpm 12 + Node 24 for `web/`.
+- What CI runs (all four jobs are required checks on `main`):
+  - `go (ubuntu-latest)` / `go (macos-latest)`: `go vet ./...`, `golangci-lint run`, `go test -race -count=1 ./...`.
+  - `web`: `pnpm -C web lint`, `pnpm -C web test`, `pnpm -C web build`.
+  - `e2e (Playwright, macOS)`: `make build`, then `pnpm -C web e2e` against the synthetic demo repo.
+- Toolchain: Go 1.27, git ≥ 2.30, golangci-lint v2.13.2 (`brew install golangci-lint` or `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2`), and pnpm 12 + Node ≥ 22.12 (CI uses Node 24) for `web/`.
