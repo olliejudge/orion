@@ -5,6 +5,8 @@ version: 2
 
 project_name: orion
 
+# For local snapshots. The release workflow builds web/ in its own step, with
+# no secrets in the environment, and runs GoReleaser with --skip=before.
 before:
   hooks:
     - pnpm -C web install --frozen-lockfile

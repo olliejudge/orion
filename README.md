@@ -14,7 +14,7 @@ macOS and Linux, with `git` 2.30 or newer:
 brew install olliejudge/tap/orion
 ```
 
-You can also download a tarball for your platform from the [releases page](https://github.com/olliejudge/orion/releases), unpack it and put `orion` on your `PATH`.
+You can also download a tarball for your platform from the [releases page](https://github.com/olliejudge/orion/releases), unpack it and put `orion` on your `PATH`. The binary isn't notarized, so on macOS clear the download quarantine first: `xattr -d com.apple.quarantine ./orion`.
 
 ## Usage
 
@@ -106,7 +106,7 @@ make dev     # Vite dev server with hot reload, proxied to `orion --dev`
 
 Push a `vX.Y.Z` tag. The release workflow runs GoReleaser on macOS, publishes the GitHub release, and updates the cask in [olliejudge/homebrew-tap](https://github.com/olliejudge/homebrew-tap).
 
-This needs a one-time setup: the public `olliejudge/homebrew-tap` repo, and a fine-grained token with Contents read/write access to it, stored as the `HOMEBREW_TAP_GITHUB_TOKEN` secret on this repo. To try a release locally without publishing anything, run `goreleaser release --snapshot --clean`; the output lands in `dist/`.
+This needs a one-time setup: the public `olliejudge/homebrew-tap` repo, and a fine-grained token with Contents read/write access to it, stored as the `HOMEBREW_TAP_GITHUB_TOKEN` secret on this repo. Without it, the workflow stops before publishing a stable tag; prerelease tags such as `v1.2.3-rc.1` don't update the tap. To try a release locally without publishing anything, run `goreleaser release --snapshot --clean`; the output lands in `dist/`.
 
 ## License
 
