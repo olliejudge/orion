@@ -59,6 +59,10 @@ func TestRouterGitDir(t *testing.T) {
 		{"/r/.git/refs/remotes/origin/main", Route{RefsEvent, ""}},
 		{"/r/.git/refs", Route{RefsEvent, ""}},
 		{"/r/.git/packed-refs", Route{RefsEvent, ""}},
+		{"/r/.git/reftable", Route{RefsEvent, ""}},
+		{"/r/.git/reftable/tables.list", Route{RefsEvent, ""}},
+		{"/r/.git/reftable/0x000000000001-0x000000000002-1a2b3c4d.ref", Route{RefsEvent, ""}},
+		{"/r/.git/reftables", Route{Ignore, ""}},
 		// linked worktree admin dirs
 		{"/r/.git/worktrees/agent/HEAD", Route{WorktreeRefEvent, "nested"}},
 		{"/r/.git/worktrees/agent/index", Route{WorktreeRefEvent, "nested"}},

@@ -260,6 +260,24 @@ func TestActivity(t *testing.T) {
 			want: []Activity{{Worktree: agentID, Kind: "merge", Sha: "b2", Files: 2}},
 		},
 		{
+			// No remote: base is local main, so committing in the main
+			// worktree advances the base itself. That is a commit, not a merge.
+			name: "a commit in the base branch's own worktree is a commit",
+			prev: st("h1", nil, []Worktree{mainWT, agentWT}, overlays{mainID: entries(
+				unc("a.go", Modified, 1), unc("b.go", Added, 2), unc("wip.go", Added, 3))}),
+			next: st("h2", map[string]int64{"a.go": 1, "b.go": 2}, []Worktree{withHead(mainWT, "h2", "fix: tidy"), agentWT},
+				overlays{mainID: entries(unc("wip.go", Added, 3))}),
+			want: []Activity{{Worktree: mainID, Kind: "commit", Sha: "h2", Subject: "fix: tidy", Files: 2}},
+		},
+		{
+			name: "merging a branch in the base branch's worktree is a merge for the branch",
+			prev: st("h1", nil, []Worktree{mainWT, agentH2}, overlays{agentID: entries(
+				com("a.go", Modified, 1), com("b.go", Added, 2))}),
+			next: st("h3", map[string]int64{"a.go": 1, "b.go": 2},
+				[]Worktree{withHead(mainWT, "h3", "Merge branch 'agent-a'"), agentH2}, nil),
+			want: []Activity{{Worktree: agentID, Kind: "merge", Sha: "h3", Files: 2}},
+		},
+		{
 			name: "entries vanishing without a base change are quiet",
 			prev: st("b1", nil, []Worktree{mainWT}, overlays{mainID: entries(unc("tmp.go", Added, 1))}),
 			next: st("b1", nil, []Worktree{mainWT}, nil),

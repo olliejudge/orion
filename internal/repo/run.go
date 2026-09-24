@@ -60,14 +60,26 @@ func (p *pollSet) targets() (bool, map[model.WorktreeID]bool) {
 	return p.all, ids
 }
 
+// noWatcher stands in when no watcher could be created: it never reports
+// anything, and every worktree is polled instead.
+type noWatcher struct{}
+
+func (noWatcher) Events() <-chan watch.Event { return nil }
+func (noWatcher) Errors() <-chan error       { return nil }
+func (noWatcher) Add(string) error           { return nil }
+func (noWatcher) Remove(string) error        { return nil }
+func (noWatcher) Close() error               { return nil }
+
 // Run watches the repo and keeps the model live until ctx is done. Watcher
 // failures never stop it: the affected worktrees are polled instead.
 func (e *Engine) Run(ctx context.Context) error {
+	polls := &pollSet{}
 	w, err := newWatcher()
 	if err != nil {
-		return fmt.Errorf("start watcher: %w", err)
+		// e.g. linux's inotify instance limit (EMFILE)
+		polls.add("", fmt.Errorf("start watcher: %w", err))
+		w = noWatcher{}
 	}
-	polls := &pollSet{}
 	rw := &rootWatch{w: w, polls: polls, roots: map[string]rootState{}}
 	var sched *Scheduler
 	sched = NewScheduler(debounce, minInterval, func(key string, r Reason) {

@@ -122,7 +122,8 @@ func (r *Router) routeGit(rel string) Route {
 			return Route{Class: WorktreeRefEvent, Worktree: id}
 		}
 		return Route{Class: Ignore}
-	case rel == "refs" || strings.HasPrefix(rel, "refs/") || rel == "packed-refs":
+	case rel == "refs" || strings.HasPrefix(rel, "refs/") || rel == "packed-refs",
+		rel == "reftable" || strings.HasPrefix(rel, "reftable/"): // reftable ref storage
 		return Route{Class: RefsEvent}
 	case isStateFile(rel):
 		if r.hasMain {
