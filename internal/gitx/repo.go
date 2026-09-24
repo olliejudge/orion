@@ -169,7 +169,7 @@ func CommitSubject(ctx context.Context, r Runner, dir, sha string) (string, erro
 	if err := refuseOption(sha); err != nil {
 		return "", err
 	}
-	out, err := r.Run(ctx, dir, "log", "-1", "--no-show-signature", "--format=%s", sha)
+	out, err := r.Run(ctx, dir, "log", "-1", "--no-show-signature", "--format=%s", sha, "--")
 	if err != nil {
 		return "", err
 	}
