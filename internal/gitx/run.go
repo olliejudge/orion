@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/olliejudge/orion/internal/procgroup"
 )
 
 // Runner execs git. The zero value runs "git" from PATH.
@@ -26,15 +28,7 @@ func (r Runner) bin() string {
 // Run executes git with args in dir and returns stdout. The error names the
 // command, the directory and git's stderr.
 func (r Runner) Run(ctx context.Context, dir string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, r.bin(), args...)
-	cmd.Dir = dir
-	cmd.Env = append(cleanEnv(os.Environ()),
-		// Never take optional locks (e.g. status refreshing the index): writes
-		// under .git/ would wake our own watcher and loop forever.
-		"GIT_OPTIONAL_LOCKS=0",
-		"GIT_TERMINAL_PROMPT=0",
-		"LC_ALL=C",
-	)
+	cmd := r.command(ctx, dir, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -43,6 +37,23 @@ func (r Runner) Run(ctx context.Context, dir string, args ...string) ([]byte, er
 			strings.Join(args, " "), dir, err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.Bytes(), nil
+}
+
+// command builds the git command Run executes. It runs in its own process
+// group, so a terminal Ctrl-C does not kill it before orion shuts down; ctx
+// cancellation stops it instead.
+func (r Runner) command(ctx context.Context, dir string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, r.bin(), args...)
+	procgroup.Isolate(cmd)
+	cmd.Dir = dir
+	cmd.Env = append(cleanEnv(os.Environ()),
+		// Never take optional locks (e.g. status refreshing the index): writes
+		// under .git/ would wake our own watcher and loop forever.
+		"GIT_OPTIONAL_LOCKS=0",
+		"GIT_TERMINAL_PROMPT=0",
+		"LC_ALL=C",
+	)
+	return cmd
 }
 
 // repoEnv lists the variables that tie git to one repository (what
