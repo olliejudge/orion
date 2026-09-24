@@ -20,7 +20,7 @@ import { Scene, type SceneNode } from "./scene";
 import { labelSpan, placeLabels, type LabelCandidate, type LabelSpot, LABEL_LINE_PX } from "./labels";
 import { HALO_RING_FRAC, TextureBank, labelWidth, renderArcLabel } from "./sprites";
 import { SETTLE_EPS, SPRING_OMEGA, isSettled, makeSpring, retarget, snapSpring, stepSpring, type Spring } from "./springs";
-import { aggregateLook, fileLook, type Rings, type Theme } from "./style";
+import { aggregateLook, fileLook, type AggregateLook, type FileLook, type Rings, type Theme } from "./style";
 
 export type { Theme } from "./style";
 
@@ -111,6 +111,8 @@ export class MapRenderer {
   #isolated: WorktreeId | null = null;
   #highlighted: string | null = null;
   #styleGen = 0;
+  // Looks per visual (the store makes new visuals per patch), recomputed when the theme or isolation changes.
+  #looks = new WeakMap<NodeVisual, { gen: number; look: FileLook | AggregateLook }>();
 
   #zoomPath = "";
   #free: Rect | undefined; // where zoom targets are fitted (see fitCamera)
@@ -393,6 +395,14 @@ export class MapRenderer {
     this.#views.delete(path);
   }
 
+  #look(vis: NodeVisual, aggregate: boolean): FileLook | AggregateLook {
+    const hit = this.#looks.get(vis);
+    if (hit && hit.gen === this.#styleGen) return hit.look;
+    const look = aggregate ? aggregateLook(vis, this.#theme, this.#isolated) : fileLook(vis, this.#theme, this.#isolated);
+    this.#looks.set(vis, { gen: this.#styleGen, look });
+    return look;
+  }
+
   #draw(n: SceneNode, f: FrameCtx): void {
     const pos = this.#scene.drawPosition(n);
     const R = Math.max(0, n.r.value) * f.k;
@@ -416,7 +426,7 @@ export class MapRenderer {
     v.root.alpha = n.alpha.value;
 
     const vis = n.visual;
-    const look = n.isDir ? null : fileLook(vis, this.#theme, this.#isolated);
+    const look = n.isDir ? null : (this.#look(vis, false) as FileLook);
 
     // Body (files): a sphere or flat disc per theme and lifecycle; none for ghosts and deletions.
     if (v.body) {
@@ -434,7 +444,7 @@ export class MapRenderer {
 
     // Halo: live uncommitted work glows in its worktree's colour.
     if (v.halo) {
-      const glow = n.isDir ? aggregateLook(vis, this.#theme, this.#isolated).halo : (look?.halo ?? null);
+      const glow = look ? look.halo : this.#look(vis, true).halo;
       v.halo.visible = glow !== null;
       if (glow) {
         v.halo.width = v.halo.height = ((R + HALO_PX) / HALO_RING_FRAC) * 2;
@@ -463,7 +473,7 @@ export class MapRenderer {
   #drawDir(g: Graphics, n: SceneNode, R: number, clip: Clip, sx: number, sy: number, f: FrameCtx, gap: number): void {
     const night = this.#theme === "night";
     if (n.aggregate !== undefined) {
-      const look = aggregateLook(n.visual, this.#theme, this.#isolated);
+      const look = this.#look(n.visual, true) as AggregateLook;
       disk(g, R, clip, sx, sy, f.rect, look.fill);
       outline(g, R, clip, look.outline.color, look.outline.alpha, 1);
       this.#drawRings(g, R, clip, look.rings);
@@ -475,7 +485,7 @@ export class MapRenderer {
   }
 
   /** A file's outline (ghost: dashed with a faint fill; deleted: faint solid) and its worktree rings. */
-  #drawFileMarks(g: Graphics, look: ReturnType<typeof fileLook>, R: number, clip: Clip): void {
+  #drawFileMarks(g: Graphics, look: FileLook, R: number, clip: Clip): void {
     const o = look.outline;
     if (o) {
       if (o.fillAlpha > 0 && clip.fill.kind === "full") g.circle(0, 0, R).fill({ color: o.fill, alpha: o.fillAlpha });
