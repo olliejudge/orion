@@ -25,7 +25,7 @@ This repo is public. Repos we test against locally may be private: never copy th
 - `make test`: `go test ./...` (plus `pnpm -C web test` once `web/` exists).
 - `make lint`: `go vet ./...` + `golangci-lint run` (plus `pnpm -C web lint` once `web/` exists).
 - `make web`: build `web/` only; it is skipped with a message while `web/` does not exist.
-- `make dev`: the Go server with `--dev` on port 7070, plus Vite's dev server (needs `web/`). Use `REPO=/path/to/repo make dev` to map another repo.
+- `make dev`: the Go server with `--dev` on port 7070 (it exits if 7070 is taken, since Vite proxies `/ws` there), plus Vite's dev server (needs `web/`). Use `REPO=/path/to/repo make dev` to map another repo. Open the `dev UI (Vite)` URL it prints; Ctrl-C stops both, and Vite also stops if the Go server exits.
 - One package or test: `go test ./internal/gitx -run TestStatus -v`.
 - What CI runs: `go vet ./... && golangci-lint run && go test -race -count=1 ./...` on macOS and Linux.
 - Toolchain: Go 1.27, git ≥ 2.30, golangci-lint v2.13.2 (`brew install golangci-lint` or `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2`), and pnpm 12 + Node 24 for `web/`.

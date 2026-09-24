@@ -29,11 +29,22 @@ web: ## Build web/ into internal/webassets/static (skipped when web/ is absent)
 		echo "web/ not present yet: skipping UI build (the fallback page will be served)"; \
 	fi
 
+# Vite is stopped whenever the Go server exits (it failed, or Ctrl-C). Ctrl-C
+# reaches orion and Vite through the terminal; the shell keeps waiting until
+# orion has shut down, and counts that as success because `go run` exits 1
+# after any interrupt. On TERM, orion (go run's child) is stopped directly, as
+# go run does not forward it.
 dev: ## Run the Go server with --dev plus Vite's dev server
 	@if [ ! -f web/package.json ]; then echo "make dev needs web/ (added by the web scaffold task)"; exit 1; fi
-	@trap 'kill 0' EXIT INT TERM; \
-		$(GO) run ./cmd/orion --dev --no-open --port 7070 $(REPO) & \
-		pnpm -C web dev
+	@pnpm -C web dev & vite=$$!; \
+		trap 'kill $$vite 2>/dev/null' EXIT; \
+		$(GO) run ./cmd/orion --dev --no-open --port 7070 "$(REPO)" & server=$$!; \
+		interrupted=; trap 'interrupted=1' INT; \
+		trap 'pkill -TERM -P $$server 2>/dev/null' TERM; \
+		status=0; wait $$server || status=$$?; \
+		while kill -0 $$server 2>/dev/null; do wait $$server; status=$$?; done; \
+		if [ -n "$$interrupted" ]; then status=0; fi; \
+		exit $$status
 
 clean: ## Remove build output
 	rm -rf bin dist
