@@ -41,13 +41,34 @@ builds:
     ldflags:
       - -s -w -X github.com/olliejudge/orion/internal/version.Version={{ .Version }}
 
+# Sign (hardened runtime, Apple timestamp) and notarize the darwin binaries with
+# GoReleaser's built-in quill, before they are archived. Skipped unless the
+# MACOS_SIGN_P12 secret is set, so local snapshots and releases without the
+# Apple secrets still work; they then ship unsigned. Setup: docs/RELEASING.md.
+notarize:
+  macos:
+    - ids: [darwin]
+      enabled: '{{ isEnvSet "MACOS_SIGN_P12" }}'
+      sign:
+        certificate: "{{ .Env.MACOS_SIGN_P12 }}" # base64 of the .p12
+        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
+      notarize:
+        issuer_id: "{{ .Env.MACOS_NOTARY_ISSUER_ID }}"
+        key_id: "{{ .Env.MACOS_NOTARY_KEY_ID }}"
+        key: "{{ .Env.MACOS_NOTARY_KEY }}" # base64 of the .p8
+        wait: true
+        # quill signs its App Store Connect API token for timeout + 2m, and
+        # Apple rejects tokens that live longer than 20m.
+        timeout: 15m
+
 archives:
   - id: orion
     ids: [darwin, linux]
     formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     # Commit-derived mtimes (with mod_timestamp on the builds) keep the archives,
-    # and so checksums.txt, identical across rebuilds of the same commit.
+    # and so checksums.txt, identical across rebuilds of the same commit. Signed
+    # darwin binaries are the exception: their signature carries a timestamp.
     files:
       - src: LICENSE
         info:
@@ -114,11 +135,12 @@ homebrew_casks:
       - formula: git
     caveats: |
       Run `orion` inside any git repository. It serves on 127.0.0.1 only.
-    # Unsigned, un-notarized binary: clear the quarantine bit so Gatekeeper
-    # doesn't block the first run. Written as Homebrew's declarative
-    # postflight_steps (Homebrew >= 7.0.4); GoReleaser 2.18's `hooks` emit the
-    # deprecated `postflight` block. {{staged_path}} is a Homebrew token, so it
-    # is escaped from GoReleaser's own templating.
+    # Clear the quarantine bit so Gatekeeper doesn't block the first run of an
+    # un-notarized binary. Harmless on a notarized one; drop it once a
+    # notarized release has been verified (docs/RELEASING.md). Written as
+    # Homebrew's declarative postflight_steps (Homebrew >= 7.0.4); GoReleaser
+    # 2.18's `hooks` emit the deprecated `postflight` block. {{staged_path}} is
+    # a Homebrew token, so it is escaped from GoReleaser's own templating.
     custom_block: |
       postflight_steps do
         on_macos do
