@@ -31,6 +31,8 @@ export interface CullOptions {
   minDirR?: number;
   /** Extra file paths kept (at r ≥ minFileR) like touched files, e.g. ones still shimmering after a merge. */
   keep?: ReadonlySet<string>;
+  /** The touched files, overriding the packed tree's own flags (for a pack reused by a later state). */
+  touched?: ReadonlySet<string>;
 }
 
 /** The scale-independent half of a layout: the packed tree for one viewport size. */
@@ -77,6 +79,7 @@ export function cullLayout(packed: PackedTree, opts?: CullOptions, dx = 0, dy = 
   const minFileR = opts?.minFileR ?? MIN_FILE_R;
   const minDirR = opts?.minDirR ?? MIN_DIR_R;
   const keep = opts?.keep;
+  const touched = opts?.touched;
   const out = new Map<string, Circle>();
 
   if (packed.node === null) {
@@ -89,7 +92,7 @@ export function cullLayout(packed: PackedTree, opts?: CullOptions, dx = 0, dy = 
     const c: Circle = { path: n.data.path, x: n.x + dx, y: n.y + dy, r: n.r, depth: n.depth, isDir: n.data.isDir };
     if (!n.data.isDir) {
       if (n.r >= minFileR) out.set(c.path, c);
-      else if (n.data.touched || keep?.has(c.path)) out.set(c.path, { ...c, r: minFileR });
+      else if ((touched ? touched.has(c.path) : n.data.touched) || keep?.has(c.path)) out.set(c.path, { ...c, r: minFileR });
       return;
     }
     const kids = n.children ?? [];
