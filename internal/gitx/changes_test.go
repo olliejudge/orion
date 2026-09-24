@@ -161,6 +161,7 @@ func TestParseStatusCaptured(t *testing.T) {
 		"orig.txt",
 		"u UU N... 100644 100644 100644 100644 " + sha + " " + sha + " " + sha + " conflict.txt",
 		"u DU N... 100644 000000 100644 100644 " + sha + " " + zero + " " + sha + " deleted-by-us.txt",
+		"u UA N... 000000 000000 100644 100644 " + zero + " " + zero + " " + sha + " added-by-them.txt",
 		"u DD N... 100644 000000 000000 000000 " + sha + " " + zero + " " + zero + " both-deleted.txt",
 		"? untracked/-dash.txt",
 		"? nested/worktree/",
@@ -176,6 +177,7 @@ func TestParseStatusCaptured(t *testing.T) {
 		{Path: "conflict.txt", Kind: Modified},
 		{Path: "intent.txt", Kind: Added},
 		{Path: "deleted-by-us.txt", Kind: Added},
+		{Path: "added-by-them.txt", Kind: Added},
 		{Path: "both-deleted.txt", Kind: Modified},
 		{Path: "untracked/-dash.txt", Kind: Added},
 	})

@@ -143,7 +143,8 @@ func parseStatus(out []byte) []Change {
 				continue
 			}
 			kind := Modified
-			if parts[1] == "DU" { // deleted by us: absent from HEAD, present in the worktree
+			// Deleted by us / added by them: absent from HEAD, present in the worktree.
+			if parts[1] == "DU" || parts[1] == "UA" {
 				kind = Added
 			}
 			changes = append(changes, Change{Path: parts[10], Kind: kind})
