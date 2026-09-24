@@ -1,0 +1,119 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# Release config for orion. Runs on a macOS runner (see .github/workflows/release.yml):
+# darwin builds need cgo (FSEvents); linux builds are pure Go and cross-compile.
+version: 2
+
+project_name: orion
+
+# For local snapshots. The release workflow builds web/ in its own step, with
+# no secrets in the environment, and runs GoReleaser with --skip=before.
+before:
+  hooks:
+    - pnpm -C web install --frozen-lockfile
+    - pnpm -C web build
+
+builds:
+  - id: darwin
+    main: ./cmd/orion
+    binary: orion
+    goos: [darwin]
+    goarch: [amd64, arm64]
+    env:
+      - CGO_ENABLED=1
+      # Go passes -arch to clang itself, so darwin/amd64 cross-compiles on an
+      # arm64 runner. Without an explicit minimum, the cgo objects are stamped
+      # with the runner's macOS version and refuse to run on older systems.
+      - CGO_CFLAGS=-O2 -g -mmacosx-version-min=13.0
+      - CGO_LDFLAGS=-mmacosx-version-min=13.0
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X github.com/olliejudge/orion/internal/version.Version={{ .Version }}
+  - id: linux
+    main: ./cmd/orion
+    binary: orion
+    goos: [linux]
+    goarch: [amd64, arm64]
+    env:
+      - CGO_ENABLED=0
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X github.com/olliejudge/orion/internal/version.Version={{ .Version }}
+
+archives:
+  - id: orion
+    ids: [darwin, linux]
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  use: git
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Bug fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Performance
+      regexp: '^.*?perf(\(.+\))??!?:.+$'
+      order: 2
+    - title: Other changes
+      order: 999
+  filters:
+    exclude:
+      - '^docs(\(.+\))?:'
+      - '^test(\(.+\))?:'
+      - '^chore(\(.+\))?:'
+      - '^ci(\(.+\))?:'
+      - '^build(\(.+\))?:'
+      - '^style(\(.+\))?:'
+
+release:
+  github:
+    owner: olliejudge
+    name: orion
+  prerelease: auto
+
+# GoReleaser deprecated `brews` (formulae) in v2.10 in favour of casks for
+# pre-built binaries. `brew install olliejudge/tap/orion` resolves the cask.
+homebrew_casks:
+  - name: orion
+    ids: [orion]
+    binaries: [orion]
+    homepage: https://github.com/olliejudge/orion
+    description: Live, animated map of a git repository across all its worktrees
+    license: MIT
+    skip_upload: auto
+    repository:
+      owner: olliejudge
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    commit_author:
+      name: olliejudge
+      email: olliejudge@users.noreply.github.com
+    commit_msg_template: "chore: update orion cask to {{ .Tag }}"
+    dependencies:
+      - formula: git
+    caveats: |
+      Run `orion` inside any git repository. It serves on 127.0.0.1 only.
+    # Unsigned, un-notarized binary: clear the quarantine bit so Gatekeeper
+    # doesn't block the first run. Written as Homebrew's declarative
+    # postflight_steps (Homebrew >= 7.0.4); GoReleaser 2.18's `hooks` emit the
+    # deprecated `postflight` block. {{staged_path}} is a Homebrew token, so it
+    # is escaped from GoReleaser's own templating.
+    custom_block: |
+      postflight_steps do
+        on_macos do
+          run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ "{{staged_path}}" }}/orion"]
+        end
+      end

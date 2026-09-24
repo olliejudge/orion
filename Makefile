@@ -1,6 +1,7 @@
 # Orion build entry points. `make help` lists targets.
 GO      ?= go
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+# Same form as GoReleaser's {{ .Version }}: no leading "v" (v0.1.0 -> 0.1.0).
+VERSION ?= $(patsubst v%,%,$(shell git describe --tags --always --dirty 2>/dev/null || echo dev))
 LDFLAGS := -s -w -X github.com/olliejudge/orion/internal/version.Version=$(VERSION)
 # Repo that `make dev` points orion at (default: this checkout).
 REPO    ?= .

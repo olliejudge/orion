@@ -1,0 +1,70 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+# This is the only workflow holding a write token and the tap PAT: grant
+# nothing by default, and only the release job gets contents: write.
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  goreleaser:
+    # macOS: the darwin builds need cgo (FSEvents). GoReleaser cross-compiles
+    # darwin/amd64 (clang -arch x86_64, added by Go) and the pure-Go linux builds.
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # changelog needs full history and tags
+          persist-credentials: false
+      # No caches: a poisoned cache must not reach a release build.
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12.4.2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      # Web assets are built here, with no secrets in the environment, instead
+      # of in GoReleaser's before-hooks (skipped below with --skip=before).
+      - name: Build web assets
+        run: |
+          pnpm -C web install --frozen-lockfile
+          pnpm -C web build
+      - name: Test
+        run: go test ./...
+      # A stable tag without the tap token would publish the GitHub release and
+      # then fail the cask push. Prerelease tags (v1.2.3-rc.1) skip the tap
+      # (skip_upload: auto), so they don't need it.
+      - name: Check tap token
+        env:
+          HAS_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN != '' }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          case "$TAG" in
+            *-*) echo "prerelease tag $TAG: the Homebrew cask is not updated" ;;
+            *)
+              if [ "$HAS_TAP_TOKEN" != "true" ]; then
+                echo "::error::HOMEBREW_TAP_GITHUB_TOKEN is not set; stable tag $TAG would release but fail the tap push"
+                exit 1
+              fi
+              ;;
+          esac
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: v2.18.2
+          args: release --clean --skip=before
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
