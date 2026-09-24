@@ -116,6 +116,8 @@ func (r *Router) routeGit(rel string) Route {
 			return Route{Class: WorktreesChanged} // an admin dir we do not know yet: a worktree is being added
 		case inner == "locked":
 			return Route{Class: WorktreesChanged} // `git worktree lock/unlock`
+		case inner == "gitdir":
+			return Route{Class: WorktreesChanged} // `git worktree move` rewrites it: the root changed
 		case isStateFile(inner):
 			return Route{Class: WorktreeRefEvent, Worktree: id}
 		}

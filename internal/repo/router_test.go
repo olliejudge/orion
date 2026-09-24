@@ -68,6 +68,7 @@ func TestRouterGitDir(t *testing.T) {
 		{"/r/.git/worktrees/r2/logs/HEAD", Route{Ignore, ""}},
 		{"/r/.git/worktrees/r2/index.lock", Route{Ignore, ""}},
 		{"/r/.git/worktrees/r2/locked", Route{WorktreesChanged, ""}},
+		{"/r/.git/worktrees/r2/gitdir", Route{WorktreesChanged, ""}}, // `git worktree move`
 		// worktree set changes
 		{"/r/.git/worktrees", Route{WorktreesChanged, ""}},
 		{"/r/.git/worktrees/agent", Route{WorktreesChanged, ""}},
