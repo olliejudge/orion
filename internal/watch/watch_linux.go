@@ -4,7 +4,6 @@ package watch
 
 import (
 	"errors"
-	"fmt"
 	"io/fs"
 	"path/filepath"
 	"sync"
@@ -16,6 +15,7 @@ import (
 type inotifyWatcher struct {
 	mu     sync.Mutex
 	roots  map[string]bool // resolved roots
+	dirs   map[string]bool // directories added to fw, so renames can release them
 	fw     *fsnotify.Watcher
 	events chan Event
 	errors chan error
@@ -40,6 +40,7 @@ func New() (Watcher, error) {
 	w := &inotifyWatcher{
 		fw:     fw,
 		roots:  map[string]bool{},
+		dirs:   map[string]bool{},
 		events: make(chan Event, 4096),
 		errors: make(chan error, 16),
 		done:   make(chan struct{}),
@@ -60,13 +61,20 @@ func resolve(root string) (string, error) {
 	return filepath.EvalSymlinks(abs)
 }
 
+// pathErr is the error form used for Add's result and for everything sent on
+// Errors, so consumers can tell which directory is affected.
+func pathErr(p string, err error) error {
+	return &fs.PathError{Op: "watch", Path: p, Err: err}
+}
+
 // Add watches every directory under root. Unreadable subdirectories are
 // reported on Errors and skipped; hitting the inotify watch limit (ENOSPC)
-// aborts and returns the error so the caller can fall back to polling.
+// aborts and returns the error so the caller can fall back to polling. A
+// failed Add leaves nothing of root watched.
 func (w *inotifyWatcher) Add(root string) error {
 	real, err := resolve(root)
 	if err != nil {
-		return fmt.Errorf("watch %s: %w", root, err)
+		return pathErr(root, err)
 	}
 	w.sendMu.RLock()
 	closed := w.closed
@@ -77,7 +85,11 @@ func (w *inotifyWatcher) Add(root string) error {
 	w.mu.Lock()
 	w.roots[real] = true
 	w.mu.Unlock()
-	return w.addTree(real, false)
+	if err := w.addTree(real, false); err != nil {
+		_ = w.Remove(real) // release partial watches so other roots are not starved
+		return err
+	}
+	return nil
 }
 
 // addTree adds dir and its subdirectories. When announce is true (a directory
@@ -87,9 +99,9 @@ func (w *inotifyWatcher) addTree(dir string, announce bool) error {
 	return filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if p == dir {
-				return err
+				return pathErr(p, err)
 			}
-			w.sendError(fmt.Errorf("watch %s: %w", p, err))
+			w.sendError(pathErr(p, err))
 			return fs.SkipDir
 		}
 		if announce && p != dir {
@@ -99,13 +111,16 @@ func (w *inotifyWatcher) addTree(dir string, announce bool) error {
 			return nil
 		}
 		if err := w.fw.Add(p); err != nil {
-			werr := fmt.Errorf("watch %s: %w", p, err)
-			if errors.Is(err, fsnotify.ErrClosed) || isLimit(err) {
+			werr := pathErr(p, err)
+			if p == dir || errors.Is(err, fsnotify.ErrClosed) || isLimit(err) {
 				return werr
 			}
 			w.sendError(werr)
 			return fs.SkipDir
 		}
+		w.mu.Lock()
+		w.dirs[p] = true
+		w.mu.Unlock()
 		return nil
 	})
 }
@@ -138,27 +153,82 @@ func (w *inotifyWatcher) handle(e fsnotify.Event) {
 		return
 	}
 	w.send(Event{Path: p})
+	if e.Has(fsnotify.Rename) || e.Has(fsnotify.Remove) {
+		w.forget(p, e.Has(fsnotify.Rename))
+	}
 	if e.Has(fsnotify.Create) {
-		if err := w.addTree(p, true); err != nil && isLimit(err) {
+		err := w.addTree(p, true)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsnotify.ErrClosed) {
 			w.sendError(err)
 		}
 	}
 }
 
+// forget releases the watch on directory p, and on everything below it when
+// p was renamed. inotify watches follow the inode, so after a rename the
+// old watches would keep reporting old paths, and re-adding the new path
+// would hand back the same watch under its old name. Releasing them lets the
+// Create event for the new name add correct watches. (The Create is sent
+// after the Rename, so it is handled after this.)
+func (w *inotifyWatcher) forget(p string, subtree bool) {
+	w.mu.Lock()
+	if !w.dirs[p] {
+		w.mu.Unlock()
+		return
+	}
+	drop := []string{p}
+	delete(w.dirs, p)
+	if subtree {
+		for d := range w.dirs {
+			if within(p, d) {
+				drop = append(drop, d)
+				delete(w.dirs, d)
+			}
+		}
+	}
+	w.mu.Unlock()
+	for _, d := range drop {
+		_ = w.fw.Remove(d) // best effort: the kernel may already have dropped it
+	}
+}
+
 func (w *inotifyWatcher) handleError(err error) {
 	if errors.Is(err, fsnotify.ErrEventOverflow) {
-		w.mu.Lock()
-		roots := make([]string, 0, len(w.roots))
-		for r := range w.roots {
-			roots = append(roots, r)
-		}
-		w.mu.Unlock()
-		for _, r := range roots {
-			w.send(Event{Path: r, Rescan: true})
-		}
+		w.rescan(w.allRoots())
 		return
 	}
 	w.sendError(err)
+}
+
+func (w *inotifyWatcher) rescan(roots []string) {
+	for _, r := range roots {
+		w.send(Event{Path: r, Rescan: true})
+	}
+}
+
+func (w *inotifyWatcher) allRoots() []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	roots := make([]string, 0, len(w.roots))
+	for r := range w.roots {
+		roots = append(roots, r)
+	}
+	return roots
+}
+
+// rootsFor returns the root err's path lies under, or every root when the
+// error names no watched path.
+func (w *inotifyWatcher) rootsFor(err error) []string {
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		w.mu.Lock()
+		r := rootOf(w.roots, pe.Path)
+		w.mu.Unlock()
+		if r != "" {
+			return []string{r}
+		}
+	}
+	return w.allRoots()
 }
 
 func (w *inotifyWatcher) underRoot(p string) bool {
@@ -198,16 +268,22 @@ func (w *inotifyWatcher) send(ev Event) {
 	}
 }
 
+// sendError never blocks the event loop on an unread error, and never drops
+// one silently: when the buffer is full, the affected root gets a Rescan.
 func (w *inotifyWatcher) sendError(err error) {
 	w.sendMu.RLock()
-	defer w.sendMu.RUnlock()
 	if w.closed {
+		w.sendMu.RUnlock()
 		return
 	}
 	select {
 	case w.errors <- err:
-	default: // never block the event loop on an unread error
+		w.sendMu.RUnlock()
+		return
+	default:
 	}
+	w.sendMu.RUnlock()
+	w.rescan(w.rootsFor(err))
 }
 
 func (w *inotifyWatcher) Remove(root string) error {
@@ -217,20 +293,24 @@ func (w *inotifyWatcher) Remove(root string) error {
 	}
 	w.mu.Lock()
 	delete(w.roots, real)
-	remaining := make(map[string]bool, len(w.roots))
-	for r := range w.roots {
-		remaining[r] = true
+	var drop []string
+	for p := range w.dirs {
+		if within(real, p) && rootOf(w.roots, p) == "" { // ours, and not inside another root
+			drop = append(drop, p)
+			delete(w.dirs, p)
+		}
 	}
 	w.mu.Unlock()
-	for _, p := range w.fw.WatchList() {
-		if !within(real, p) || rootOf(remaining, p) != "" {
-			continue // not ours, or also inside another root
-		}
-		if err := w.fw.Remove(p); err != nil && !errors.Is(err, fsnotify.ErrNonExistentWatch) {
-			return fmt.Errorf("unwatch %s: %w", p, err)
+	var errs []error
+	for _, p := range drop {
+		// ErrNonExistentWatch or EINVAL: the kernel already dropped the watch
+		// because the directory was deleted.
+		err := w.fw.Remove(p)
+		if err != nil && !errors.Is(err, fsnotify.ErrNonExistentWatch) && !errors.Is(err, syscall.EINVAL) {
+			errs = append(errs, &fs.PathError{Op: "unwatch", Path: p, Err: err})
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (w *inotifyWatcher) Close() error {

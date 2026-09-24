@@ -3,6 +3,7 @@ package watch
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -201,5 +202,69 @@ func TestCloseClosesChannels(t *testing.T) {
 	}
 	if err := w.Add(tempRoot(t)); err == nil {
 		t.Fatal("Add after Close: want error")
+	}
+}
+
+// A renamed directory must be watched under its new path, subdirectories
+// included, and nothing may be reported under the old path afterwards.
+func TestRenamedDirKeepsWatchingNewPaths(t *testing.T) {
+	root := tempRoot(t)
+	oldDir, newDir := filepath.Join(root, "old"), filepath.Join(root, "new")
+	if err := os.MkdirAll(filepath.Join(oldDir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	w := newWatcher(t, root)
+	if err := os.Rename(oldDir, newDir); err != nil {
+		t.Fatal(err)
+	}
+	settle(w)
+
+	top := filepath.Join(newDir, "top.txt")
+	deep := filepath.Join(newDir, "sub", "x.txt")
+	write(t, top, "a")
+	write(t, deep, "b")
+	seen := map[string]bool{}
+	deadline := time.After(eventTimeout)
+	for !seen[top] || !seen[deep] {
+		select {
+		case ev := <-w.Events():
+			if ev.Path == oldDir || isUnder(oldDir, ev.Path) {
+				t.Fatalf("event under the old path after rename: %+v", ev)
+			}
+			seen[ev.Path] = true
+		case err := <-w.Errors():
+			t.Fatalf("watch error: %v", err)
+		case <-deadline:
+			t.Fatalf("after rename saw %v; want events for %s and %s", seen, top, deep)
+		}
+	}
+	expectNoEventUnder(t, w, oldDir, 300*time.Millisecond)
+}
+
+func isUnder(root, p string) bool {
+	rel, err := filepath.Rel(root, p)
+	return err == nil && filepath.IsLocal(rel)
+}
+
+// Remove racing Close must neither panic nor race, even while events flow.
+func TestRemoveRacingClose(t *testing.T) {
+	for range 50 {
+		root := tempRoot(t)
+		w, err := New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Add(root); err != nil {
+			t.Fatal(err)
+		}
+		for j := range 5 {
+			write(t, filepath.Join(root, "f", string(rune('a'+j))+".txt"), "x")
+		}
+		var wg sync.WaitGroup
+		wg.Go(func() { _ = w.Remove(root) })
+		wg.Go(func() { _ = w.Close() })
+		wg.Wait()
+		for range w.Events() {
+		}
 	}
 }

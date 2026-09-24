@@ -12,6 +12,10 @@ type Event struct {
 }
 
 // Watcher watches directory trees recursively.
+//
+// Add's error and every error on Errors is an *fs.PathError naming the
+// affected directory where one is known. Errors never blocks the watcher: an
+// error that cannot be buffered becomes a Rescan event for its root instead.
 type Watcher interface {
 	Events() <-chan Event
 	Errors() <-chan error

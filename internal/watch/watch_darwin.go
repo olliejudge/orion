@@ -4,7 +4,7 @@ package watch
 
 import (
 	"errors"
-	"fmt"
+	"io/fs"
 	"path/filepath"
 	"sync"
 	"time"
@@ -29,6 +29,11 @@ type fseventsWatcher struct {
 	streams map[string]*stream // resolved root → stream
 	events  chan Event
 	errors  chan error
+
+	// forwarders counts running forward goroutines, including those of
+	// streams a concurrent Remove is stopping; Close waits for all of them
+	// before closing events.
+	forwarders sync.WaitGroup
 }
 
 // New returns an FSEvents-backed Watcher (one stream per root).
@@ -54,7 +59,7 @@ func resolve(root string) (string, error) {
 func (w *fseventsWatcher) Add(root string) error {
 	real, err := resolve(root)
 	if err != nil {
-		return fmt.Errorf("watch %s: %w", root, err)
+		return &fs.PathError{Op: "watch", Path: root, Err: err}
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -75,10 +80,10 @@ func (w *fseventsWatcher) Add(root string) error {
 		done: make(chan struct{}),
 	}
 	if err := s.es.Start(); err != nil {
-		return fmt.Errorf("watch %s: %w", real, err)
+		return &fs.PathError{Op: "watch", Path: real, Err: err}
 	}
 	w.streams[real] = s
-	go w.forward(s)
+	w.forwarders.Go(func() { w.forward(s) })
 	return nil
 }
 
@@ -161,6 +166,7 @@ func (w *fseventsWatcher) Close() error {
 	for _, s := range streams {
 		s.stop()
 	}
+	w.forwarders.Wait() // a concurrent Remove may still be stopping one
 	close(w.events)
 	close(w.errors)
 	return nil
