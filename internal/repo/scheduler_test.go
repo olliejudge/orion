@@ -92,6 +92,7 @@ func TestSchedulerDebounceMergesReasons(t *testing.T) {
 	s.Trigger("a", ReasonRef)
 	last := time.Now()
 	s.Trigger("a", ReasonFiles)
+	after := time.Now()
 	fires := rc.settle(t, s, 150*time.Millisecond)
 
 	var union Reason
@@ -101,13 +102,13 @@ func TestSchedulerDebounceMergesReasons(t *testing.T) {
 	if union != ReasonFiles|ReasonRef {
 		t.Errorf("union of fired reasons = %b, want %b", union, ReasonFiles|ReasonRef)
 	}
-	if last.Sub(start) >= testDebounce {
-		// The 5ms sleep overran the debounce, so the first trigger may have
-		// fired alone. Only the weak bound holds: never more fires than triggers.
+	if after.Sub(start) >= testDebounce {
+		// The triggers overran the debounce, so an earlier one may have fired
+		// alone. Only the weak bound holds: never more fires than triggers.
 		if len(fires) == 0 || len(fires) > 3 {
-			t.Fatalf("fires = %d, want 1..3 (sleep overran: %v)", len(fires), last.Sub(start))
+			t.Fatalf("fires = %d, want 1..3 (triggers took %v)", len(fires), after.Sub(start))
 		}
-		t.Logf("sleep overran the debounce (%v); checked bounds only", last.Sub(start))
+		t.Logf("triggers overran the debounce (%v); checked bounds only", after.Sub(start))
 		return
 	}
 	// Every trigger arrived before the first could fire, so exactly one fire.
@@ -245,10 +246,12 @@ func TestSchedulerNeverConcurrentPerKey(t *testing.T) {
 
 func TestSchedulerKeysIndependent(t *testing.T) {
 	release := make(chan struct{})
+	aStarted := make(chan struct{})
 	bFired := make(chan struct{})
 	s := NewScheduler(testDebounce, testMinInterval, func(key string, r Reason) {
 		switch key {
 		case "a":
+			close(aStarted)
 			<-release
 		case "b":
 			close(bFired)
@@ -257,7 +260,11 @@ func TestSchedulerKeysIndependent(t *testing.T) {
 	defer s.Close()
 	defer close(release)
 	s.Trigger("a", ReasonFiles)
-	time.Sleep(2 * testDebounce) // let "a" start and block
+	select {
+	case <-aStarted: // "a" is now blocked inside fire
+	case <-time.After(5 * time.Second):
+		t.Fatal(`key "a" never fired`)
+	}
 	s.Trigger("b", ReasonFiles)
 	select {
 	case <-bFired:
@@ -270,20 +277,43 @@ func TestSchedulerClose(t *testing.T) {
 	var calls atomic.Int32
 	var finished atomic.Bool
 	started := make(chan struct{})
+	release := make(chan struct{})
 	s := NewScheduler(testDebounce, testMinInterval, func(key string, r Reason) {
 		if calls.Add(1) == 1 {
 			close(started)
-			time.Sleep(80 * time.Millisecond)
+			<-release
 			finished.Store(true)
 		}
 	})
 	s.Trigger("a", ReasonFiles)
 	<-started
 	s.Trigger("a", ReasonFiles) // pending when Close is called: must never fire
-	s.Close()
+
+	closed := make(chan struct{})
+	go func() {
+		s.Close()
+		close(closed)
+	}()
+	waitFor(t, 5*time.Second, func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.closed
+	})
+	select {
+	case <-closed:
+		t.Fatal("Close returned while a fire was still in flight")
+	default:
+	}
+	close(release)
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not return after the in-flight fire finished")
+	}
 	if !finished.Load() {
 		t.Errorf("Close returned before the in-flight fire finished")
 	}
+
 	s.Trigger("b", ReasonFiles)
 	time.Sleep(150 * time.Millisecond) // give any (incorrect) timer time to fire
 	if n := calls.Load(); n != 1 {

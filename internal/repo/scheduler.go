@@ -118,7 +118,8 @@ func (s *Scheduler) run(key string, k *keyState, gen uint64) {
 }
 
 // Close cancels pending fires and waits for in-flight fires to return.
-// Trigger after Close is a no-op.
+// Trigger after Close is a no-op. Close must not be called from inside fire:
+// it would wait for itself and deadlock.
 func (s *Scheduler) Close() {
 	s.mu.Lock()
 	s.closed = true
