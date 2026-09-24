@@ -11,6 +11,9 @@ const h = vi.hoisted(() => ({
   initFails: false,
   isolate: [] as (string | null)[],
   zoomTo: [] as string[],
+  highlight: [] as (string | null)[],
+  updates: 0,
+  updateThrows: false,
 }));
 
 vi.mock("../connection", () => ({
@@ -26,13 +29,18 @@ vi.mock("../render/MapRenderer", () => ({
     init(): Promise<void> {
       return h.initFails ? Promise.reject(new Error("no context")) : Promise.resolve();
     }
-    update(): void {}
+    update(): void {
+      h.updates++;
+      if (h.updateThrows) throw new Error("renderer broke");
+    }
     setFreeArea(): void {}
     setTheme(): void {}
     isolate(id: string | null): void {
       h.isolate.push(id);
     }
-    highlight(): void {}
+    highlight(path: string | null): void {
+      h.highlight.push(path);
+    }
     zoomTo(path: string): void {
       h.zoomTo.push(path);
     }
@@ -68,11 +76,18 @@ const snapshot: Snapshot = {
   activity: [],
 };
 
+// jsdom has no layout: give every element (the map included) a viewport-like size.
+Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 800 });
+Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get: () => 600 });
+
 beforeEach(() => {
   h.store = null;
   h.initFails = false;
   h.isolate = [];
   h.zoomTo = [];
+  h.highlight = [];
+  h.updates = 0;
+  h.updateThrows = false;
 });
 
 afterEach(() => {
@@ -129,5 +144,42 @@ describe("App", () => {
     await waitFor(() => expect(h.store).not.toBeNull());
     h.store!.apply(snapshot);
     expect(await screen.findAllByTestId("worktree-pill")).toHaveLength(2);
+  });
+
+  it("labels the map for assistive tech", async () => {
+    await ready();
+    expect(screen.getByRole("img", { name: "Repository map" })).toBe(screen.getByTestId("map"));
+  });
+
+  it("highlights the collapsed folder that holds a hovered activity row's file", async () => {
+    render(App);
+    await waitFor(() => expect(h.store).not.toBeNull());
+    // Beside a huge file the vendor folder is too small to open at fit zoom.
+    h.store!.apply({
+      ...snapshot,
+      tree: [{ path: "big.bin", size: 50_000_000 }, { path: "vendor/lib/x.js", size: 10 }, { path: "vendor/lib/y.js", size: 10 }],
+      activity: [{ ts: Date.now(), worktree: "w1", kind: "modified", path: "vendor/lib/x.js" }],
+    });
+    const row = await screen.findByRole("button", { name: /x\.js/ });
+    await waitFor(() => expect(h.updates).toBeGreaterThan(0));
+    await userEvent.hover(row);
+    const shown = h.highlight.at(-1);
+    expect(shown === "vendor" || shown === "vendor/lib").toBe(true);
+    await userEvent.unhover(row);
+    expect(h.highlight.at(-1)).toBeNull();
+  });
+
+  it("logs a renderer error on a patch and keeps applying later ones", async () => {
+    const store = await ready();
+    await waitFor(() => expect(h.updates).toBeGreaterThan(0));
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    h.updateThrows = true;
+    const before = h.updates;
+    store.apply({ type: "patch", seq: 2, overlays: { w1: { upsert: [{ path: "c.ts", kind: "added", stage: "uncommitted", size: 1 }], remove: [] } } });
+    await waitFor(() => expect(err).toHaveBeenCalled());
+    h.updateThrows = false;
+    store.apply({ type: "patch", seq: 3, overlays: { w1: { upsert: [{ path: "d.ts", kind: "added", stage: "uncommitted", size: 1 }], remove: [] } } });
+    await waitFor(() => expect(h.updates).toBeGreaterThan(before + 1));
+    err.mockRestore();
   });
 });

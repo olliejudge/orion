@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { makeState } from "./fixtures";
-import { computeFrame } from "./frame";
+import { computeFrame, packedFor } from "./frame";
+import { buildTree } from "./nodes";
+import { cullLayout, packTree } from "./pack";
 
 describe("computeFrame", () => {
   const files: Record<string, number> = { "big.bin": 10_000_000, "tiny.txt": 1 };
@@ -79,5 +81,35 @@ describe("computeFrame", () => {
     expect(f.layout.get("tiny.txt")!.r).toBeGreaterThanOrEqual(1.5);
     expect(f.visuals.get("tiny.txt")!.touches).toEqual([]);
     expect(f.layout.has("not/in/tree.ts")).toBe(false);
+  });
+});
+
+// Each patch makes a new RepoState, but most patches (an edit that stays in
+// its size bucket, a new stage) leave the packed geometry unchanged.
+describe("pack reuse across states", () => {
+  it("reuses the pack when the node set and every size bucket are unchanged", () => {
+    const a = packedFor(makeState({ "a.ts": 100, "src/b.ts": 200 }), 400, 400);
+    const b = packedFor(makeState({ "a.ts": 101, "src/b.ts": 200 }, { w1: [{ path: "src/b.ts", kind: "modified", stage: "committed", size: 201 }] }), 400, 400);
+    expect(b).toBe(a);
+  });
+
+  it("re-packs when a size bucket, the node set or the viewport changes", () => {
+    const a = packedFor(makeState({ "a.ts": 100, "src/b.ts": 200 }), 400, 400);
+    expect(packedFor(makeState({ "a.ts": 400, "src/b.ts": 200 }), 400, 400)).not.toBe(a);
+    const c = packedFor(makeState({ "a.ts": 100, "src/b.ts": 200 }), 400, 400);
+    expect(packedFor(makeState({ "a.ts": 100, "src/b.ts": 200 }, { w1: [{ path: "src/c.ts", kind: "added", stage: "uncommitted", size: 5 }] }), 400, 400)).not.toBe(c);
+    const d = packedFor(makeState({ "a.ts": 100, "src/b.ts": 200 }), 400, 400);
+    expect(packedFor(makeState({ "a.ts": 100, "src/b.ts": 200 }), 500, 400)).not.toBe(d);
+  });
+
+  it("culls a reused pack with the current state's touched files", () => {
+    const files = { "big.bin": 10_000_000, "tiny.txt": 1 };
+    const untouched = makeState(files);
+    const touched = makeState(files, { w1: [{ path: "tiny.txt", kind: "modified", stage: "committed", size: 1 }] });
+    expect(computeFrame(touched, 400, 400, 1).layout.has("tiny.txt")).toBe(true);
+    expect(computeFrame(untouched, 400, 400, 1).layout.has("tiny.txt")).toBe(false);
+    expect(computeFrame(touched, 400, 400, 1).layout.has("tiny.txt")).toBe(true);
+    const cold = cullLayout(packTree(buildTree(touched), 400, 400));
+    expect([...computeFrame(touched, 400, 400, 1).layout]).toEqual([...cold]);
   });
 });

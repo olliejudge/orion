@@ -1,7 +1,7 @@
 import type { RepoState } from "../store";
 import { encodeAll, type NodeVisual } from "./encoding";
-import { buildTree } from "./nodes";
-import { MIN_DIR_R, MIN_FILE_R, cullLayout, packTree, type Circle, type PackedTree } from "./pack";
+import { buildTree, nodeSizes } from "./nodes";
+import { MIN_DIR_R, MIN_FILE_R, cullLayout, packTree, packValue, type Circle, type PackedTree } from "./pack";
 
 export interface Frame {
   layout: Map<string, Circle>;
@@ -24,16 +24,39 @@ export interface Insets {
   left: number;
 }
 
-// The scale-independent pack for the latest viewport size, per state. The
-// store makes a new RepoState per patch, so identity is a safe cache key, and
-// zooming (same state, same size, new scale) only re-culls and re-encodes.
-const packCache = new WeakMap<RepoState, PackedTree>();
+// Packing is the expensive step, and most patches (an edit that stays in its
+// size bucket, a new stage, activity only) leave its inputs unchanged. So the
+// pack is cached by a signature of those inputs (the node paths with their
+// packValue buckets) plus the viewport size, not by RepoState identity; the
+// touched set, which the pack does not depend on, is passed to the cull.
+// Keys are memoised per RepoState, so zooming (same state, same size, new
+// scale) only re-culls and re-encodes.
+interface PackKey {
+  sig: string;
+  touched: ReadonlySet<string>;
+}
+const keyCache = new WeakMap<RepoState, PackKey>();
+let lastPack: { sig: string; packed: PackedTree } | null = null;
 
-function packedFor(state: RepoState, width: number, height: number): PackedTree {
-  const hit = packCache.get(state);
-  if (hit && hit.width === width && hit.height === height) return hit;
+function packKey(state: RepoState): PackKey {
+  const hit = keyCache.get(state);
+  if (hit) return hit;
+  const { sizes, touched } = nodeSizes(state);
+  // Paths never contain NUL, so this is unambiguous. Map order is not sorted:
+  // the same set in another order only costs a re-pack, never a wrong hit.
+  const parts = [state.repo.name];
+  for (const [path, size] of sizes) parts.push(path, String(packValue(size)));
+  const key = { sig: parts.join("\0"), touched };
+  keyCache.set(state, key);
+  return key;
+}
+
+/** The packed tree for `state` in a width×height rect, reused while its inputs are unchanged. */
+export function packedFor(state: RepoState, width: number, height: number): PackedTree {
+  const { sig } = packKey(state);
+  if (lastPack && lastPack.sig === sig && lastPack.packed.width === width && lastPack.packed.height === height) return lastPack.packed;
   const packed = packTree(buildTree(state), width, height);
-  packCache.set(state, packed);
+  lastPack = { sig, packed };
   return packed;
 }
 
@@ -60,7 +83,8 @@ export function computeFrame(
   const k = Math.max(scale, 1e-6);
   const free = freeArea(width, height, pad);
   const packed = packedFor(state, free.x1 - free.x0, free.y1 - free.y0);
-  const layout = cullLayout(packed, { minFileR: MIN_FILE_R / k, minDirR: MIN_DIR_R / k, keep: linger }, free.x0, free.y0);
+  const cull = { minFileR: MIN_FILE_R / k, minDirR: MIN_DIR_R / k, keep: linger, touched: packKey(state).touched };
+  const layout = cullLayout(packed, cull, free.x0, free.y0);
   return { layout, visuals: encodeAll(state, layout), free };
 }
 

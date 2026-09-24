@@ -27,20 +27,7 @@ export interface TreeNode {
  *   still in base) are flagged `touched`, so culling never hides activity.
  */
 export function buildTree(state: RepoState): TreeNode {
-  const sizes = new Map<string, number>(state.tree);
-  const touched = new Set<string>();
-  for (const entries of state.overlays.values()) {
-    for (const e of entries.values()) {
-      touched.add(e.path);
-      if (e.kind === "renamed" && e.from) touched.add(e.from);
-      if (e.kind === "deleted") {
-        if (!sizes.has(e.path)) sizes.set(e.path, 0);
-      } else {
-        sizes.set(e.path, Math.max(sizes.get(e.path) ?? 0, e.size));
-      }
-    }
-  }
-
+  const { sizes, touched } = nodeSizes(state);
   const root: TreeNode = { path: "", name: state.repo.name, isDir: true, size: 0, children: [] };
   const dirs = new Map<string, TreeNode>([["", root]]);
 
@@ -71,6 +58,24 @@ export function buildTree(state: RepoState): TreeNode {
 
   for (const d of dirs.values()) d.children!.sort(byName);
   return root;
+}
+
+/** buildTree's inputs: every node path with its size, and the touched files. */
+export function nodeSizes(state: RepoState): { sizes: Map<string, number>; touched: Set<string> } {
+  const sizes = new Map<string, number>(state.tree);
+  const touched = new Set<string>();
+  for (const entries of state.overlays.values()) {
+    for (const e of entries.values()) {
+      touched.add(e.path);
+      if (e.kind === "renamed" && e.from) touched.add(e.from);
+      if (e.kind === "deleted") {
+        if (!sizes.has(e.path)) sizes.set(e.path, 0);
+      } else {
+        sizes.set(e.path, Math.max(sizes.get(e.path) ?? 0, e.size));
+      }
+    }
+  }
+  return { sizes, touched };
 }
 
 function byName(a: TreeNode, b: TreeNode): number {

@@ -4,12 +4,14 @@
   import { computeFrame } from "../layout/frame";
   import { Linger } from "../layout/linger";
   import type { Circle } from "../layout/pack";
+  import { nearestShown } from "../layout/shown";
   import type { WorktreeId } from "../protocol";
   import { clickTarget } from "../render/geometry";
   import { MapRenderer } from "../render/MapRenderer";
   import { SHIMMER_MS } from "../render/scene";
   import { RepoStore, type Change, type RepoState } from "../store";
   import Activity from "./Activity.svelte";
+  import { FrameCoalescer } from "./coalesce";
   import { keyAction } from "./keys";
   import Legend from "./Legend.svelte";
   import LivePill from "./LivePill.svelte";
@@ -35,6 +37,15 @@
   let layout = new Map<string, Circle>();
   let zoomPath = "";
   let scale = 1;
+  let hovered: string | null = null; // the activity row's path under the pointer
+  // Relayouts (patches, resizes, theme and linger changes) run at most once per frame.
+  const queue = new FrameCoalescer((c) => {
+    try {
+      relayout(c);
+    } catch (err) {
+      console.error("Orion: could not update the map", err);
+    }
+  });
   // Just-merged paths stay in the layout (even if now too small to show)
   // until their shimmer ends, so a merge never reads as a deletion.
   const linger = new Linger(SHIMMER_MS);
@@ -44,12 +55,12 @@
     applyTheme(theme);
     saveTheme(theme);
     renderer?.setTheme(theme);
-    relayout(NO_CHANGE); // the map's free area depends on the theme
+    queue.request(NO_CHANGE); // the map's free area depends on the theme
   });
 
   $effect(() => {
     void legendBox; // the map keeps clear of the legend (see mapInsets)
-    relayout(NO_CHANGE);
+    queue.request(NO_CHANGE);
   });
 
   $effect(() => {
@@ -64,11 +75,19 @@
     if (!s || !renderer) return;
     const w = mapEl.clientWidth;
     const h = mapEl.clientHeight;
+    if (w <= 0 || h <= 0) return; // nothing to lay out into (d3's pack throws on an empty rect)
     const f = computeFrame(s, w, h, scale, mapInsets(theme, w, h, legendBox), linger.paths());
     layout = f.layout;
     pillX = (f.free.x0 + f.free.x1) / 2;
     renderer.setFreeArea(f.free);
     renderer.update(f.layout, f.visuals, change);
+    highlight(hovered); // what stands in for the hovered path may have changed
+  }
+
+  // A file inside a collapsed folder is highlighted as the folder's aggregate.
+  function highlight(path: string | null): void {
+    hovered = path;
+    renderer?.highlight(path === null ? null : nearestShown(path, layout));
   }
 
   function scheduleLinger(): void {
@@ -79,7 +98,7 @@
     lingerTimer = setTimeout(
       () => {
         lingerTimer = null;
-        if (linger.expire(performance.now())) relayout(NO_CHANGE);
+        if (linger.expire(performance.now())) queue.request(NO_CHANGE);
         scheduleLinger();
       },
       Math.max(0, next - performance.now()) + 20,
@@ -87,14 +106,19 @@
   }
 
   function onChange(s: RepoState, change: Change): void {
-    repo = s;
-    // A worktree that went away can't stay isolated (everything would stay dimmed).
-    if (isolated !== null && !s.worktrees.has(isolated)) isolated = null;
-    if (change.merged.length > 0) {
-      linger.add(change.merged, performance.now());
-      scheduleLinger();
+    // A throw here would unwind into the socket handler and freeze the map.
+    try {
+      repo = s;
+      // A worktree that went away can't stay isolated (everything would stay dimmed).
+      if (isolated !== null && !s.worktrees.has(isolated)) isolated = null;
+      if (change.merged.length > 0) {
+        linger.add(change.merged, performance.now());
+        scheduleLinger();
+      }
+      queue.request(change);
+    } catch (err) {
+      console.error("Orion: could not apply an update", err);
     }
-    relayout(change);
   }
 
   function zoom(path: string): void {
@@ -123,7 +147,7 @@
     let disposed = false;
     const off = store.subscribe(onChange);
     const tick = setInterval(() => (now = Date.now()), 5000);
-    const onResize = (): void => relayout(NO_CHANGE);
+    const onResize = (): void => queue.request(NO_CHANGE);
     let stop = (): void => {};
     const start = (): void => {
       if (!disposed) stop = connect(store, { onStatus: (s) => (status = s) });
@@ -137,7 +161,9 @@
         r.isolate(isolated);
         r.onZoom((k) => {
           scale = k;
-          relayout(NO_CHANGE);
+          // Culling follows the camera without a frame's lag.
+          queue.request(NO_CHANGE);
+          queue.flush();
         });
         r.onClick((path) => zoom(clickTarget(path, layout, zoomPath)));
         r.onHover((path, at) => {
@@ -145,7 +171,7 @@
           const info = c && repo ? tooltipInfo(repo, c) : null;
           tip = info ? { info, x: at.x, y: at.y } : null;
         });
-        relayout({ kind: "snapshot", merged: [] });
+        queue.request({ kind: "snapshot", merged: [] });
         start();
       },
       (err: unknown) => {
@@ -162,6 +188,7 @@
       disposed = true;
       clearInterval(tick);
       if (lingerTimer !== null) clearTimeout(lingerTimer);
+      queue.cancel();
       window.removeEventListener("resize", onResize);
       off();
       stop();
@@ -173,7 +200,7 @@
 
 <svelte:window onkeydown={onKey} />
 
-<div class="map" data-testid="map" bind:this={mapEl}></div>
+<div class="map" data-testid="map" role="img" aria-label="Repository map" bind:this={mapEl}></div>
 
 {#if noWebGL}
   <div class="fallback glass" role="alert">
@@ -184,7 +211,7 @@
 
 {#if repo}
   <Legend {repo} {now} {isolated} onIsolate={(id) => (isolated = id)} onFootprint={(b) => (legendBox = b)} />
-  <Activity {repo} {now} onHover={(p) => renderer?.highlight(p)} onSelect={(p) => zoom(shownFolder(p, layout))} />
+  <Activity {repo} {now} onHover={highlight} onSelect={(p) => zoom(shownFolder(p, layout))} />
 {/if}
 <LivePill {status} centerX={pillX} />
 <Tooltip info={tip?.info ?? null} x={tip?.x ?? 0} y={tip?.y ?? 0} />

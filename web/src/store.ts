@@ -131,21 +131,23 @@ function applyPatch(prev: RepoState, p: Patch): { state: RepoState; merged: stri
     next.activity = prev.activity.concat(p.activity).slice(-ACTIVITY_LIMIT);
   }
 
-  return { state: next, merged: mergedPaths(next, removed, baseTouched) };
+  return { state: next, merged: mergedPaths(next, removed, p.base !== undefined, baseTouched) };
 }
 
 // A removed overlay entry counts as "merged into base" when no overlay still
 // touches the path, base has the path after the patch, and either the entry
-// was already committed on its branch or this same patch changed the base
-// entry. The last rule stops a reverted uncommitted edit from shimmering.
-function mergedPaths(s: RepoState, removed: ChangeEntry[], baseTouched: Set<string>): string[] {
+// was already committed on its branch and this same patch moved base, or
+// this same patch changed the base entry itself. Requiring base to move stops
+// a reverted uncommitted edit, or a committed one dropped by a branch reset,
+// from shimmering.
+function mergedPaths(s: RepoState, removed: ChangeEntry[], baseMoved: boolean, baseTouched: Set<string>): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   for (const e of removed) {
     if (seen.has(e.path)) continue;
     seen.add(e.path);
     if (!s.tree.has(e.path)) continue;
-    if (e.stage !== "committed" && !baseTouched.has(e.path)) continue;
+    if (!baseTouched.has(e.path) && !(e.stage === "committed" && baseMoved)) continue;
     let stillTouched = false;
     for (const m of s.overlays.values()) {
       if (m.has(e.path)) {

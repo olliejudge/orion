@@ -1,5 +1,6 @@
 import type { NodeVisual } from "../layout/encoding";
 import type { Circle } from "../layout/pack";
+import { nearestShown } from "../layout/shown";
 import type { Change } from "../store";
 import { glideOffset, type Glide } from "./geometry";
 import { SETTLE_EPS, SPRING_OMEGA, isSettled, makeSpring, retarget, snapSpring, stepSpring, type Spring } from "./springs";
@@ -35,7 +36,8 @@ function atRest(s: Spring): boolean {
  *   source's current position/radius and glides (on an arc) to its target.
  * - Nodes missing from the layout shrink and fade out, then are dropped.
  * - Deleted files shrink to DELETED_SCALE × r (drawn as faint outlines).
- * - Paths in change.merged shimmer for SHIMMER_MS.
+ * - Paths in change.merged shimmer for SHIMMER_MS (or, when a path is not
+ *   drawn, its nearest drawn ancestor other than the root: see nearestShown).
  */
 export class Scene {
   readonly nodes = new Map<string, SceneNode>();
@@ -91,8 +93,9 @@ export class Scene {
     this.nodes.clear();
     for (const [k, v] of next) this.nodes.set(k, v);
 
-    for (const path of change.merged) {
-      const n = this.nodes.get(path);
+    // A merged file inside a collapsed folder shimmers as the folder's aggregate.
+    for (const path of new Set(change.merged.map((p) => nearestShown(p, layout)))) {
+      const n = path === null ? undefined : this.nodes.get(path);
       if (n && !n.leaving) n.shimmerAt = now;
     }
 
