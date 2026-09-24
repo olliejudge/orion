@@ -35,10 +35,33 @@ describe("placeLabels", () => {
     expect(spots.get("p/c")!.textR).toBe(40);
   });
 
-  it("keeps the larger (outer) label and hides one that collides even when pushed in", () => {
-    const spots = placeLabels([cand("b", 100, 100, 50, 60), cand("a", 100, 100, 50.5, 60)]);
+  it("keeps the larger (outer) label and hides one that collides even when pushed in twice", () => {
+    const spots = placeLabels([cand("b", 100, 100, 50, 120), cand("a", 100, 100, 50.5, 120)]);
     expect(spots.get("a")!.textR).toBe(50.5);
     expect(spots.has("b")).toBe(false);
+  });
+
+  it("pushes a third nested label two lines inward (deep chains)", () => {
+    const spots = placeLabels([cand("a", 200, 200, 160), cand("a/b", 200, 180, 140), cand("a/b/c", 200, 160, 120)]);
+    expect(spots.get("a")!.inset).toBe(0);
+    expect(spots.get("a/b")!.inset).toBe(1);
+    expect(spots.get("a/b/c")).toMatchObject({ inset: 2, textR: 120 - 2 * LABEL_LINE_PX });
+  });
+
+  it("hides a fourth label that would still collide after two inward steps", () => {
+    const spots = placeLabels([
+      cand("a", 200, 200, 160),
+      cand("a/b", 200, 180, 140),
+      cand("a/b/c", 200, 160, 120),
+      cand("a/b/c/d", 200, 140, 100),
+    ]);
+    expect(spots.has("a/b/c/d")).toBe(false);
+  });
+
+  it("treats text that nearly touches another label as a collision", () => {
+    // The child's band starts 0.25 px below the parent's: legible only when pushed in.
+    const spots = placeLabels([cand("p", 100, 100, 80), cand("p/c", 100, 72.65, 40)]);
+    expect(spots.get("p/c")!.inset).toBe(1);
   });
 
   it("hides rather than pushing a label into a circle too small for it", () => {

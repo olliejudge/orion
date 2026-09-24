@@ -195,6 +195,45 @@ describe("labelNames", () => {
     expect([...labelNames(l)]).toEqual([["web/src/ui", "web/src/ui"]]);
   });
 
+  it("compresses a dominant child (r ≥ 0.85 × its parent's) into one label, deep chains included", () => {
+    const l = new Map<string, Circle>([
+      ["", c("", 0, 0, 200, 0)],
+      ["a", c("a", 0, 0, 100, 1)],
+      ["a/x.go", c("a/x.go", 0, 0, 3, 2, false)],
+      ["a/b", c("a/b", 0, 0, 90, 2)],
+      ["a/b/y.go", c("a/b/y.go", 0, 0, 3, 3, false)],
+      ["a/b/c", c("a/b/c", 0, 0, 80, 3)],
+      ["a/b/c/z.go", c("a/b/c/z.go", 0, 0, 3, 4, false)],
+      ["a/b/c/d", c("a/b/c/d", 0, 0, 70, 4)],
+      ["a/b/c/d/e.go", c("a/b/c/d/e.go", 0, 0, 20, 5, false)],
+      ["a/b/c/d/f.go", c("a/b/c/d/f.go", 0, 0, 20, 5, false)],
+    ]);
+    expect([...labelNames(l)]).toEqual([["a/b/c/d", "a/b/c/d"]]);
+  });
+
+  it("gives a dominant child's small sibling folder only its own name", () => {
+    const l = new Map<string, Circle>([
+      ["", c("", 0, 0, 200, 0)],
+      ["a", c("a", 0, 0, 100, 1)],
+      ["a/big", c("a/big", 0, 0, 88, 2)],
+      ["a/big/x.go", c("a/big/x.go", 0, 0, 30, 3, false)],
+      ["a/tiny", c("a/tiny", 0, 0, 8, 2)],
+      ["a/tiny/y.go", c("a/tiny/y.go", 0, 0, 3, 3, false)],
+    ]);
+    expect(new Map(labelNames(l))).toEqual(new Map([["a/big", "a/big"], ["a/tiny", "tiny"]]));
+  });
+
+  it("labels parent and child separately when the child is clearly smaller", () => {
+    const l = new Map<string, Circle>([
+      ["", c("", 0, 0, 200, 0)],
+      ["a", c("a", 0, 0, 100, 1)],
+      ["a/b", c("a/b", 0, 0, 84, 2)],
+      ["a/b/x.go", c("a/b/x.go", 0, 0, 30, 3, false)],
+      ["a/y.go", c("a/y.go", 0, 0, 10, 2, false)],
+    ]);
+    expect(new Map(labelNames(l))).toEqual(new Map([["a", "a"], ["a/b", "b"]]));
+  });
+
   it("keeps a parent's label when its only child is a collapsed folder", () => {
     const l = new Map<string, Circle>([
       ["", c("", 0, 0, 100, 0)],
