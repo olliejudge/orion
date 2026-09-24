@@ -60,6 +60,16 @@ describe("camera", () => {
     expect(cam.k).toBeCloseTo((800 * 0.9) / 80);
   });
 
+  it("fits and centres a circle in the free area when one is given", () => {
+    const free = { x0: 0, y0: 0, x1: 680, y1: 800 };
+    const cam = fitCamera(c("src", 300, 200, 40, 1), 1000, 800, free);
+    expect(cam.k).toBeCloseTo((680 * 0.9) / 80);
+    const at = worldToScreen(cam, 1000, 800, 300, 200);
+    expect(at.x).toBeCloseTo(340);
+    expect(at.y).toBeCloseTo(400);
+    expect(fitCamera(c("", 340, 400, 300, 0), 1000, 800, free)).toEqual({ cx: 500, cy: 400, k: 1 });
+  });
+
   it("caps the zoom factor", () => {
     expect(fitCamera(c("x", 0, 0, 0.001, 3), 1000, 800).k).toBe(1000);
   });

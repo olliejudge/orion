@@ -36,6 +36,16 @@ describe("MapRenderer (without WebGL)", () => {
     expect(scales.slice(1)).toEqual([1, 1]);
   });
 
+  it("fits zoom targets to the free area it is given", () => {
+    const r = new MapRenderer(host());
+    const scales: number[] = [];
+    r.onZoom((k) => scales.push(k));
+    r.setFreeArea({ x0: 0, y0: 0, x1: 680, y1: 800 });
+    r.update(layout, visuals, { kind: "snapshot", merged: [] });
+    r.zoomTo("src");
+    expect(scales[0]).toBeCloseTo((680 * 0.9) / 200);
+  });
+
   it("can be destroyed before init", () => {
     const r = new MapRenderer(host());
     expect(() => r.destroy()).not.toThrow();

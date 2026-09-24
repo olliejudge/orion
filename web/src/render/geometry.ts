@@ -31,10 +31,17 @@ export interface Camera {
 const MAX_ZOOM = 1000;
 const FIT = 0.9;
 
-export function fitCamera(c: Circle, width: number, height: number): Camera {
+/**
+ * Camera that fits circle `c` to 90% of the free area's short side, centred
+ * in it (the whole viewport when `free` is omitted). The root is laid out in
+ * the free area already, so it gets the identity camera.
+ */
+export function fitCamera(c: Circle, width: number, height: number, free?: Rect): Camera {
   if (c.depth === 0) return { cx: width / 2, cy: height / 2, k: 1 };
-  const k = Math.min(MAX_ZOOM, (Math.min(width, height) * FIT) / (2 * Math.max(c.r, 1e-9)));
-  return { cx: c.x, cy: c.y, k };
+  const f = free ?? { x0: 0, y0: 0, x1: width, y1: height };
+  const k = Math.min(MAX_ZOOM, (Math.min(f.x1 - f.x0, f.y1 - f.y0) * FIT) / (2 * Math.max(c.r, 1e-9)));
+  // Put c's centre at the free area's centre rather than the viewport's.
+  return { cx: c.x - ((f.x0 + f.x1) / 2 - width / 2) / k, cy: c.y - ((f.y0 + f.y1) / 2 - height / 2) / k, k };
 }
 
 export function worldToScreen(cam: Camera, width: number, height: number, x: number, y: number): { x: number; y: number } {
