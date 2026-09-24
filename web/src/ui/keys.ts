@@ -1,6 +1,6 @@
 export type KeyAction = "theme" | "fullscreen" | "zoomOut";
 
-/** N toggles Night/Vision, F toggles fullscreen, Esc zooms out. `/` search is Phase 2.
+/** N toggles Night/Vision, F toggles fullscreen, Esc or Backspace zooms out one level. `/` search is Phase 2.
  * A held key does not repeat, so holding N or F cannot strobe the page. */
 export function keyAction(e: KeyboardEvent): KeyAction | null {
   if (e.metaKey || e.ctrlKey || e.altKey || e.repeat) return null;
@@ -14,6 +14,7 @@ export function keyAction(e: KeyboardEvent): KeyAction | null {
     case "F":
       return "fullscreen";
     case "Escape":
+    case "Backspace":
       return "zoomOut";
     default:
       return null;

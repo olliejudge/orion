@@ -16,6 +16,8 @@ import {
   type Rect,
 } from "./geometry";
 import { motionPolicy, watchReducedMotion, type Motion } from "./motion";
+import { focusFolder, follow, type CameraPath } from "./camera";
+import { MapNavigator } from "./navigate";
 import { Scene, type SceneNode } from "./scene";
 import { labelSpan, placeLabels, type LabelCandidate, type LabelSpot, LABEL_LINE_PX } from "./labels";
 import { HALO_RING_FRAC, TextureBank, labelWidth, renderArcLabel } from "./sprites";
@@ -60,7 +62,7 @@ interface CameraAnim {
   cy: Spring;
   logk: Spring;
   target: Camera;
-  path: ((k: number) => { cx: number; cy: number }) | null;
+  path: CameraPath | null;
 }
 
 interface FrameCtx {
@@ -121,6 +123,14 @@ export class MapRenderer {
   #hoverFns: ((path: string | null, screen: { x: number; y: number }) => void)[] = [];
   #clickFns: ((path: string | null) => void)[] = [];
   #zoomFns: ((scale: number) => void)[] = [];
+  #focusFns: ((path: string) => void)[] = [];
+  #dblFns: ((path: string | null) => void)[] = [];
+  #nav: MapNavigator | null = null;
+  // After a wheel zoom or drag the camera is free: relayouts carry it along
+  // with the focused folder instead of refitting that folder.
+  #freeView: { focus: Circle } | null = null;
+  #reportedK = 1; // last scale sent to onZoom (culling)
+  #firstPick: string | null = null; // the path under a double click's first click
   #idleFrames = 0;
   #lastHover: string | null = null;
   #motion: Motion = motionPolicy(false);
@@ -158,6 +168,15 @@ export class MapRenderer {
     app.canvas.addEventListener("pointermove", this.#onPointerMove);
     app.canvas.addEventListener("pointerleave", this.#onPointerLeave);
     app.canvas.addEventListener("click", this.#onClick);
+    app.canvas.addEventListener("dblclick", this.#onDblClick);
+    this.#nav = new MapNavigator(app.canvas, {
+      camera: () => this.#camera(),
+      aimed: () => this.#cam.target,
+      size: () => this.#size(),
+      root: () => this.#layout.get(""),
+      free: () => this.#freeRect(),
+      view: (target, path, snap) => this.#setView(target, path, snap),
+    });
     app.ticker.add((t) => this.#frame(t.deltaMS));
     this.#stopMotionWatch = watchReducedMotion((reduced) => {
       this.#motion = motionPolicy(reduced);
@@ -195,6 +214,7 @@ export class MapRenderer {
   }
 
   zoomTo(path: string): void {
+    this.#freeView = null;
     this.#zoomPath = this.#layout.has(path) ? path : "";
     this.#aimCamera(true);
     this.#wake();
@@ -202,6 +222,9 @@ export class MapRenderer {
 
   /** The viewport rect (CSS px) the layout was fitted into; zoom targets are centred in it. */
   setFreeArea(rect: Rect): void {
+    const f = this.#free;
+    // A resize repacks the whole map: refit the focused folder rather than follow it.
+    if (!f || f.x0 !== rect.x0 || f.y0 !== rect.y0 || f.x1 !== rect.x1 || f.y1 !== rect.y1) this.#freeView = null;
     this.#free = rect;
   }
 
@@ -218,6 +241,16 @@ export class MapRenderer {
     this.#zoomFns.push(fn);
   }
 
+  /** Fires when wheel zoom or dragging brings a different folder into focus (see focusFolder). */
+  onFocus(fn: (path: string) => void): void {
+    this.#focusFns.push(fn);
+  }
+
+  /** Fires on a double click with the path under its first click (null: outside the repo). */
+  onDoubleClick(fn: (path: string | null) => void): void {
+    this.#dblFns.push(fn);
+  }
+
   destroy(): void {
     this.#destroyed = true;
     const app = this.#app;
@@ -226,6 +259,8 @@ export class MapRenderer {
     app.canvas.removeEventListener("pointermove", this.#onPointerMove);
     app.canvas.removeEventListener("pointerleave", this.#onPointerLeave);
     app.canvas.removeEventListener("click", this.#onClick);
+    app.canvas.removeEventListener("dblclick", this.#onDblClick);
+    this.#nav?.destroy();
     for (const v of this.#views.values()) v.label?.texture.destroy(true);
     this.#views.clear();
     app.destroy(true, { children: true });
@@ -248,7 +283,55 @@ export class MapRenderer {
     return { cx: makeSpring(c.cx), cy: makeSpring(c.cy), logk: makeSpring(Math.log(c.k)), target: c, path: null };
   }
 
+  #freeRect(): Rect {
+    const { width, height } = this.#size();
+    return this.#free ?? { x0: 0, y0: 0, x1: width, y1: height };
+  }
+
+  /** A free camera move (wheel zoom, drag): aims the springs, then re-derives the focused folder. */
+  #setView(target: Camera, path: CameraPath | null, snap: boolean): void {
+    const cam = this.#cam;
+    cam.target = target;
+    cam.path = snap ? null : path;
+    retarget(cam.cx, target.cx);
+    retarget(cam.cy, target.cy);
+    retarget(cam.logk, Math.log(target.k));
+    if (snap) for (const s of [cam.cx, cam.cy, cam.logk]) snapSpring(s);
+    const { width, height } = this.#size();
+    const focus = focusFolder(this.#layout, target, width, height, this.#freeRect());
+    const fc = this.#layout.get(focus);
+    // Free before anything relayouts (onZoom below does), or the relayout would refit the old target.
+    this.#freeView = fc ? { focus: fc } : null;
+    const moved = focus !== this.#zoomPath;
+    this.#zoomPath = focus;
+    this.#wake();
+    if (moved) for (const fn of this.#focusFns) fn(focus);
+    // Re-cull as the scale changes, but not on every wheel tick.
+    if (Math.abs(Math.log(target.k / this.#reportedK)) > 0.1) this.#reportZoom(target.k);
+  }
+
+  #reportZoom(k: number): void {
+    this.#reportedK = k;
+    for (const fn of this.#zoomFns) fn(k);
+  }
+
+  /** Relayout under a free camera: keep showing the same part of the focused folder. */
+  #followFocus(): void {
+    const was = this.#freeView?.focus;
+    const now = this.#layout.get(this.#zoomPath);
+    if (!was || !now) return;
+    if (was.x === now.x && was.y === now.y && was.r === now.r) return;
+    const target = follow(this.#cam.target, was, now);
+    this.#freeView = { focus: now };
+    this.#cam.path = null;
+    this.#cam.target = target;
+    retarget(this.#cam.cx, target.cx);
+    retarget(this.#cam.cy, target.cy);
+    retarget(this.#cam.logk, Math.log(target.k));
+  }
+
   #aimCamera(userInitiated: boolean): void {
+    if (this.#freeView && !userInitiated) return this.#followFocus();
     const c = this.#layout.get(this.#zoomPath);
     if (!c) return;
     const { width, height } = this.#size();
@@ -264,7 +347,7 @@ export class MapRenderer {
       retarget(this.#cam.logk, Math.log(target.k));
       this.#cam.target = target;
     }
-    if (changed || userInitiated) for (const fn of this.#zoomFns) fn(target.k);
+    if (changed || userInitiated) this.#reportZoom(target.k);
   }
 
   /** Advances the camera; returns true while it is still moving. */
@@ -303,8 +386,9 @@ export class MapRenderer {
   }
 
   #onPointerMove = (ev: PointerEvent): void => {
+    if (this.#nav?.dragging) return this.#onPointerLeave(ev); // no tooltip while dragging
     const path = this.#pickAt(ev);
-    if (this.#app) this.#app.canvas.style.cursor = path !== null && path !== this.#zoomPath ? "pointer" : "default";
+    if (this.#app) this.#app.canvas.style.cursor = path !== null && path !== this.#zoomPath ? "pointer" : "grab";
     this.#lastHover = path;
     for (const fn of this.#hoverFns) fn(path, { x: ev.clientX, y: ev.clientY });
   };
@@ -316,8 +400,15 @@ export class MapRenderer {
   };
 
   #onClick = (ev: MouseEvent): void => {
+    // The end of a drag is not a click; a double click's second click is handled by #onDblClick.
+    if (this.#nav?.swallowClick() || ev.detail > 1) return;
     const path = this.#pickAt(ev);
+    this.#firstPick = path;
     for (const fn of this.#clickFns) fn(path);
+  };
+
+  #onDblClick = (): void => {
+    for (const fn of this.#dblFns) fn(this.#firstPick);
   };
 
   // ---- frame loop -------------------------------------------------------
