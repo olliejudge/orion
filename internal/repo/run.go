@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"log"
 	"maps"
-	"os"
 	"sync"
 	"time"
 
@@ -69,14 +68,18 @@ func (e *Engine) Run(ctx context.Context) error {
 		return fmt.Errorf("start watcher: %w", err)
 	}
 	polls := &pollSet{}
-	rw := &rootWatch{w: w, polls: polls, watched: map[string]os.FileInfo{}}
+	rw := &rootWatch{w: w, polls: polls, roots: map[string]rootState{}}
 	var sched *Scheduler
 	sched = NewScheduler(debounce, minInterval, func(key string, r Reason) {
+		// Restore lost root watches first, so this recompute misses nothing
+		// written while a root was unwatched; other worktrees whose root was
+		// (re)watched get a status recompute of their own.
+		rw.reconcile()
 		e.fire(ctx, key, r)
-		// A fire may have dropped or re-found a worktree whose root lost its
-		// watch; files written while it was unwatched were never reported.
-		for _, id := range rw.reconcile() {
-			sched.Trigger(string(id), ReasonFiles)
+		for _, id := range rw.takeFresh() {
+			if string(id) != key {
+				sched.Trigger(string(id), ReasonFiles)
+			}
 		}
 	})
 	ticker := time.NewTicker(pollInterval)
@@ -101,7 +104,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	e.watchRoots = rw.set
 	e.rebuildRouting() // watches linked worktrees outside the main root
 	e.work.Unlock()
-	rw.reconcile() // the startup rescan below covers the roots just added
+	rw.takeFresh() // the startup rescan below covers the roots just watched
 	close(e.ready)
 	e.triggerAll(sched, ReasonRescan) // catch changes made between Open and now
 
@@ -148,14 +151,12 @@ func (e *Engine) Run(ctx context.Context) error {
 func (e *Engine) dispatch(s *Scheduler, rw *rootWatch, ev watch.Event) {
 	if ev.Rescan {
 		// The path may be a root or (FSEvents drops) an ancestor of one, and
-		// the dropped events may include a root's deletion: check them all.
-		rw.checkAll()
+		// the dropped events may include a root's deletion.
+		rw.markStale("")
 		e.triggerAll(s, ReasonRescan)
 		return
 	}
-	if rw.lost(ev.Path) {
-		s.Trigger(keyWorktrees, ReasonWorktrees)
-	}
+	rw.markStale(ev.Path)
 	rt := e.router.Load().Route(ev.Path)
 	switch rt.Class {
 	case FileEvent:
@@ -170,102 +171,99 @@ func (e *Engine) dispatch(s *Scheduler, rw *rootWatch, ev watch.Event) {
 }
 
 // rootWatch keeps the watcher's roots for linked worktrees outside the main
-// root in line with the worktree set. A root whose directory is deleted or
-// replaced loses its watch without notice on linux (inotify watches follow
-// the inode, and the root's parent is not watched), so such roots are
-// forgotten and re-added once the directory is back.
+// root in line with the worktree set.
+//
+// A root whose directory is deleted, renamed or replaced loses its inotify
+// watch without notice (watches follow the inode, and the root's parent is
+// not watched); the only sign is an event naming the root itself. Such a
+// root is marked stale and added again before the next recompute. Add is
+// idempotent, so a false alarm costs little (on darwin, whose path-based
+// streams survive this, nothing), and inode numbers are not compared
+// because a recreated directory can reuse its predecessor's.
 type rootWatch struct {
 	w     watch.Watcher
 	polls *pollSet
 
-	mu   sync.Mutex
-	want map[string]model.WorktreeID // roots the current worktrees need
-	// watched maps each root Add was called for to the directory it watched;
-	// nil means Add failed and the worktree is polled instead.
-	watched map[string]os.FileInfo
-	fresh   []model.WorktreeID // worktrees whose root was (re)watched since the last reconcile
+	mu    sync.Mutex
+	want  map[string]model.WorktreeID // roots the current worktrees need
+	roots map[string]rootState        // roots Add was called for
+	fresh []model.WorktreeID          // worktrees whose root was (re)watched since takeFresh
 }
+
+type rootState int
+
+const (
+	live   rootState = iota
+	stale            // the watch may be gone: Add again
+	polled           // Add failed: the worktree is polled instead
+)
 
 // set is e.watchRoots: it records the roots the worktrees need and brings
 // the watcher in line. It is called on every routing rebuild, often with an
 // unchanged set, so it only acts on differences.
-func (rw *rootWatch) set(roots map[string]model.WorktreeID) {
+func (rw *rootWatch) set(want map[string]model.WorktreeID) {
 	rw.mu.Lock()
 	defer rw.mu.Unlock()
-	rw.want = maps.Clone(roots)
+	rw.want = maps.Clone(want)
 	rw.sync()
 }
 
-// reconcile re-adds wanted roots that have no watch (lost, or missing when
-// last tried) and returns the worktrees whose root was watched since the
-// previous call, so their status can be recomputed.
-func (rw *rootWatch) reconcile() []model.WorktreeID {
+// reconcile re-adds stale roots, and wanted roots that were missing before.
+func (rw *rootWatch) reconcile() {
 	rw.mu.Lock()
 	defer rw.mu.Unlock()
 	rw.sync()
-	fresh := rw.fresh
-	rw.fresh = nil
-	return fresh
 }
 
 // sync unwatches unwanted roots and watches wanted ones. rw.mu must be held.
 func (rw *rootWatch) sync() {
-	for root := range rw.watched {
+	for root := range rw.roots {
 		if _, ok := rw.want[root]; !ok {
 			_ = rw.w.Remove(root)
-			delete(rw.watched, root)
+			delete(rw.roots, root)
 		}
 	}
 	for root, id := range rw.want {
-		if _, ok := rw.watched[root]; ok {
+		if st, ok := rw.roots[root]; ok && st != stale {
 			continue
 		}
-		fi, err := os.Stat(root)
-		if err != nil {
-			continue // gone: the worktree sync drops it, or it comes back and is retried
-		}
-		if err := rw.w.Add(root); err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				continue
-			}
-			rw.polls.add(id, fmt.Errorf("watch %s: %w", root, err))
-			fi = nil
-		} else {
+		switch err := rw.w.Add(root); {
+		case err == nil:
+			rw.roots[root] = live
 			rw.fresh = append(rw.fresh, id)
+		case errors.Is(err, fs.ErrNotExist):
+			// Gone: the worktree sync drops it, or it comes back and is retried.
+		default:
+			rw.roots[root] = polled
+			rw.polls.add(id, fmt.Errorf("watch %s: %w", root, err))
 		}
-		rw.watched[root] = fi
 	}
 }
 
-// lost reports whether p is a watched root whose directory is gone or was
-// replaced since it was watched. Such a root is unwatched and forgotten, so
-// the next reconcile watches it again if it is still wanted.
-func (rw *rootWatch) lost(p string) bool {
+// markStale marks the live root p stale, or every live root when p is "".
+func (rw *rootWatch) markStale(p string) {
 	rw.mu.Lock()
 	defer rw.mu.Unlock()
-	return rw.lostLocked(p)
+	if p != "" {
+		if rw.roots[p] == live {
+			rw.roots[p] = stale
+		}
+		return
+	}
+	for root, st := range rw.roots {
+		if st == live {
+			rw.roots[root] = stale
+		}
+	}
 }
 
-func (rw *rootWatch) lostLocked(root string) bool {
-	fi := rw.watched[root]
-	if fi == nil {
-		return false // not a root, or polled
-	}
-	if cur, err := os.Stat(root); err == nil && os.SameFile(fi, cur) {
-		return false
-	}
-	_ = rw.w.Remove(root)
-	delete(rw.watched, root)
-	return true
-}
-
-// checkAll runs lost for every watched root.
-func (rw *rootWatch) checkAll() {
+// takeFresh returns and clears the worktrees whose root was (re)watched.
+func (rw *rootWatch) takeFresh() []model.WorktreeID {
 	rw.mu.Lock()
 	defer rw.mu.Unlock()
-	for root := range rw.watched {
-		rw.lostLocked(root)
-	}
+	fresh := rw.fresh
+	rw.fresh = nil
+	return fresh
 }
 
 func (e *Engine) triggerAll(s *Scheduler, r Reason) {
