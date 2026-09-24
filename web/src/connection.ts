@@ -1,7 +1,14 @@
 import type { ResyncRequest, ServerMessage } from "./protocol";
 import type { RepoStore } from "./store";
 
-export type ConnectionStatus = "connecting" | "open" | "reconnecting";
+export type ConnectionStatus = "connecting" | "open" | "reconnecting" | "stopped";
+
+/**
+ * Consecutive failed reconnects (~23s of backoff) after which we assume the
+ * server was stopped: its auth token is per run, so a restarted Orion can
+ * never accept this page again.
+ */
+export const STOPPED_AFTER_FAILURES = 8;
 
 const BACKOFF_START_MS = 250;
 const BACKOFF_MAX_MS = 5000;
@@ -19,9 +26,15 @@ export function backoffMs(attempt: number): number {
   return Math.min(BACKOFF_MAX_MS, BACKOFF_START_MS * 2 ** Math.min(attempt, 16));
 }
 
+/** Status to show after `failures` consecutive closes without a successful open. */
+export function statusAfterClose(failures: number): ConnectionStatus {
+  return failures >= STOPPED_AFTER_FAILURES ? "stopped" : "reconnecting";
+}
+
 /**
  * Keeps a WebSocket open to the Orion server and feeds every message into
- * `store`. Returns a function that closes the socket and stops reconnecting.
+ * `store`. Retries forever (quietly past "stopped"). Returns a function that
+ * closes the socket and stops reconnecting.
  */
 export function connect(
   store: RepoStore,
@@ -60,9 +73,9 @@ export function connect(
     };
     ws.onclose = () => {
       if (stopped || socket !== ws) return;
-      onStatus("reconnecting");
       timer = setTimeout(open, backoffMs(attempt));
       attempt++;
+      onStatus(statusAfterClose(attempt));
     };
   };
 
