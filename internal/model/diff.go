@@ -251,19 +251,27 @@ func (s *Store) deriveActivity(prev, next State, now time.Time) []Activity {
 				}
 			}
 		}
-		if committed > 0 {
-			acts = append(acts, Activity{TS: ts, Worktree: wt.ID, Kind: "commit", Sha: wt.Head, Subject: wt.HeadSubject, Files: committed})
-		}
+		// The worktree is the base branch advancing by its own commit (e.g.
+		// base is local main with no remote): its entries leave the overlay
+		// because they were committed, not merged.
+		ownBase := headMoved && old.Head == prev.Repo.BaseSha && wt.Head == next.Repo.BaseSha
+		merged := 0
 		if baseMoved {
-			merged := 0
 			for path := range before {
 				if _, ok := after[path]; !ok {
 					merged++
 				}
 			}
-			if merged > 0 {
-				acts = append(acts, Activity{TS: ts, Worktree: wt.ID, Kind: "merge", Sha: next.Repo.BaseSha, Files: merged})
-			}
+		}
+		if ownBase {
+			committed += merged
+			merged = 0
+		}
+		if committed > 0 {
+			acts = append(acts, Activity{TS: ts, Worktree: wt.ID, Kind: "commit", Sha: wt.Head, Subject: wt.HeadSubject, Files: committed})
+		}
+		if merged > 0 {
+			acts = append(acts, Activity{TS: ts, Worktree: wt.ID, Kind: "merge", Sha: next.Repo.BaseSha, Files: merged})
 		}
 	}
 	return acts
