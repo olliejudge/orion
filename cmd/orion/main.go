@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -79,6 +80,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	eng, err := repo.Open(ctx, path, *base, gitx.Runner{})
 	if err != nil {
+		if ctx.Err() != nil {
+			return 0 // Ctrl-C during startup interrupted git: not a failure
+		}
 		fmt.Fprintln(stderr, "orion:", firstLine(err))
 		return 1
 	}
@@ -86,16 +90,27 @@ func run(args []string, stdout, stderr io.Writer) int {
 	defer cancel()
 	srv, err := server.Start(ctx, eng, server.Options{Port: *port, Dev: *dev, Assets: webassets.FS()})
 	if err != nil {
+		if ctx.Err() != nil {
+			return 0
+		}
 		fmt.Fprintln(stderr, "orion:", firstLine(err))
+		return 1
+	}
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		fmt.Fprintln(stderr, "orion:", err)
+		return 1
+	}
+	if *dev && *port != 0 && u.Port() != strconv.Itoa(*port) {
+		// Vite's /ws proxy targets one fixed port, so a fallback port would
+		// leave the dev UI talking to whatever holds the requested one.
+		cancel()
+		_ = srv.Wait()
+		fmt.Fprintf(stderr, "orion: port %d is in use; --dev does not fall back to another port, as Vite proxies /ws to this one\n", *port)
 		return 1
 	}
 	fmt.Fprintf(stdout, "orion %s serving %s\n  %s\n", version.Version, eng.Snapshot().Repo.Name, srv.URL)
 	if *dev {
-		u, err := url.Parse(srv.URL)
-		if err != nil {
-			fmt.Fprintln(stderr, "orion:", err)
-			return 1
-		}
 		fmt.Fprintf(stdout, "  dev UI (Vite): http://localhost:%d/?t=%s\n", server.VitePort, u.Query().Get("t"))
 	}
 	if !*noOpen && !*dev {
@@ -130,7 +145,8 @@ func firstLine(err error) string {
 }
 
 // openBrowser opens url with the platform's opener, without waiting for it.
-func openBrowser(url string) error {
+// Tests replace it.
+var openBrowser = func(url string) error {
 	var name string
 	switch runtime.GOOS {
 	case "darwin":
