@@ -1,5 +1,5 @@
 import { Application, Container, Graphics, Sprite, type Texture } from "pixi.js";
-import { colorForExt, hexToNumber, lighten, worktreeColor } from "../colors";
+import { VISION_FILE_ALPHA, colorForExt, hexToNumber, lighten, worktreeColor } from "../colors";
 import type { NodeVisual, Touch } from "../layout/encoding";
 import type { Circle } from "../layout/pack";
 import type { WorktreeId } from "../protocol";
@@ -421,7 +421,7 @@ export class MapRenderer {
       if (!hidden) {
         let tex: Texture;
         let tint = 0xffffff;
-        let alpha = 1;
+        let alpha: number;
         if (night) {
           tex = f.bank.disc;
           tint = lead ? hexToNumber(worktreeColor(lead.colorIndex)) : NIGHT_IDLE;
@@ -431,6 +431,7 @@ export class MapRenderer {
           alpha = 0.9;
         } else {
           tex = f.bank.sphere(colorForExt(vis.ext));
+          alpha = VISION_FILE_ALPHA;
         }
         if (v.body.texture !== tex) v.body.texture = tex;
         v.body.tint = tint;
