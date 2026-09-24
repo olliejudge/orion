@@ -3,6 +3,7 @@ import type { Circle } from "../layout/pack";
 import {
   arcLetterAngles,
   clickTarget,
+  clipArc,
   dashArcs,
   fitCamera,
   fitLabel,
@@ -10,9 +11,11 @@ import {
   labelNames,
   parentDir,
   pick,
+  rimView,
   screenToWorld,
   splitSegments,
   worldToScreen,
+  zoomPath,
 } from "./geometry";
 
 const c = (path: string, x: number, y: number, r: number, depth: number, isDir = true): Circle => ({ path, x, y, r, depth, isDir });
@@ -189,5 +192,88 @@ describe("labelNames", () => {
       ["lib/deep", { ...c("lib/deep", 0, 0, 5, 2), aggregate: 3 }],
     ]);
     expect(labelNames(l).get("lib")).toBe("lib");
+  });
+});
+
+describe("zoomPath", () => {
+  it("scales about the point that keeps its screen position, ending exactly at the target", () => {
+    const from = { cx: 500, cy: 400, k: 1 };
+    const to = { cx: 700, cy: 250, k: 40 };
+    const at = zoomPath(from, to)!;
+    expect(at(1).cx).toBeCloseTo(500);
+    expect(at(1).cy).toBeCloseTo(400);
+    expect(at(40).cx).toBeCloseTo(700);
+    expect(at(40).cy).toBeCloseTo(250);
+    // The pivot (the world point at the same screen spot in both cameras)
+    // stays put on screen at every intermediate scale.
+    const px = (700 * 40 - 500 * 1) / 39;
+    const py = (250 * 40 - 400 * 1) / 39;
+    const s0 = worldToScreen(from, 1000, 800, px, py);
+    for (const k of [2, 5, 13, 39]) {
+      const s = worldToScreen({ ...at(k), k }, 1000, 800, px, py);
+      expect(s.x).toBeCloseTo(s0.x);
+      expect(s.y).toBeCloseTo(s0.y);
+    }
+  });
+
+  it("is null when the scale barely changes (a pan)", () => {
+    expect(zoomPath({ cx: 0, cy: 0, k: 2 }, { cx: 50, cy: 0, k: 2.01 })).toBeNull();
+    expect(zoomPath({ cx: 0, cy: 0, k: Number.NaN }, { cx: 50, cy: 0, k: 2 })).toBeNull();
+  });
+});
+
+describe("rimView", () => {
+  const rect = { x0: 0, y0: 0, x1: 100, y1: 80 };
+
+  it("is hidden when the circle misses the rect", () => {
+    expect(rimView(300, 40, 50, rect)).toEqual({ kind: "hidden" });
+    expect(rimView(-20, -20, 10, rect)).toEqual({ kind: "hidden" });
+  });
+
+  it("covers when the rect lies inside the circle", () => {
+    expect(rimView(50, 40, 1000, rect)).toEqual({ kind: "covers" });
+    expect(rimView(5000, 40, 1e6, rect)).toEqual({ kind: "covers" });
+  });
+
+  it("is full when the centre is inside the rect", () => {
+    expect(rimView(50, 40, 30, rect)).toEqual({ kind: "full" });
+  });
+
+  it("gives the angles the rect spans, seen from an outside centre", () => {
+    const v = rimView(50, 1040, 1000, rect);
+    expect(v.kind).toBe("arc");
+    if (v.kind !== "arc") return;
+    // The rect is straight "up" (−π/2) from the centre, spanning its width.
+    expect((v.a0 + v.a1) / 2).toBeCloseTo(-Math.PI / 2, 2);
+    expect(v.a1 - v.a0).toBeGreaterThan(0.09);
+    expect(v.a1 - v.a0).toBeLessThan(0.11);
+  });
+
+  it("unwraps a window that straddles ±π", () => {
+    const v = rimView(1100, 40, 1050, rect);
+    expect(v.kind).toBe("arc");
+    if (v.kind !== "arc") return;
+    expect(v.a0).toBeLessThan(Math.PI);
+    expect(v.a1).toBeGreaterThan(Math.PI);
+  });
+});
+
+describe("clipArc", () => {
+  it("intersects an arc with a window, trying whole turns", () => {
+    expect(clipArc(-Math.PI / 2, Math.PI, { a0: 0, a1: 0.5 })).toEqual([[0, 0.5]]);
+    const shifted = clipArc(0, 1, { a0: 2 * Math.PI + 0.25, a1: 2 * Math.PI + 0.5 });
+    expect(shifted).toHaveLength(1);
+    expect(shifted[0]![0]).toBeCloseTo(0.25);
+    expect(shifted[0]![1]).toBeCloseTo(0.5);
+    expect(clipArc(0, 1, { a0: 2, a1: 3 })).toEqual([]);
+  });
+
+  it("returns both ends of a full ring when the window straddles its seam", () => {
+    const parts = clipArc(-Math.PI / 2, (3 * Math.PI) / 2, { a0: -Math.PI / 2 - 0.1, a1: -Math.PI / 2 + 0.1 });
+    expect(parts).toHaveLength(2);
+    expect(parts[0]![0]).toBeCloseTo(-Math.PI / 2);
+    expect(parts[0]![1]).toBeCloseTo(-Math.PI / 2 + 0.1);
+    expect(parts[1]![0]).toBeCloseTo((3 * Math.PI) / 2 - 0.1);
+    expect(parts[1]![1]).toBeCloseTo((3 * Math.PI) / 2);
   });
 });

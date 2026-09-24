@@ -29,6 +29,8 @@ export function packValue(size: number): number {
 export interface CullOptions {
   minFileR?: number;
   minDirR?: number;
+  /** Extra file paths kept (at r ≥ minFileR) like touched files, e.g. ones still shimmering after a merge. */
+  keep?: ReadonlySet<string>;
 }
 
 /** The scale-independent half of a layout: the packed tree for one viewport size. */
@@ -56,7 +58,8 @@ export function packTree(root: TreeNode, width: number, height: number): PackedT
  * Turns a packed tree into the circles to draw. To cull at a zoom scale k,
  * pass minFileR/minDirR divided by k. (dx, dy) offsets every circle.
  *
- * Culling: files with r < minFileR are omitted, except touched files, which
+ * Culling: files with r < minFileR are omitted, except touched files (and
+ * opts.keep paths), which
  * are kept with r raised to minFileR so no worktree activity disappears.
  * d3 leaves PADDING (3 px) between circles, so at scale ≥ 1 (minFileR ≤ 1.5)
  * raised circles never overlap each other or their parent's edge. A
@@ -73,6 +76,7 @@ export function packTree(root: TreeNode, width: number, height: number): PackedT
 export function cullLayout(packed: PackedTree, opts?: CullOptions, dx = 0, dy = 0): Map<string, Circle> {
   const minFileR = opts?.minFileR ?? MIN_FILE_R;
   const minDirR = opts?.minDirR ?? MIN_DIR_R;
+  const keep = opts?.keep;
   const out = new Map<string, Circle>();
 
   if (packed.node === null) {
@@ -85,7 +89,7 @@ export function cullLayout(packed: PackedTree, opts?: CullOptions, dx = 0, dy = 
     const c: Circle = { path: n.data.path, x: n.x + dx, y: n.y + dy, r: n.r, depth: n.depth, isDir: n.data.isDir };
     if (!n.data.isDir) {
       if (n.r >= minFileR) out.set(c.path, c);
-      else if (n.data.touched) out.set(c.path, { ...c, r: minFileR });
+      else if (n.data.touched || keep?.has(c.path)) out.set(c.path, { ...c, r: minFileR });
       return;
     }
     const kids = n.children ?? [];

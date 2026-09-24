@@ -45,6 +45,81 @@ export function screenToWorld(cam: Camera, width: number, height: number, x: num
   return { x: (x - width / 2) / cam.k + cam.cx, y: (y - height / 2) / cam.k + cam.cy };
 }
 
+/**
+ * A zoom from one camera to another as a pure scale about the one world point
+ * that sits at the same screen position in both, so the target never swings
+ * off screen mid-zoom (animating centre and scale separately would). Returns
+ * the camera centre for a scale k along the way, or null when the scales are
+ * (nearly) equal or invalid: that move is a pan.
+ */
+export function zoomPath(from: Camera, to: Camera): ((k: number) => { cx: number; cy: number }) | null {
+  if (!(from.k > 0) || !(to.k > 0) || !Number.isFinite(from.k) || !Number.isFinite(to.k)) return null;
+  if (Math.abs(Math.log(to.k / from.k)) < 0.05) return null;
+  const px = (to.cx * to.k - from.cx * from.k) / (to.k - from.k);
+  const py = (to.cy * to.k - from.cy * from.k) / (to.k - from.k);
+  const ax = (px - from.cx) * from.k;
+  const ay = (py - from.cy) * from.k;
+  return (k) => ({ cx: px - ax / k, cy: py - ay / k });
+}
+
+// ---- viewport clipping ---------------------------------------------------
+
+export interface Rect {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+/**
+ * How much of a circle's rim can be inside `rect` (all in one coordinate
+ * space, e.g. screen px):
+ * - hidden: the circle does not reach the rect;
+ * - covers: the rect lies wholly inside the circle, so the rim is off screen;
+ * - full: the centre is inside the rect, so any of the rim may show;
+ * - arc: the centre is outside, so only angles a0..a1 (a0 < a1, span < π)
+ *   can show. Lets huge zoomed-in circles draw only their visible arc.
+ */
+export type RimView = { kind: "hidden" } | { kind: "covers" } | { kind: "full" } | { kind: "arc"; a0: number; a1: number };
+
+export function rimView(x: number, y: number, r: number, rect: Rect): RimView {
+  const nx = Math.min(Math.max(x, rect.x0), rect.x1) - x;
+  const ny = Math.min(Math.max(y, rect.y0), rect.y1) - y;
+  if (nx * nx + ny * ny > r * r) return { kind: "hidden" };
+  const fx = Math.max(Math.abs(x - rect.x0), Math.abs(x - rect.x1));
+  const fy = Math.max(Math.abs(y - rect.y0), Math.abs(y - rect.y1));
+  if (fx * fx + fy * fy <= r * r) return { kind: "covers" };
+  if (nx === 0 && ny === 0) return { kind: "full" };
+  const ref = Math.atan2((rect.y0 + rect.y1) / 2 - y, (rect.x0 + rect.x1) / 2 - x);
+  let a0 = Infinity;
+  let a1 = -Infinity;
+  for (const [cx, cy] of [
+    [rect.x0, rect.y0],
+    [rect.x1, rect.y0],
+    [rect.x0, rect.y1],
+    [rect.x1, rect.y1],
+  ] as const) {
+    let a = Math.atan2(cy - y, cx - x);
+    while (a < ref - Math.PI) a += Math.PI * 2;
+    while (a > ref + Math.PI) a -= Math.PI * 2;
+    a0 = Math.min(a0, a);
+    a1 = Math.max(a1, a);
+  }
+  return { kind: "arc", a0, a1 };
+}
+
+/** Parts of the arc a0..a1 inside the angular window w, trying the window shifted by whole turns. */
+export function clipArc(a0: number, a1: number, w: { a0: number; a1: number }): [number, number][] {
+  const out: [number, number][] = [];
+  const turn = Math.PI * 2;
+  for (let m = -2; m <= 2; m++) {
+    const s = Math.max(a0, w.a0 + m * turn);
+    const e = Math.min(a1, w.a1 + m * turn);
+    if (e > s) out.push([s, e]);
+  }
+  return out;
+}
+
 // ---- folder labels along the top arc ------------------------------------
 
 /**
