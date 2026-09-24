@@ -7,7 +7,7 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./e2e",
   globalSetup: "./e2e/global-setup.ts",
-  // One orion process is shared by every test, so run them one at a time.
+  // Tests share the global orion (and the screenshot test starts its own), so run them one at a time.
   workers: 1,
   fullyParallel: false,
   retries: process.env.CI ? 1 : 0,

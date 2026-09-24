@@ -15,6 +15,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"math/rand/v2"
 	"os"
 	"os/signal"
@@ -36,6 +37,9 @@ type config struct {
 // DIR.wt/<marker>), so it never deletes anything else.
 const markerName = "orion-demo"
 
+// maxSpeed caps --speed: at 1000x the 900 ms pause between actions is already under 1 ms.
+const maxSpeed = 1000
+
 func (c config) validate() error {
 	if c.Dir == "" {
 		return errors.New("--dir must not be empty")
@@ -43,8 +47,8 @@ func (c config) validate() error {
 	if c.Agents < 1 || c.Agents > maxAgents {
 		return fmt.Errorf("--agents must be between 1 and %d, got %d", maxAgents, c.Agents)
 	}
-	if c.Speed <= 0 {
-		return fmt.Errorf("--speed must be > 0, got %g", c.Speed)
+	if !(c.Speed > 0) || math.IsInf(c.Speed, 0) || c.Speed > maxSpeed {
+		return fmt.Errorf("--speed must be > 0 and <= %d, got %g", maxSpeed, c.Speed)
 	}
 	if c.Steps < 0 {
 		return fmt.Errorf("--steps must be >= 0, got %d", c.Steps)

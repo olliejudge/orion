@@ -14,7 +14,7 @@
 - Frontend: TypeScript, Svelte 5, PixiJS v8, d3-hierarchy, Vite, Vitest, Playwright, pnpm.
 - Release: GoReleaser, GitHub Actions.
 
-**Spec:** `docs/superpowers/specs/2026-09-23-orion-design.md`. Read it before starting any task. Where this plan and the spec disagree, the spec's *behaviour* wins and this plan's *names/interfaces* win.
+**Spec:** `docs/superpowers/specs/2026-09-23-orion-design.md`. Read it before starting any task. For what shipped differently, see the spec's "As shipped (Phase 1)" section. Where this plan and the spec disagree, the spec's *behaviour* wins and this plan's *names/interfaces* win.
 
 ## Global Constraints
 

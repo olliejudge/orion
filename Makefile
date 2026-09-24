@@ -11,24 +11,21 @@ REPO    ?= .
 help: ## List targets
 	@grep -E '^[a-z]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-8s %s\n", $$1, $$2}'
 
-build: web ## Build the web UI (if present) and bin/orion
+build: web ## Build the web UI and bin/orion
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/orion ./cmd/orion
 
-test: ## Run Go tests (and web tests once web/ exists)
+test: ## Run Go and web unit tests
 	$(GO) test ./...
-	@if [ -f web/package.json ]; then pnpm -C web test; fi
+	pnpm -C web test
 
-lint: ## go vet + golangci-lint (and web lint once web/ exists)
+lint: ## go vet + golangci-lint + web lint
 	$(GO) vet ./...
 	golangci-lint run
-	@if [ -f web/package.json ]; then pnpm -C web lint; fi
+	pnpm -C web lint
 
-web: ## Build web/ into internal/webassets/static (skipped when web/ is absent)
-	@if [ -f web/package.json ]; then \
-		pnpm -C web install --frozen-lockfile && pnpm -C web build; \
-	else \
-		echo "web/ not present yet: skipping UI build (the fallback page will be served)"; \
-	fi
+web: ## Build web/ into internal/webassets/static
+	pnpm -C web install --frozen-lockfile
+	pnpm -C web build
 
 # Vite is stopped whenever the Go server exits (it failed, or Ctrl-C). Ctrl-C
 # reaches orion and Vite through the terminal; the shell keeps waiting until
@@ -36,7 +33,6 @@ web: ## Build web/ into internal/webassets/static (skipped when web/ is absent)
 # after any interrupt. On TERM, orion (go run's child) is stopped directly, as
 # go run does not forward it.
 dev: ## Run the Go server with --dev plus Vite's dev server
-	@if [ ! -f web/package.json ]; then echo "make dev needs web/ (added by the web scaffold task)"; exit 1; fi
 	@pnpm -C web dev & vite=$$!; \
 		trap 'kill $$vite 2>/dev/null' EXIT; \
 		$(GO) run ./cmd/orion --dev --no-open --port 7070 "$(REPO)" & server=$$!; \
