@@ -19,3 +19,7 @@ node_modules/
 .idea/
 .vscode/
 *.swp
+
+# Built web UI (only .gitkeep is committed)
+internal/webassets/static/*
+!internal/webassets/static/.gitkeep
