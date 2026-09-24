@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SPRING_OMEGA, isSettled, makeSpring, retarget, stepSpring } from "./springs";
+import { SETTLE_EPS, SPRING_OMEGA, isSettled, makeSpring, retarget, stepSpring } from "./springs";
 
 function run(s: ReturnType<typeof makeSpring>, ms: number, frameMs = 1000 / 60): number[] {
   const trace: number[] = [];
@@ -58,5 +58,17 @@ describe("springs", () => {
 
   it("exposes the tuning constant", () => {
     expect(SPRING_OMEGA).toBe(20);
+  });
+
+  it("settles against a caller-supplied epsilon", () => {
+    const coarse = makeSpring(0, 0.0015);
+    stepSpring(coarse, 0.016);
+    expect(coarse.value).toBe(0.0015); // under the default epsilon: snaps at once
+    const fine = makeSpring(0, 0.0015);
+    stepSpring(fine, 0.016, SPRING_OMEGA, 0.0005);
+    expect(fine.value).toBeGreaterThan(0);
+    expect(fine.value).toBeLessThan(0.0015);
+    expect(isSettled(fine, 0.0005)).toBe(false);
+    expect(SETTLE_EPS).toBe(0.01);
   });
 });

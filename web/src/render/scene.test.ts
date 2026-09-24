@@ -89,7 +89,8 @@ describe("Scene", () => {
     expect(n.r.value).toBe(8);
     expect(n.glide).toEqual({ fromX: 0, fromY: 0, toX: 100, toY: 0 });
     let now = 700;
-    while (n.x.value < 45) {
+    for (let i = 0; n.x.value < 45; i++) {
+      if (i > 100) throw new Error("rename glide never reached the midpoint");
       now += 16;
       s.step(16, now);
     }
@@ -130,5 +131,62 @@ describe("Scene", () => {
     const s = new Scene();
     s.update(...frame([circle("", 0, 0, 100, true), circle("src", 0, 0, 50, true), circle("src/a.ts", 0, 0, 5)]), patch, 0);
     expect([...s.nodes.keys()]).toEqual(["", "src", "src/a.ts"]);
+  });
+
+  it("grows sub-epsilon radii when stepped with a scale-aware epsilon", () => {
+    const s = new Scene();
+    const eps = 0.5 / 1000; // renderer passes ~0.5 screen px / k, here k = 1000
+    s.update(...frame([circle("a.ts", 0, 0, 0.0015)]), patch, 0);
+    const n = s.get("a.ts")!;
+    expect(s.step(16, 16, eps)).toBe(true);
+    expect(n.r.value).toBeGreaterThan(0);
+    expect(n.r.value).toBeLessThan(0.0015);
+    const second = n.r.value;
+    expect(s.step(16, 32, eps)).toBe(true);
+    expect(n.r.value).toBeGreaterThan(second);
+    let now = 32;
+    for (let i = 0; s.step(16, (now += 16), eps); i++) {
+      if (i > 100) throw new Error("scene never settled");
+    }
+    expect(n.r.value).toBe(0.0015);
+  });
+
+  it("keeps the alpha fade on its own epsilon when a large world epsilon is passed", () => {
+    const s = new Scene();
+    s.update(...frame([circle("a.ts", 0, 0, 100)]), patch, 0);
+    settle(s, 700);
+    s.update(...frame([]), patch, 700);
+    s.step(16, 716, 5);
+    expect(s.get("a.ts")!.alpha.value).toBeGreaterThan(0);
+    expect(s.get("a.ts")!.alpha.value).toBeLessThan(1);
+  });
+
+  it("ignores NaN and negative dt, and clamps huge dt", () => {
+    const s = new Scene();
+    s.update(...frame([circle("a.ts", 0, 0, 8)]), patch, 0);
+    const n = s.get("a.ts")!;
+    expect(s.step(NaN, 16)).toBe(true);
+    expect(s.step(-50, 32)).toBe(true);
+    expect(n.r.value).toBe(0);
+    expect(n.r.velocity).toBe(0);
+    s.step(1e9, 48);
+    expect(Number.isFinite(n.r.value)).toBe(true);
+    const clamped = new Scene();
+    clamped.update(...frame([circle("a.ts", 0, 0, 8)]), patch, 0);
+    clamped.step(64, 64);
+    expect(n.r.value).toBe(clamped.get("a.ts")!.r.value);
+    expect(n.r.value).toBeLessThan(8);
+  });
+
+  it("reports from update() whether the ticker needs to run", () => {
+    const s = new Scene();
+    expect(s.update(...frame([circle("a.ts", 0, 0, 8)]), patch, 0)).toBe(true);
+    settle(s, 700);
+    expect(s.update(...frame([circle("a.ts", 0, 0, 8)]), patch, 700)).toBe(false);
+    expect(s.update(...frame([circle("a.ts", 0, 0, 8)]), { kind: "patch", merged: ["a.ts"] }, 800)).toBe(true);
+    settle(s, 700, 800);
+    expect(s.update(...frame([circle("a.ts", 0, 0, 0.0015)]), patch, 1600)).toBe(true);
+    settle(s, 700, 1600);
+    expect(s.update(...frame([]), patch, 2400)).toBe(true);
   });
 });

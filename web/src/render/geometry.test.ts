@@ -106,6 +106,14 @@ describe("rings", () => {
   });
 });
 
+describe("dashArcs guards", () => {
+  it("returns no dashes for a degenerate radius or pattern instead of looping", () => {
+    expect(dashArcs(0, 4, 3, 0, Math.PI)).toEqual([]);
+    expect(dashArcs(10, 0, 0, 0, Math.PI)).toEqual([]);
+    expect(dashArcs(10, 2, -3, 0, Math.PI)).toEqual([]);
+  });
+});
+
 describe("glideOffset", () => {
   it("is zero at the start and end, and bows sideways mid-way", () => {
     const g = { fromX: 0, fromY: 0, toX: 100, toY: 0 };

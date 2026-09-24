@@ -88,7 +88,7 @@ export function splitSegments(n: number, gap: number): [number, number][] {
 /** Dash arcs of `dash` px separated by `gap` px (arc length) between angles a0..a1. */
 export function dashArcs(radius: number, dash: number, gap: number, a0: number, a1: number): [number, number][] {
   const out: [number, number][] = [];
-  if (radius <= 0) return out;
+  if (radius <= 0 || dash + gap <= 0) return out;
   const d = dash / radius;
   const step = (dash + gap) / radius;
   for (let a = a0; a < a1 - 1e-9; a += step) out.push([a, Math.min(a + d, a1)]);

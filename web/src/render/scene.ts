@@ -2,7 +2,7 @@ import type { NodeVisual } from "../layout/encoding";
 import type { Circle } from "../layout/pack";
 import type { Change } from "../store";
 import { glideOffset, type Glide } from "./geometry";
-import { isSettled, makeSpring, retarget, stepSpring, type Spring } from "./springs";
+import { SETTLE_EPS, SPRING_OMEGA, isSettled, makeSpring, retarget, stepSpring, type Spring } from "./springs";
 
 export const DELETED_SCALE = 0.85;
 export const SHIMMER_MS = 600;
@@ -20,6 +20,10 @@ export interface SceneNode {
   leaving: boolean;
   glide: Glide | null;
   shimmerAt: number | null;
+}
+
+function atRest(s: Spring): boolean {
+  return s.value === s.target && s.velocity === 0;
 }
 
 /**
@@ -40,7 +44,12 @@ export class Scene {
     return this.nodes.get(path);
   }
 
-  update(layout: Map<string, Circle>, visuals: Map<string, NodeVisual>, change: Change, now: number): void {
+  /**
+   * Diff a new layout into the scene. Returns true when anything needs
+   * animating (so a stopped ticker must restart). The check is exact, not
+   * epsilon-based, so it is correct at any zoom scale.
+   */
+  update(layout: Map<string, Circle>, visuals: Map<string, NodeVisual>, change: Change, now: number): boolean {
     const next = new Map<string, SceneNode>();
     for (const c of layout.values()) {
       const visual = visuals.get(c.path) ?? { path: c.path, ext: "", touches: [], ghost: false, deleted: false, tinted: false };
@@ -86,18 +95,29 @@ export class Scene {
       const n = this.nodes.get(path);
       if (n && !n.leaving) n.shimmerAt = now;
     }
+
+    for (const n of this.nodes.values()) {
+      if (n.shimmerAt !== null || !atRest(n.x) || !atRest(n.y) || !atRest(n.r) || !atRest(n.alpha)) return true;
+    }
+    return false;
   }
 
-  /** Advance all springs by dtMs. Returns true while anything is still moving. */
-  step(dtMs: number, now: number): boolean {
-    const dt = Math.min(dtMs, 64) / 1000;
+  /**
+   * Advance all springs by dtMs (NaN/negative → 0, capped at 64 ms). Returns
+   * true while anything is still moving. `eps` is the settle epsilon for the
+   * world-space springs (x, y, r); the renderer passes ~0.5 / k so that at
+   * zoom k nothing snaps by more than half a screen pixel. Alpha is unitless
+   * and always uses SETTLE_EPS.
+   */
+  step(dtMs: number, now: number, eps: number = SETTLE_EPS): boolean {
+    const dt = Math.max(0, Math.min(dtMs || 0, 64)) / 1000;
     let busy = false;
     for (const [path, n] of this.nodes) {
-      stepSpring(n.x, dt);
-      stepSpring(n.y, dt);
-      stepSpring(n.r, dt);
+      stepSpring(n.x, dt, SPRING_OMEGA, eps);
+      stepSpring(n.y, dt, SPRING_OMEGA, eps);
+      stepSpring(n.r, dt, SPRING_OMEGA, eps);
       stepSpring(n.alpha, dt);
-      const moving = !isSettled(n.x) || !isSettled(n.y) || !isSettled(n.r) || !isSettled(n.alpha);
+      const moving = !isSettled(n.x, eps) || !isSettled(n.y, eps) || !isSettled(n.r, eps) || !isSettled(n.alpha);
       if (n.glide && !moving) n.glide = null;
       if (n.shimmerAt !== null && now - n.shimmerAt > SHIMMER_MS) n.shimmerAt = null;
       if (n.leaving && !moving) {
