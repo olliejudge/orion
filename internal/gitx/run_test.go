@@ -2,8 +2,11 @@ package gitx
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/olliejudge/orion/internal/testrepo"
 )
 
 func TestParseVersion(t *testing.T) {
@@ -70,5 +73,22 @@ func TestRunnerUsesCustomBinary(t *testing.T) {
 	_, err := Runner{Git: "/nonexistent/git"}.Run(context.Background(), t.TempDir(), "version")
 	if err == nil {
 		t.Fatal("want error for missing binary")
+	}
+}
+
+// Launched from a hook or alias, orion may inherit GIT_DIR and friends; every
+// git call must still target the directory it names.
+func TestRunIgnoresInheritedRepoEnv(t *testing.T) {
+	r := testrepo.New(t)
+	for _, k := range []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY"} {
+		t.Setenv(k, "/nonexistent")
+	}
+	out, err := Runner{}.Run(context.Background(), r.Path(), "rev-parse", "--show-toplevel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := filepath.EvalSymlinks(r.Path())
+	if got := strings.TrimSpace(string(out)); got != want {
+		t.Fatalf("toplevel = %q, want %q", got, want)
 	}
 }

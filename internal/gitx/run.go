@@ -28,7 +28,7 @@ func (r Runner) bin() string {
 func (r Runner) Run(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, r.bin(), args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(cleanEnv(os.Environ()),
 		// Never take optional locks (e.g. status refreshing the index): writes
 		// under .git/ would wake our own watcher and loop forever.
 		"GIT_OPTIONAL_LOCKS=0",
@@ -43,6 +43,38 @@ func (r Runner) Run(ctx context.Context, dir string, args ...string) ([]byte, er
 			strings.Join(args, " "), dir, err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.Bytes(), nil
+}
+
+// repoEnv lists the variables that tie git to one repository (what
+// `git rev-parse --local-env-vars` prints). Inherited from a hook or alias,
+// they would point every `git -C <worktree>` call at the wrong repo.
+var repoEnv = map[string]bool{
+	"GIT_ALTERNATE_OBJECT_DIRECTORIES": true,
+	"GIT_CONFIG":                       true,
+	"GIT_CONFIG_PARAMETERS":            true,
+	"GIT_CONFIG_COUNT":                 true,
+	"GIT_OBJECT_DIRECTORY":             true,
+	"GIT_DIR":                          true,
+	"GIT_WORK_TREE":                    true,
+	"GIT_IMPLICIT_WORK_TREE":           true,
+	"GIT_GRAFT_FILE":                   true,
+	"GIT_INDEX_FILE":                   true,
+	"GIT_NO_REPLACE_OBJECTS":           true,
+	"GIT_REPLACE_REF_BASE":             true,
+	"GIT_PREFIX":                       true,
+	"GIT_SHALLOW_FILE":                 true,
+	"GIT_COMMON_DIR":                   true,
+}
+
+// cleanEnv returns env without the repo-locating variables in repoEnv.
+func cleanEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		if k, _, _ := strings.Cut(kv, "="); !repoEnv[k] {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 var versionRE = regexp.MustCompile(`^git version (\d+)\.(\d+)(\.\d+)?`)
