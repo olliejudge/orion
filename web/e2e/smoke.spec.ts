@@ -1,8 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { startOrion } from "./orion";
 
 const SHOTS = path.join(path.dirname(fileURLToPath(import.meta.url)), "__screenshots__");
 
@@ -12,20 +13,44 @@ function env(name: "ORION_URL" | "ORION_DEMO_DIR"): string {
   return v;
 }
 
-/** Absolute paths of the demo's linked worktrees (the main worktree excluded). */
-function linkedWorktrees(): string[] {
-  const out = execFileSync("git", ["-C", env("ORION_DEMO_DIR"), "worktree", "list", "--porcelain"], {
-    encoding: "utf8",
-  });
-  return out
-    .split("\n")
-    .filter((l) => l.startsWith("worktree "))
-    .map((l) => l.slice("worktree ".length))
-    .slice(1);
+interface Worktree {
+  path: string;
+  branch: string; // "main", "agent/ui", ...
 }
 
-async function openOrion(page: Page): Promise<void> {
-  await page.goto(env("ORION_URL"));
+/** Every worktree of the demo repo, the main worktree first. */
+function worktrees(demoDir: string): Worktree[] {
+  const out = execFileSync("git", ["-C", demoDir, "worktree", "list", "--porcelain"], { encoding: "utf8" });
+  return out
+    .trim()
+    .split("\n\n")
+    .map((block) => {
+      const lines = block.split("\n");
+      const field = (key: string) =>
+        lines.find((l) => l.startsWith(`${key} `))?.slice(key.length + 1) ?? "";
+      return { path: field("worktree"), branch: field("branch").replace(/^refs\/heads\//, "") };
+    });
+}
+
+/** The worktree whose branch starts with `prefix` (e.g. "agent/api" also matches "agent/api-2"). */
+function worktreeOn(demoDir: string, prefix: string): Worktree {
+  const wt = worktrees(demoDir).find((w) => w.branch.startsWith(prefix));
+  if (!wt) throw new Error(`the demo has no worktree on a branch starting with ${prefix}`);
+  return wt;
+}
+
+/** First tracked file (in sorted order) under `dir` that `keep` accepts, as a path relative to the worktree. */
+function trackedFile(wt: Worktree, dir: string, keep: (file: string) => boolean): string {
+  const files = execFileSync("git", ["-C", wt.path, "ls-files", "-z", "--", dir], { encoding: "utf8" })
+    .split("\0")
+    .filter((f) => f !== "" && keep(f))
+    .sort();
+  if (files.length === 0) throw new Error(`no matching tracked file under ${dir} in ${wt.branch}`);
+  return files[0];
+}
+
+async function openOrion(page: Page, url = env("ORION_URL")): Promise<void> {
+  await page.goto(url);
   await expect(page.getByTestId("map").locator("canvas")).toBeVisible();
   // The legend fills in once the first snapshot has arrived over the WebSocket.
   await expect(page.getByTestId("legend").getByTestId("worktree-pill").first()).toBeVisible();
@@ -36,13 +61,15 @@ async function openOrion(page: Page): Promise<void> {
  * counted only inside the disc the repo is fitted into (centred, diameter =
  * the map's short side), so the empty margins either side don't dilute it.
  * The chrome panels are masked black so only the canvas counts. The PNG is
- * decoded in the page (createImageBitmap) so no image library is needed.
+ * taken at CSS scale (the fraction doesn't depend on it) and decoded in the
+ * page (createImageBitmap) so no image library is needed.
  */
 async function litFraction(page: Page, threshold: number): Promise<number> {
   const png = await page.getByTestId("map").screenshot({
     mask: [page.getByTestId("legend"), page.getByTestId("activity"), page.getByTestId("live-pill")],
     maskColor: "#000000",
     animations: "disabled",
+    scale: "css",
   });
   return page.evaluate(
     async ({ b64, threshold }) => {
@@ -71,6 +98,18 @@ async function litFraction(page: Page, threshold: number): Promise<number> {
   );
 }
 
+/** Polls litFraction until it beats `min`, and records the last measurement on the test. */
+async function expectLit(page: Page, label: string, threshold: number, min: number): Promise<void> {
+  let measured = 0;
+  await expect
+    .poll(async () => (measured = await litFraction(page, threshold)), { timeout: 20_000 })
+    .toBeGreaterThan(min);
+  test.info().annotations.push({
+    type: "lit-fraction",
+    description: `${label}: ${(measured * 100).toFixed(2)}% of the map disc brighter than ${threshold} (min ${min * 100}%)`,
+  });
+}
+
 async function theme(page: Page): Promise<string | null> {
   return page.locator("html").getAttribute("data-theme");
 }
@@ -95,11 +134,11 @@ test("the map canvas draws the repo", async ({ page }) => {
   // Night: pure black background, idle files #3a3a44, so anything > 40 is drawn content.
   await page.keyboard.press("n");
   await expect.poll(() => theme(page)).toBe("night");
-  await expect.poll(() => litFraction(page, 40), { timeout: 10_000 }).toBeGreaterThan(0.01);
+  await expectLit(page, "night", 40, 0.01);
   // Vision: the background stays at or below 100 per channel; file bubbles are brighter.
   await page.keyboard.press("n");
   await expect.poll(() => theme(page)).toBe("vision");
-  await expect.poll(() => litFraction(page, 120), { timeout: 10_000 }).toBeGreaterThan(0.005);
+  await expectLit(page, "vision", 120, 0.005);
 });
 
 test("the legend shows at least two worktrees", async ({ page }) => {
@@ -110,27 +149,72 @@ test("the legend shows at least two worktrees", async ({ page }) => {
 
 test("a new file in a nested agent worktree appears in the activity stream within 5s", async ({ page }) => {
   await openOrion(page);
-  const nested = linkedWorktrees().find((p) => p.includes(`${path.sep}.claude${path.sep}worktrees${path.sep}`));
+  const nested = worktrees(env("ORION_DEMO_DIR"))
+    .slice(1)
+    .find((w) => w.path.includes(`${path.sep}.claude${path.sep}worktrees${path.sep}`));
   expect(nested, "the demo creates a nested worktree").toBeDefined();
   const name = `e2e-probe-${Date.now()}.md`;
-  writeFileSync(path.join(nested as string, name), "# probe\n");
+  writeFileSync(path.join((nested as Worktree).path, name), "# probe\n");
   await expect(page.getByTestId("activity").getByText(name).first()).toBeVisible({ timeout: 5_000 });
 });
 
-test("N toggles Night and Vision, remembers the choice, and screenshots both", async ({ page }) => {
-  mkdirSync(SHOTS, { recursive: true });
+test("N toggles Night and Vision and remembers the choice", async ({ page }) => {
   await openOrion(page);
   expect(await theme(page)).toBe("vision");
-  await page.waitForTimeout(1_500); // let the layout springs settle before the screenshot
-  await page.screenshot({ path: path.join(SHOTS, "vision.png") });
-
   await page.keyboard.press("n");
   await expect.poll(() => theme(page)).toBe("night");
-  await page.waitForTimeout(1_500);
-  await page.screenshot({ path: path.join(SHOTS, "night.png") });
-
   await page.reload();
   await expect.poll(() => theme(page)).toBe("night");
   await page.keyboard.press("n");
   await expect.poll(() => theme(page)).toBe("vision");
+});
+
+// The Vision shot becomes the README image, so it runs on its own fresh demo
+// repo and orion (nothing another test did can show up in it) and makes a few
+// realistic agent edits so the activity stream has something to show.
+test("screenshots both themes of a fresh demo with live agent edits", async ({ page }) => {
+  test.setTimeout(180_000);
+  mkdirSync(SHOTS, { recursive: true });
+  const orion = await startOrion();
+  try {
+    await openOrion(page, orion.url);
+    expect(await theme(page)).toBe("vision");
+
+    const ui = worktreeOn(orion.demoDir, "agent/ui");
+    const api = worktreeOn(orion.demoDir, "agent/api");
+    const guides = worktreeOn(orion.demoDir, "agent/guides");
+    const edits: Array<{ wt: Worktree; file: string; text: string }> = [
+      {
+        wt: guides,
+        file: trackedFile(guides, "docs/guides", (f) => f.endsWith(".md")),
+        text: "\n## Troubleshooting\n\nIf the sky map stays empty, check that the catalog finished importing.\n",
+      },
+      {
+        wt: api,
+        file: trackedFile(api, "internal/api", (f) => f.endsWith(".go") && !f.endsWith("_test.go")),
+        text: "\n// OrbitWindow returns the orbit window for n.\nfunc OrbitWindow(n int) int {\n\treturn n * 12\n}\n",
+      },
+      {
+        wt: ui,
+        file: trackedFile(ui, "web/src/components", (f) => f.endsWith(".tsx")),
+        text: '\nexport function StarfieldLegend() {\n  return <div className="starfield-legend" />;\n}\n',
+      },
+    ];
+    // One at a time, each waiting for its row, so the stream's order is deterministic.
+    for (const e of edits) {
+      appendFileSync(path.join(e.wt.path, e.file), e.text);
+      await expect(page.getByTestId("activity").getByText(path.basename(e.file)).first()).toBeVisible({
+        timeout: 5_000,
+      });
+    }
+    await page.waitForTimeout(2_000); // let the halos and layout springs settle
+    await page.screenshot({ path: path.join(SHOTS, "vision.png") });
+
+    await page.keyboard.press("n");
+    await expect.poll(() => theme(page)).toBe("night");
+    await page.waitForTimeout(1_500);
+    await page.screenshot({ path: path.join(SHOTS, "night.png") });
+  } finally {
+    await orion.stop();
+  }
 });

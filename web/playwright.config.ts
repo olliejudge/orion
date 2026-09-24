@@ -11,6 +11,8 @@ export default defineConfig({
   workers: 1,
   fullyParallel: false,
   retries: process.env.CI ? 1 : 0,
+  // A retry keeps the failure's trace, but a test that only passed on retry still fails CI.
+  failOnFlakyTests: !!process.env.CI,
   timeout: 60_000,
   reporter: "list",
   outputDir: "./test-results",
