@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { makeState, wt } from "../layout/fixtures";
 import type { Circle } from "../layout/pack";
 import type { Activity } from "../protocol";
-import { ACTIVE_WINDOW_MS, activityRows, legendModel, rowFade, shownFolder, tooltipInfo } from "./models";
+import { ACTIVE_WINDOW_MS, activityRows, legendModel, mapInsets, rowFade, shownFolder, tooltipInfo, tooltipPosition } from "./models";
 
 const NOW = 10_000_000;
 
@@ -57,6 +57,33 @@ describe("activityRows", () => {
   it("marks commit and merge rows as emphasised", () => {
     const rows = activityRows([a(1000), a(2000, { kind: "commit", path: undefined, files: 3, subject: "Fix" }), a(3000, { kind: "merge", path: undefined, files: 2 })]);
     expect(rows.map((r) => r.emphasis)).toEqual([true, true, false]);
+  });
+
+  it("keeps row keys stable when the full buffer shifts by one item", () => {
+    const buf = Array.from({ length: 200 }, (_, i) => a(i * 60_000, { path: `f${i % 7}.ts` }));
+    const before = activityRows(buf);
+    const after = activityRows([...buf.slice(1), a(200 * 60_000, { path: "new.ts" })]);
+    expect(after[0]!.path).toBe("new.ts");
+    expect(after.slice(1).map((r) => r.key)).toEqual(before.slice(0, 79).map((r) => r.key));
+  });
+
+  it("keys a coalescing row by its oldest item, so it survives new items joining it", () => {
+    const before = activityRows([a(1000), a(3000)]);
+    const after = activityRows([a(1000), a(3000), a(5000)]);
+    expect(after).toHaveLength(1);
+    expect(after[0]!.key).toBe(before[0]!.key);
+  });
+
+  it("gives identical items distinct keys", () => {
+    const rows = activityRows([a(1000, { kind: "commit", path: undefined, sha: "abc" }), a(1000, { kind: "commit", path: undefined, sha: "abc" })]);
+    expect(new Set(rows.map((r) => r.key)).size).toBe(2);
+  });
+
+  it("shows at most 80 rows", () => {
+    const rows = activityRows(Array.from({ length: 200 }, (_, i) => a(i * 60_000, { path: `f${i}.ts` })));
+    expect(rows).toHaveLength(80);
+    expect(rows[0]!.path).toBe("f199.ts");
+    expect(rows[79]!.path).toBe("f120.ts");
   });
 
   it("fades rows with age (Night mode), never below 0.15", () => {
@@ -123,5 +150,35 @@ describe("shownFolder", () => {
     expect(shownFolder("src/lib/deep/er/a.ts", layout)).toBe("src/lib");
     expect(shownFolder("docs/guide.md", layout)).toBe("");
     expect(shownFolder("README.md", layout)).toBe("");
+  });
+});
+
+describe("mapInsets", () => {
+  it("keeps the Vision map clear of the activity column on wide screens", () => {
+    expect(mapInsets("vision", 1440, 900)).toEqual({ top: 48, right: 320, bottom: 48, left: 48 });
+  });
+
+  it("keeps the Vision map above the activity sheet on narrow screens", () => {
+    expect(mapInsets("vision", 720, 1000)).toEqual({ top: 48, right: 48, bottom: 64 + 320 + 16, left: 48 });
+  });
+
+  it("is full-bleed in Night (the stream floats over the map)", () => {
+    expect(mapInsets("night", 1440, 900)).toEqual({ top: 48, right: 48, bottom: 48, left: 48 });
+  });
+});
+
+describe("tooltipPosition", () => {
+  const vw = 1000;
+  const vh = 800;
+  it("sits below-right of the pointer when it fits", () => {
+    expect(tooltipPosition(100, 100, 200, 80, vw, vh)).toEqual({ left: 114, top: 114 });
+  });
+
+  it("flips left of and above the pointer near the right and bottom edges", () => {
+    expect(tooltipPosition(950, 780, 200, 80, vw, vh)).toEqual({ left: 736, top: 686 });
+  });
+
+  it("stays inside the viewport on both axes even when it cannot flip", () => {
+    expect(tooltipPosition(150, 60, 280, 300, 300, 320)).toEqual({ left: 8, top: 8 });
   });
 });

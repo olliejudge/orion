@@ -128,6 +128,10 @@
     color: var(--text-dim);
     font-variant-numeric: tabular-nums;
   }
+  /* Night: an active isolation stays visible at rest, so the dimmed map explains itself. */
+  :global(:root[data-theme="night"]) .night-reveal:has(.pill.on) {
+    opacity: 1;
+  }
   .more {
     margin-top: 6px;
     padding: 2px 4px;

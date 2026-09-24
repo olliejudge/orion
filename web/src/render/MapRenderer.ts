@@ -114,6 +114,7 @@ export class MapRenderer {
   #styleGen = 0;
 
   #zoomPath = "";
+  #free: Rect | undefined; // where zoom targets are fitted (see fitCamera)
   #cam: CameraAnim;
 
   #hoverFns: ((path: string | null, screen: { x: number; y: number }) => void)[] = [];
@@ -149,7 +150,7 @@ export class MapRenderer {
     app.stage.addChild(this.#dirLayer, this.#fileLayer, this.#labelLayer, this.#fx);
     const { width, height } = this.#size();
     const c = this.#layout.get(this.#zoomPath);
-    this.#cam = this.#snapped(c ? fitCamera(c, width, height) : { cx: width / 2, cy: height / 2, k: 1 });
+    this.#cam = this.#snapped(c ? fitCamera(c, width, height, this.#free) : { cx: width / 2, cy: height / 2, k: 1 });
 
     app.canvas.addEventListener("pointermove", this.#onPointerMove);
     app.canvas.addEventListener("pointerleave", this.#onPointerLeave);
@@ -190,6 +191,11 @@ export class MapRenderer {
     this.#zoomPath = this.#layout.has(path) ? path : "";
     this.#aimCamera(true);
     this.#wake();
+  }
+
+  /** The viewport rect (CSS px) the layout was fitted into; zoom targets are centred in it. */
+  setFreeArea(rect: Rect): void {
+    this.#free = rect;
   }
 
   onHover(fn: (path: string | null, screen: { x: number; y: number }) => void): void {
@@ -238,7 +244,7 @@ export class MapRenderer {
     const c = this.#layout.get(this.#zoomPath);
     if (!c) return;
     const { width, height } = this.#size();
-    const target = fitCamera(c, width, height);
+    const target = fitCamera(c, width, height, this.#free);
     const prev = this.#cam.target;
     const changed = Math.abs(Math.log(target.k / prev.k)) > 1e-3;
     if (target.cx !== prev.cx || target.cy !== prev.cy || target.k !== prev.k) {

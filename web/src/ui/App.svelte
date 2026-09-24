@@ -13,11 +13,10 @@
   import { keyAction } from "./keys";
   import Legend from "./Legend.svelte";
   import LivePill from "./LivePill.svelte";
-  import { shownFolder, tooltipInfo, type TooltipInfo } from "./models";
+  import { mapInsets, shownFolder, tooltipInfo, type TooltipInfo } from "./models";
   import { applyTheme, loadTheme, saveTheme, type Theme } from "./theme";
   import Tooltip from "./Tooltip.svelte";
 
-  const MAP_PAD = 48; // keeps the repo circle clear of the floating panels and live pill
   const NO_CHANGE: Change = { kind: "patch", merged: [] };
 
   const store = new RepoStore();
@@ -43,17 +42,24 @@
     applyTheme(theme);
     saveTheme(theme);
     renderer?.setTheme(theme);
+    relayout(NO_CHANGE); // the map's free area depends on the theme
   });
 
   $effect(() => {
-    renderer?.isolate(isolated);
+    // Read `isolated` unconditionally: behind `renderer?.` it would not be
+    // read while the renderer is starting, and the effect would never rerun.
+    const id = isolated;
+    renderer?.isolate(id);
   });
 
   function relayout(change: Change): void {
     const s = store.state;
     if (!s || !renderer) return;
-    const f = computeFrame(s, mapEl.clientWidth, mapEl.clientHeight, scale, MAP_PAD, linger.paths());
+    const w = mapEl.clientWidth;
+    const h = mapEl.clientHeight;
+    const f = computeFrame(s, w, h, scale, mapInsets(theme, w, h), linger.paths());
     layout = f.layout;
+    renderer.setFreeArea(f.free);
     renderer.update(f.layout, f.visuals, change);
   }
 
@@ -74,6 +80,8 @@
 
   function onChange(s: RepoState, change: Change): void {
     repo = s;
+    // A worktree that went away can't stay isolated (everything would stay dimmed).
+    if (isolated !== null && !s.worktrees.has(isolated)) isolated = null;
     if (change.merged.length > 0) {
       linger.add(change.merged, performance.now());
       scheduleLinger();
@@ -94,7 +102,11 @@
   function onKey(e: KeyboardEvent): void {
     const action = keyAction(e);
     if (action === "theme") theme = theme === "vision" ? "night" : "vision";
-    else if (action === "zoomOut") zoom("");
+    else if (action === "zoomOut") {
+      // Esc backs out one step: first the isolation, then the zoom.
+      if (isolated !== null) isolated = null;
+      else zoom("");
+    }
     else if (action === "fullscreen") toggleFullscreen();
   }
 

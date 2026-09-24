@@ -49,6 +49,26 @@ describe("computeFrame", () => {
     expect(root.r).toBeLessThanOrEqual(400 - 48);
   });
 
+  it("centres the root in the free area left by per-side insets", () => {
+    const f = computeFrame(makeState(files), 1000, 800, 1, { top: 48, right: 320, bottom: 48, left: 48 });
+    const root = f.layout.get("")!;
+    expect(root.x).toBeCloseTo(48 + 632 / 2);
+    expect(root.y).toBeCloseTo(400);
+    expect(root.r).toBeLessThanOrEqual(632 / 2);
+    expect(f.free).toEqual({ x0: 48, y0: 48, x1: 680, y1: 752 });
+  });
+
+  it("reports the free area for a scalar pad too", () => {
+    expect(computeFrame(makeState(files), 1000, 800, 1, 48).free).toEqual({ x0: 48, y0: 48, x1: 952, y1: 752 });
+    expect(computeFrame(makeState(files), 1000, 800, 1).free).toEqual({ x0: 0, y0: 0, x1: 1000, y1: 800 });
+  });
+
+  it("never insets away more than half the viewport on either axis", () => {
+    const f = computeFrame(makeState(files), 400, 400, 1, { top: 0, right: 600, bottom: 0, left: 200 });
+    expect(f.free.x1 - f.free.x0).toBeCloseTo(200);
+    expect(f.free.x0).toBeCloseTo(50);
+  });
+
   it("never pads away more than half the viewport", () => {
     const root = computeFrame(makeState(files), 100, 100, 1, 500).layout.get("")!;
     expect(root.r).toBeGreaterThan(20);

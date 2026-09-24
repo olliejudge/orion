@@ -1,20 +1,27 @@
 <script lang="ts">
-  import type { TooltipInfo } from "./models";
+  import { tooltipPosition, type TooltipInfo } from "./models";
 
   let { info, x, y }: { info: TooltipInfo | null; x: number; y: number } = $props();
 
-  const OFFSET = 14;
-  const WIDTH = 280;
   let viewportW = $state(typeof window === "undefined" ? 1024 : window.innerWidth);
   let viewportH = $state(typeof window === "undefined" ? 768 : window.innerHeight);
-  const left = $derived(x + OFFSET + WIDTH > viewportW ? x - OFFSET - WIDTH : x + OFFSET);
-  const top = $derived(Math.min(y + OFFSET, viewportH - 120));
+  let tipW = $state(0);
+  let tipH = $state(0);
+  const pos = $derived(tooltipPosition(x, y, tipW, tipH, viewportW, viewportH));
 </script>
 
 <svelte:window bind:innerWidth={viewportW} bind:innerHeight={viewportH} />
 
 {#if info}
-  <div class="tip glass" role="tooltip" data-testid="tooltip" style:left={`${left}px`} style:top={`${top}px`}>
+  <div
+    class="tip glass"
+    role="tooltip"
+    data-testid="tooltip"
+    style:left={`${pos.left}px`}
+    style:top={`${pos.top}px`}
+    bind:offsetWidth={tipW}
+    bind:offsetHeight={tipH}
+  >
     <div class="path"><span class="dir">{info.dir}</span><span class="name">{info.name}</span></div>
     <div class="detail">{info.detail}</div>
     {#if info.touches.length > 0}

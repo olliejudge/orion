@@ -2,11 +2,13 @@
 // without rendering, and the Svelte components stay thin.
 import { worktreeColor } from "../colors";
 import { encode, encodeAll } from "../layout/encoding";
+import type { Insets } from "../layout/frame";
 import type { Circle } from "../layout/pack";
 import type { Activity, WorktreeId } from "../protocol";
 import { parentDir } from "../render/geometry";
 import type { RepoState } from "../store";
 import { humanSize, splitPath } from "./format";
+import type { Theme } from "./theme";
 
 /** A worktree counts as active with changes, or with activity in the last 10 minutes. */
 export const ACTIVE_WINDOW_MS = 10 * 60_000;
@@ -63,28 +65,41 @@ export interface ActivityRow {
  * with the same kind, each ≤5 s after the previous, collapse into one row
  * (the server already coalesces modifications; this also absorbs bursts of
  * added/deleted events and duplicate deliveries).
+ *
+ * A row's key comes from its OLDEST item, not its position: the store trims
+ * the buffer from the front, and new items join the newest row, so the key
+ * survives both and Svelte keeps the row's DOM (focus, hover) across patches.
  */
 export function activityRows(activity: Activity[], limit = 80): ActivityRow[] {
   const rows: ActivityRow[] = [];
-  let oldestInRow = 0;
+  const oldest: Activity[] = [];
   for (let i = activity.length - 1; i >= 0 && rows.length <= limit; i--) {
     const a = activity[i]!;
     const prev = rows[rows.length - 1];
     const fileKind = a.kind !== "commit" && a.kind !== "merge";
-    if (prev && fileKind && prev.kind === a.kind && prev.worktree === a.worktree && prev.path === a.path && oldestInRow - a.ts <= COALESCE_MS) {
+    if (prev && fileKind && prev.kind === a.kind && prev.worktree === a.worktree && prev.path === a.path && oldest[oldest.length - 1]!.ts - a.ts <= COALESCE_MS) {
       prev.count++;
-      oldestInRow = a.ts;
+      oldest[oldest.length - 1] = a;
       continue;
     }
-    const row: ActivityRow = { key: `${a.ts}:${a.worktree}:${a.kind}:${a.path ?? a.sha ?? ""}:${i}`, worktree: a.worktree, kind: a.kind, ts: a.ts, count: 1, emphasis: !fileKind };
+    const row: ActivityRow = { key: "", worktree: a.worktree, kind: a.kind, ts: a.ts, count: 1, emphasis: !fileKind };
     if (a.path !== undefined) row.path = a.path;
     if (a.from !== undefined) row.from = a.from;
     if (a.subject !== undefined) row.subject = a.subject;
     if (a.files !== undefined) row.files = a.files;
     rows.push(row);
-    oldestInRow = a.ts;
+    oldest.push(a);
   }
-  return rows.slice(0, limit);
+  const out = rows.slice(0, limit);
+  const seen = new Map<string, number>();
+  out.forEach((row, i) => {
+    const o = oldest[i]!;
+    const base = `${o.ts}:${o.worktree}:${o.kind}:${o.path ?? o.sha ?? ""}`;
+    const n = seen.get(base) ?? 0;
+    seen.set(base, n + 1);
+    row.key = n === 0 ? base : `${base}#${n}`;
+  });
+  return out;
 }
 
 /** Night mode: rows fade linearly over ACTIVE_WINDOW_MS, floor 0.15. */
@@ -138,4 +153,40 @@ export function shownFolder(path: string, layout: Map<string, Circle>): string {
     if (layout.get(dir)?.isDir) return dir;
   }
   return "";
+}
+
+// Mirrors the chrome's CSS (theme.css --gutter, Activity.svelte sizes).
+const MAP_PAD = 48; // keeps the repo circle clear of the legend and live pill
+const GUTTER = 16;
+const ACTIVITY_W = 288;
+const NARROW_W = 720; // Activity.svelte's max-width breakpoint
+const SHEET_BOTTOM = 64;
+const SHEET_VH = 0.32;
+
+/**
+ * Where the map may sit. Vision's activity panel is opaque-ish glass, so the
+ * map centres in the space beside it (or above it, where it becomes a bottom
+ * sheet on narrow screens). Night's stream floats over the map: full-bleed.
+ */
+export function mapInsets(theme: Theme, width: number, height: number): Insets {
+  const pad: Insets = { top: MAP_PAD, right: MAP_PAD, bottom: MAP_PAD, left: MAP_PAD };
+  if (theme === "night") return pad;
+  if (width <= NARROW_W) return { ...pad, bottom: SHEET_BOTTOM + height * SHEET_VH + GUTTER };
+  return { ...pad, right: ACTIVITY_W + 2 * GUTTER };
+}
+
+const TIP_OFFSET = 14;
+const TIP_MARGIN = 8;
+
+/**
+ * Tooltip placement for a card of w×h at pointer (x, y): below-right, flipped
+ * to the other side when it would overflow, then clamped into the viewport.
+ */
+export function tooltipPosition(x: number, y: number, w: number, h: number, vw: number, vh: number): { left: number; top: number } {
+  const place = (p: number, size: number, view: number): number => {
+    let v = p + TIP_OFFSET;
+    if (v + size > view - TIP_MARGIN) v = p - TIP_OFFSET - size;
+    return Math.max(TIP_MARGIN, Math.min(v, view - size - TIP_MARGIN));
+  };
+  return { left: place(x, w, vw), top: place(y, h, vh) };
 }
