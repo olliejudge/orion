@@ -144,6 +144,26 @@ export function tooltipInfo(state: RepoState, c: Circle): TooltipInfo | null {
   return { dir, name, detail: humanSize(size), touches };
 }
 
+export interface HoverTarget {
+  path: string;
+  at: { x: number; y: number };
+}
+
+/**
+ * The tooltip for what's under the pointer, recomputed from the latest state
+ * and layout (a patch can change the file under a still pointer). Null when
+ * nothing is hovered or the hovered path has left the map.
+ */
+export function hoverTip(
+  state: RepoState | null,
+  layout: Map<string, Circle>,
+  hover: HoverTarget | null,
+): { info: TooltipInfo; x: number; y: number } | null {
+  const c = hover === null ? undefined : layout.get(hover.path);
+  const info = c && state ? tooltipInfo(state, c) : null;
+  return info && hover ? { info, x: hover.at.x, y: hover.at.y } : null;
+}
+
 /**
  * Where "zoom to this file" goes: the file's folder, or its nearest ancestor
  * that is on the map (the folder may be collapsed or gone), else the root "".
