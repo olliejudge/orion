@@ -117,3 +117,33 @@ func TestWorktreesNestedAndOutside(t *testing.T) {
 		t.Fatalf("re-added branch = %q", got)
 	}
 }
+
+func TestIgnoresInheritedGitEnvironment(t *testing.T) {
+	home := t.TempDir()
+	userConfig := "[status]\n\trenames = false\n"
+	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte(userConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, "xdg", "git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "xdg", "git", "config"), []byte(userConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	t.Setenv("GIT_INDEX_FILE", "/nonexistent")
+
+	r := New(t)
+	if got := r.Git("config", "--type=path", "--default", "~", "testrepo.home"); strings.HasPrefix(got, home) {
+		t.Fatalf("git sees the caller's HOME %q", got)
+	}
+	r.Write("a.txt", "1")
+	r.Add()
+	r.Commit("base")
+	r.GitMv("a.txt", "b.txt")
+	if status := r.Git("status", "--porcelain"); !strings.Contains(status, "R  a.txt -> b.txt") {
+		t.Fatalf("status %q missing rename; user config or GIT_ env leaked in", status)
+	}
+	r.Commit("rename")
+}

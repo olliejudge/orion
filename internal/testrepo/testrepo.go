@@ -17,6 +17,7 @@ import (
 type Repo struct {
 	t     testing.TB
 	root  string // absolute, symlinks resolved
+	home  string // empty HOME/XDG_CONFIG_HOME, shared with linked worktrees
 	clock *int   // shared commit counter so dates increase across worktrees
 }
 
@@ -29,7 +30,7 @@ func New(t testing.TB) *Repo {
 	if err != nil {
 		t.Fatalf("testrepo: resolve temp dir: %v", err)
 	}
-	r := &Repo{t: t, root: root, clock: new(int)}
+	r := &Repo{t: t, root: root, home: t.TempDir(), clock: new(int)}
 	r.Git("init", "--quiet", "--initial-branch=main")
 	r.Git("config", "commit.gpgsign", "false")
 	r.Git("config", "tag.gpgsign", "false")
@@ -143,7 +144,7 @@ func (r *Repo) WorktreeAdd(path, branch string) *Repo {
 	if err != nil {
 		r.t.Fatalf("testrepo: resolve worktree %q: %v", path, err)
 	}
-	return &Repo{t: r.t, root: real, clock: r.clock}
+	return &Repo{t: r.t, root: real, home: r.home, clock: r.clock}
 }
 
 // WorktreeRemove force-removes the linked worktree at path (relative or absolute).
@@ -178,9 +179,22 @@ func (r *Repo) Git(args ...string) string {
 	return strings.TrimRight(stdout.String(), "\n")
 }
 
+// env returns the caller's environment minus any inherited GIT_* variables
+// (e.g. GIT_DIR or GIT_INDEX_FILE set by an enclosing git hook), plus a fixed
+// set that isolates git from the user's config. HOME and XDG_CONFIG_HOME point
+// at an empty directory because git < 2.32 ignores GIT_CONFIG_GLOBAL.
 func (r *Repo) env() []string {
 	date := epoch.Add(time.Duration(*r.clock) * time.Minute).Format(time.RFC3339)
-	return append(os.Environ(),
+	var env []string
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "GIT_") || strings.HasPrefix(kv, "HOME=") || strings.HasPrefix(kv, "XDG_CONFIG_HOME=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	return append(env,
+		"HOME="+r.home,
+		"XDG_CONFIG_HOME="+r.home,
 		"GIT_CONFIG_GLOBAL="+os.DevNull,
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_TERMINAL_PROMPT=0",
