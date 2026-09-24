@@ -4,6 +4,7 @@ import { worktreeColor } from "../colors";
 import { encode, encodeAll } from "../layout/encoding";
 import type { Circle } from "../layout/pack";
 import type { Activity, WorktreeId } from "../protocol";
+import { parentDir } from "../render/geometry";
 import type { RepoState } from "../store";
 import { humanSize, splitPath } from "./format";
 
@@ -126,4 +127,15 @@ export function tooltipInfo(state: RepoState, c: Circle): TooltipInfo | null {
   }
   const { dir, name } = splitPath(c.path);
   return { dir, name, detail: humanSize(size), touches };
+}
+
+/**
+ * Where "zoom to this file" goes: the file's folder, or its nearest ancestor
+ * that is on the map (the folder may be collapsed or gone), else the root "".
+ */
+export function shownFolder(path: string, layout: Map<string, Circle>): string {
+  for (let dir = parentDir(path); dir !== ""; dir = parentDir(dir)) {
+    if (layout.get(dir)?.isDir) return dir;
+  }
+  return "";
 }

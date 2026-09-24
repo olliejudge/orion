@@ -1,0 +1,81 @@
+/* Design tokens. Vision = approved mockup card 1; Night = card 3.
+   Switched by <html data-theme="vision|night"> (see theme.ts). */
+:root {
+  color-scheme: dark;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  --bg: radial-gradient(ellipse at 30% 20%, #26284a 0%, #0c0c14 55%, #07070a 100%);
+  --text: #f2f2f7;
+  --text-dim: rgba(235, 235, 245, 0.55);
+  --text-faint: rgba(235, 235, 245, 0.32);
+  --panel-bg: rgba(40, 40, 52, 0.45);
+  --panel-border: rgba(255, 255, 255, 0.1);
+  --panel-filter: blur(18px) saturate(1.6);
+  --panel-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+  --pill-bg: rgba(255, 255, 255, 0.06);
+  --pill-bg-hover: rgba(255, 255, 255, 0.1);
+  --pill-bg-on: rgba(255, 255, 255, 0.16);
+  --pill-border: rgba(255, 255, 255, 0.08);
+  --focus: rgba(10, 132, 255, 0.9);
+  --radius-panel: 14px;
+  --radius-row: 8px;
+  --gutter: 16px;
+}
+
+:root[data-theme="night"] {
+  --bg: #000;
+  --text: #f5f5f7;
+  --panel-bg: transparent;
+  --panel-border: transparent;
+  --panel-filter: none;
+  --panel-shadow: none;
+  --pill-bg: transparent;
+  --pill-border: rgba(255, 255, 255, 0.1);
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font: 12px/1.45 var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+
+.glass {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--panel-shadow);
+  backdrop-filter: var(--panel-filter);
+  -webkit-backdrop-filter: var(--panel-filter);
+}
+
+/* Night: controls stay out of the way until the pointer (or keyboard focus) visits them. */
+:root[data-theme="night"] .night-reveal {
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+:root[data-theme="night"] .night-reveal:hover,
+:root[data-theme="night"] .night-reveal:focus-within {
+  opacity: 1;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}

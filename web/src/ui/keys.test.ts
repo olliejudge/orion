@@ -19,6 +19,10 @@ describe("keyAction", () => {
     expect(keyAction(ev("n", { altKey: true }))).toBeNull();
   });
 
+  it("ignores auto-repeat from a held key", () => {
+    expect(keyAction(ev("n", { repeat: true }))).toBeNull();
+  });
+
   it("ignores typing in form fields", () => {
     const input = document.createElement("input");
     expect(keyAction(ev("n", { target: input }))).toBeNull();

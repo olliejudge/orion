@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { makeState, wt } from "../layout/fixtures";
 import type { Circle } from "../layout/pack";
 import type { Activity } from "../protocol";
-import { ACTIVE_WINDOW_MS, activityRows, legendModel, rowFade, tooltipInfo } from "./models";
+import { ACTIVE_WINDOW_MS, activityRows, legendModel, rowFade, shownFolder, tooltipInfo } from "./models";
 
 const NOW = 10_000_000;
 
@@ -108,5 +108,20 @@ describe("tooltipInfo", () => {
     const s = makeState({ "vendor/a.js": 1, "vendor/b.js": 1 });
     expect(tooltipInfo(s, circle("vendor", true, 2))).toEqual({ dir: "", name: "vendor/", detail: "2 files", touches: [] });
     expect(tooltipInfo(s, circle("vendor", true))).toBeNull();
+  });
+});
+
+describe("shownFolder", () => {
+  const dir = (path: string): [string, Circle] => [path, { path, x: 0, y: 0, r: 5, depth: path.split("/").length, isDir: true }];
+  const layout = new Map([dir(""), dir("src"), dir("src/lib")]);
+
+  it("is the file's folder when it is on the map", () => {
+    expect(shownFolder("src/lib/a.ts", layout)).toBe("src/lib");
+  });
+
+  it("falls back to the nearest ancestor on the map, then the root", () => {
+    expect(shownFolder("src/lib/deep/er/a.ts", layout)).toBe("src/lib");
+    expect(shownFolder("docs/guide.md", layout)).toBe("");
+    expect(shownFolder("README.md", layout)).toBe("");
   });
 });
