@@ -2,7 +2,7 @@
 // without rendering, and the Svelte components stay thin.
 import { worktreeColor } from "../colors";
 import { encode, encodeAll } from "../layout/encoding";
-import type { Insets } from "../layout/frame";
+import { freeArea, type Insets } from "../layout/frame";
 import type { Circle } from "../layout/pack";
 import type { Activity, WorktreeId } from "../protocol";
 import { parentDir } from "../render/geometry";
@@ -163,16 +163,42 @@ const NARROW_W = 720; // Activity.svelte's max-width breakpoint
 const SHEET_BOTTOM = 64;
 const SHEET_VH = 0.32;
 
+const LEGEND_CLEAR = 8; // min gap between the root circle and the legend panel
+
+/** On-screen size of the legend panel (top-left, at the gutter), CSS px. */
+export interface Footprint {
+  width: number;
+  height: number;
+}
+
 /**
  * Where the map may sit. Vision's activity panel is opaque-ish glass, so the
  * map centres in the space beside it (or above it, where it becomes a bottom
  * sheet on narrow screens). Night's stream floats over the map: full-bleed.
+ *
+ * On wide Vision layouts the legend's footprint counts too: if the root
+ * circle would pass under the legend, the map moves right of it or below it,
+ * whichever leaves the larger circle.
  */
-export function mapInsets(theme: Theme, width: number, height: number): Insets {
+export function mapInsets(theme: Theme, width: number, height: number, legend?: Footprint): Insets {
   const pad: Insets = { top: MAP_PAD, right: MAP_PAD, bottom: MAP_PAD, left: MAP_PAD };
   if (theme === "night") return pad;
   if (width <= NARROW_W) return { ...pad, bottom: SHEET_BOTTOM + height * SHEET_VH + GUTTER };
-  return { ...pad, right: ACTIVITY_W + 2 * GUTTER };
+  const wide: Insets = { ...pad, right: ACTIVITY_W + 2 * GUTTER };
+  if (!legend || legend.width <= 0 || legend.height <= 0) return wide;
+  const right = GUTTER + legend.width; // the legend's far corner
+  const bottom = GUTTER + legend.height;
+  const circle = (insets: Insets): { cx: number; cy: number; r: number } => {
+    const f = freeArea(width, height, insets);
+    return { cx: (f.x0 + f.x1) / 2, cy: (f.y0 + f.y1) / 2, r: Math.min(f.x1 - f.x0, f.y1 - f.y0) / 2 };
+  };
+  const c = circle(wide);
+  const dx = Math.max(0, c.cx - right);
+  const dy = Math.max(0, c.cy - bottom);
+  if (Math.hypot(dx, dy) >= c.r + LEGEND_CLEAR) return wide;
+  const beside: Insets = { ...wide, left: Math.max(wide.left, right + GUTTER) };
+  const below: Insets = { ...wide, top: Math.max(wide.top, bottom + GUTTER) };
+  return circle(below).r > circle(beside).r ? below : beside;
 }
 
 const TIP_OFFSET = 14;

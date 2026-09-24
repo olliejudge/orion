@@ -1,11 +1,16 @@
 <script lang="ts">
   import type { ConnectionStatus } from "../connection";
 
-  let { status }: { status: ConnectionStatus } = $props();
+  // centerX: where the map's free area is centred (CSS px); null centres on the viewport.
+  let { status, centerX = null }: { status: ConnectionStatus; centerX?: number | null } = $props();
   const text = $derived(status === "open" ? "Live" : status === "connecting" ? "Connecting…" : "Reconnecting…");
 </script>
 
-<div class="pill glass" class:night-reveal={status === "open"} data-testid="live-pill" data-status={status} role="status" aria-live="polite">
+<div
+  class="pill glass"
+  class:night-reveal={status === "open"}
+  style:left={centerX === null ? null : `${centerX}px`}
+  data-testid="live-pill" data-status={status} role="status" aria-live="polite">
   <span class="dot" aria-hidden="true"></span>{text}
 </div>
 

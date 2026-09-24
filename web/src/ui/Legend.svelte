@@ -1,15 +1,26 @@
 <script lang="ts">
   import type { WorktreeId } from "../protocol";
   import type { RepoState } from "../store";
-  import { legendModel, type LegendItem } from "./models";
+  import { legendModel, type Footprint, type LegendItem } from "./models";
 
   interface Props {
     repo: RepoState;
     now: number;
     isolated: WorktreeId | null;
     onIsolate: (id: WorktreeId | null) => void;
+    /** Reports the panel's size whenever it changes (the map keeps clear of it). */
+    onFootprint?: (size: Footprint) => void;
   }
-  let { repo, now, isolated, onIsolate }: Props = $props();
+  let { repo, now, isolated, onIsolate, onFootprint }: Props = $props();
+
+  let panel: HTMLElement;
+  $effect(() => {
+    const report = onFootprint;
+    if (!report || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => report({ width: panel.offsetWidth, height: panel.offsetHeight }));
+    ro.observe(panel);
+    return () => ro.disconnect();
+  });
 
   let showIdle = $state(false);
   const model = $derived(legendModel(repo, now));
@@ -37,7 +48,7 @@
   </li>
 {/snippet}
 
-<section class="legend glass" data-testid="legend" aria-label="Worktrees">
+<section class="legend glass" data-testid="legend" aria-label="Worktrees" bind:this={panel}>
   <h1>{repo.repo.name}</h1>
   <p class="base">Compared with {repo.repo.base || "HEAD"}</p>
   <div class="night-reveal scroll" data-testid="legend-list">
