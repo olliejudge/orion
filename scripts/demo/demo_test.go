@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func requireGit(t *testing.T) {
@@ -223,6 +224,36 @@ func TestValidateRejectsBadFlags(t *testing.T) {
 	} {
 		if err := c.validate(); err == nil {
 			t.Errorf("validate(%+v) = nil, want error", c)
+		}
+	}
+}
+
+func TestNamerNeverRunsOutOfNames(t *testing.T) {
+	const calls = 5000 // well past the 45*44 = 1980 word pairs per folder
+	for _, ext := range []string{".go", ".css", ".md"} {
+		done := make(chan []string, 1)
+		go func() {
+			nm := newNamer(rand.New(rand.NewPCG(1, 2)))
+			names := make([]string, 0, calls)
+			for range calls {
+				names = append(names, nm.next("some/dir", ext, nil))
+			}
+			done <- names
+		}()
+		select {
+		case names := <-done:
+			seen := map[string]bool{}
+			for _, n := range names {
+				if seen[n] {
+					t.Fatalf("%s: duplicate name %s", ext, n)
+				}
+				seen[n] = true
+				if !strings.HasPrefix(n, "some/dir/") || !strings.HasSuffix(n, ext) {
+					t.Fatalf("%s: bad name %s", ext, n)
+				}
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s: namer.next did not return %d names within 10s", ext, calls)
 		}
 	}
 }

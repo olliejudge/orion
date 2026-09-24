@@ -93,54 +93,92 @@ func pascal(w string) string { return strings.ToUpper(w[:1]) + w[1:] }
 
 // namer invents unique, convention-following file names.
 type namer struct {
-	rng   *rand.Rand
-	taken map[string]bool
-	seq   map[string]int
+	rng      *rand.Rand
+	taken    map[string]bool
+	seq      map[string]int // per-dir migration numbers
+	fallback map[string]int // per dir+ext suffix counters, used once random names run out
 }
 
 func newNamer(rng *rand.Rand) *namer {
-	return &namer{rng: rng, taken: map[string]bool{}, seq: map[string]int{}}
+	return &namer{rng: rng, taken: map[string]bool{}, seq: map[string]int{}, fallback: map[string]int{}}
 }
+
+// maxNameMisses bounds the random attempts in next. Names are never released
+// and each folder has only len(words)*(len(words)-1) word pairs, so a long
+// live run would otherwise exhaust them and spin forever.
+const maxNameMisses = 50
 
 // next returns an unused repo-relative path for a new file in dir with ext.
 // exists (may be nil) reports whether a candidate already exists on disk.
+// It tries random word pairs first, then falls back to a numbered name, so it
+// always returns promptly and stays deterministic for a given rng seed.
 func (n *namer) next(dir, ext string, exists func(rel string) bool) string {
-	for {
-		w1 := words[n.rng.IntN(len(words))]
-		w2 := words[n.rng.IntN(len(words))]
+	claim := func(rel string) bool {
+		if n.taken[rel] || (exists != nil && exists(rel)) {
+			return false
+		}
+		n.taken[rel] = true
+		return true
+	}
+	for range maxNameMisses {
+		w1, w2 := n.words()
 		if w1 == w2 {
 			continue
 		}
-		var base string
-		switch ext {
-		case ".go":
-			base = w1 + "_" + w2
-			if n.rng.IntN(4) == 0 {
-				base += "_test"
-			}
-		case ".tsx":
-			base = pascal(w1) + pascal(w2)
-		case ".css":
-			base = pascal(w1) + pascal(w2) + ".module"
-		case ".ts":
-			if strings.HasSuffix(dir, "hooks") {
-				base = "use" + pascal(w1) + pascal(w2)
-			} else {
-				base = w1 + pascal(w2)
-			}
-		case ".sql":
-			n.seq[dir]++
-			base = fmt.Sprintf("%04d_create_%s_%s", n.seq[dir], w1, w2)
-		default:
-			base = w1 + "-" + w2
+		stem, tail := n.base(dir, ext, w1, w2)
+		if rel := path.Join(dir, stem+tail+ext); claim(rel) {
+			return rel
 		}
-		rel := path.Join(dir, base+ext)
-		if n.taken[rel] || (exists != nil && exists(rel)) {
-			continue
-		}
-		n.taken[rel] = true
-		return rel
 	}
+	w1, w2 := n.words()
+	for w1 == w2 {
+		w1, w2 = n.words()
+	}
+	stem, tail := n.base(dir, ext, w1, w2)
+	sep := "-"
+	switch ext {
+	case ".go", ".sql":
+		sep = "_"
+	case ".tsx", ".ts", ".css":
+		sep = ""
+	}
+	key := dir + "\x00" + ext
+	for {
+		n.fallback[key]++
+		rel := path.Join(dir, fmt.Sprintf("%s%s%d%s%s", stem, sep, n.fallback[key], tail, ext))
+		if claim(rel) {
+			return rel
+		}
+	}
+}
+
+func (n *namer) words() (string, string) {
+	return words[n.rng.IntN(len(words))], words[n.rng.IntN(len(words))]
+}
+
+// base builds a file name from two words following the conventions for ext.
+// tail is a suffix that must stay last (before ext), such as "_test".
+func (n *namer) base(dir, ext, w1, w2 string) (stem, tail string) {
+	switch ext {
+	case ".go":
+		if n.rng.IntN(4) == 0 {
+			tail = "_test"
+		}
+		return w1 + "_" + w2, tail
+	case ".tsx":
+		return pascal(w1) + pascal(w2), ""
+	case ".css":
+		return pascal(w1) + pascal(w2), ".module"
+	case ".ts":
+		if strings.HasSuffix(dir, "hooks") {
+			return "use" + pascal(w1) + pascal(w2), ""
+		}
+		return w1 + pascal(w2), ""
+	case ".sql":
+		n.seq[dir]++
+		return fmt.Sprintf("%04d_create_%s_%s", n.seq[dir], w1, w2), ""
+	}
+	return w1 + "-" + w2, ""
 }
 
 // sizeFor picks a target size in bytes, skewed towards small files.
