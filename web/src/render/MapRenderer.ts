@@ -167,8 +167,6 @@ export class MapRenderer {
 
     app.canvas.addEventListener("pointermove", this.#onPointerMove);
     app.canvas.addEventListener("pointerleave", this.#onPointerLeave);
-    app.canvas.addEventListener("click", this.#onClick);
-    app.canvas.addEventListener("dblclick", this.#onDblClick);
     this.#nav = new MapNavigator(app.canvas, {
       camera: () => this.#camera(),
       aimed: () => this.#cam.target,
@@ -176,6 +174,8 @@ export class MapRenderer {
       root: () => this.#layout.get(""),
       free: () => this.#freeRect(),
       view: (target, path, snap) => this.#setView(target, path, snap),
+      click: (ev) => this.#onClick(ev),
+      doubleClick: () => this.#onDblClick(),
     });
     app.ticker.add((t) => this.#frame(t.deltaMS));
     this.#stopMotionWatch = watchReducedMotion((reduced) => {
@@ -258,8 +258,6 @@ export class MapRenderer {
     this.#stopMotionWatch();
     app.canvas.removeEventListener("pointermove", this.#onPointerMove);
     app.canvas.removeEventListener("pointerleave", this.#onPointerLeave);
-    app.canvas.removeEventListener("click", this.#onClick);
-    app.canvas.removeEventListener("dblclick", this.#onDblClick);
     this.#nav?.destroy();
     for (const v of this.#views.values()) v.label?.texture.destroy(true);
     this.#views.clear();
@@ -288,14 +286,20 @@ export class MapRenderer {
     return this.#free ?? { x0: 0, y0: 0, x1: width, y1: height };
   }
 
-  /** A free camera move (wheel zoom, drag): aims the springs, then re-derives the focused folder. */
-  #setView(target: Camera, path: CameraPath | null, snap: boolean): void {
+  /** Points the camera springs at `target`; while `path` is set the centre follows it as the scale springs. */
+  #aim(target: Camera, path: CameraPath | null): void {
     const cam = this.#cam;
     cam.target = target;
-    cam.path = snap ? null : path;
+    cam.path = path;
     retarget(cam.cx, target.cx);
     retarget(cam.cy, target.cy);
     retarget(cam.logk, Math.log(target.k));
+  }
+
+  /** A free camera move (wheel zoom, drag): aims the springs, then re-derives the focused folder. */
+  #setView(target: Camera, path: CameraPath | null, snap: boolean): void {
+    const cam = this.#cam;
+    this.#aim(target, snap ? null : path);
     if (snap) for (const s of [cam.cx, cam.cy, cam.logk]) snapSpring(s);
     const { width, height } = this.#size();
     const focus = focusFolder(this.#layout, target, width, height, this.#freeRect());
@@ -323,11 +327,7 @@ export class MapRenderer {
     if (was.x === now.x && was.y === now.y && was.r === now.r) return;
     const target = follow(this.#cam.target, was, now);
     this.#freeView = { focus: now };
-    this.#cam.path = null;
-    this.#cam.target = target;
-    retarget(this.#cam.cx, target.cx);
-    retarget(this.#cam.cy, target.cy);
-    retarget(this.#cam.logk, Math.log(target.k));
+    this.#aim(target, null);
   }
 
   #aimCamera(userInitiated: boolean): void {
@@ -341,11 +341,7 @@ export class MapRenderer {
     if (target.cx !== prev.cx || target.cy !== prev.cy || target.k !== prev.k) {
       // A zoom scales about a fixed point so the target stays on screen; a
       // pure pan (same scale) springs the centre directly.
-      this.#cam.path = zoomPath(this.#camera(), target);
-      retarget(this.#cam.cx, target.cx);
-      retarget(this.#cam.cy, target.cy);
-      retarget(this.#cam.logk, Math.log(target.k));
-      this.#cam.target = target;
+      this.#aim(target, zoomPath(this.#camera(), target));
     }
     if (changed || userInitiated) this.#reportZoom(target.k);
   }
@@ -399,17 +395,16 @@ export class MapRenderer {
     for (const fn of this.#hoverFns) fn(null, { x: ev.clientX, y: ev.clientY });
   };
 
-  #onClick = (ev: MouseEvent): void => {
-    // The end of a drag is not a click; a double click's second click is handled by #onDblClick.
-    if (this.#nav?.swallowClick() || ev.detail > 1) return;
+  /** A click the navigator let through (not a drag's end, nor a double click's second click). */
+  #onClick(ev: MouseEvent): void {
     const path = this.#pickAt(ev);
     this.#firstPick = path;
     for (const fn of this.#clickFns) fn(path);
-  };
+  }
 
-  #onDblClick = (): void => {
+  #onDblClick(): void {
     for (const fn of this.#dblFns) fn(this.#firstPick);
-  };
+  }
 
   // ---- frame loop -------------------------------------------------------
 
