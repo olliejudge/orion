@@ -12,7 +12,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "eslint . && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings"
+    "lint": "eslint . && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "d3-hierarchy": "3.1.2",
@@ -20,6 +21,7 @@
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@playwright/test": "1.63.0",
     "@sveltejs/vite-plugin-svelte": "7.3.0",
     "@testing-library/jest-dom": "7.0.1",
     "@testing-library/svelte": "5.4.2",

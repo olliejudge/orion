@@ -64,3 +64,38 @@ jobs:
         run: pnpm -C web build
       - if: steps.detect.outputs.present != 'true'
         run: echo "web/ not present yet; nothing to check"
+
+  e2e:
+    name: e2e (Playwright, macOS)
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Install web dependencies
+        run: pnpm -C web install --frozen-lockfile
+      - name: Build orion (web + Go)
+        run: make build
+      - name: Install Chromium for Playwright
+        run: pnpm -C web exec playwright install chromium
+      - name: Run Playwright smoke test
+        run: pnpm -C web e2e
+      - name: Upload screenshots and traces
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-screenshots
+          path: |
+            web/e2e/__screenshots__/
+            web/test-results/
+          if-no-files-found: ignore

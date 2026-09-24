@@ -23,3 +23,8 @@ node_modules/
 # Built web UI (only .gitkeep is committed)
 internal/webassets/static/*
 !internal/webassets/static/.gitkeep
+
+# Playwright
+/web/e2e/__screenshots__/
+/web/test-results/
+/web/playwright-report/
