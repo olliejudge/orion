@@ -2,7 +2,7 @@ import type { NodeVisual } from "../layout/encoding";
 import type { Circle } from "../layout/pack";
 import type { Change } from "../store";
 import { glideOffset, type Glide } from "./geometry";
-import { SETTLE_EPS, SPRING_OMEGA, isSettled, makeSpring, retarget, stepSpring, type Spring } from "./springs";
+import { SETTLE_EPS, SPRING_OMEGA, isSettled, makeSpring, retarget, snapSpring, stepSpring, type Spring } from "./springs";
 
 export const DELETED_SCALE = 0.85;
 export const SHIMMER_MS = 600;
@@ -107,16 +107,24 @@ export class Scene {
    * true while anything is still moving. `eps` is the settle epsilon for the
    * world-space springs (x, y, r); the renderer passes ~0.5 / k so that at
    * zoom k nothing snaps by more than half a screen pixel. Alpha is unitless
-   * and always uses SETTLE_EPS.
+   * and always uses SETTLE_EPS. With `snap` (reduced motion) every spring
+   * jumps straight to its target.
    */
-  step(dtMs: number, now: number, eps: number = SETTLE_EPS): boolean {
+  step(dtMs: number, now: number, eps: number = SETTLE_EPS, snap = false): boolean {
     const dt = Math.max(0, Math.min(dtMs || 0, 64)) / 1000;
     let busy = false;
     for (const [path, n] of this.nodes) {
-      stepSpring(n.x, dt, SPRING_OMEGA, eps);
-      stepSpring(n.y, dt, SPRING_OMEGA, eps);
-      stepSpring(n.r, dt, SPRING_OMEGA, eps);
-      stepSpring(n.alpha, dt);
+      if (snap) {
+        snapSpring(n.x);
+        snapSpring(n.y);
+        snapSpring(n.r);
+        snapSpring(n.alpha);
+      } else {
+        stepSpring(n.x, dt, SPRING_OMEGA, eps);
+        stepSpring(n.y, dt, SPRING_OMEGA, eps);
+        stepSpring(n.r, dt, SPRING_OMEGA, eps);
+        stepSpring(n.alpha, dt);
+      }
       const moving = !isSettled(n.x, eps) || !isSettled(n.y, eps) || !isSettled(n.r, eps) || !isSettled(n.alpha);
       if (n.glide && !moving) n.glide = null;
       if (n.shimmerAt !== null && now - n.shimmerAt > SHIMMER_MS) n.shimmerAt = null;

@@ -15,10 +15,11 @@ import {
   type Camera,
   type Rect,
 } from "./geometry";
+import { motionPolicy, watchReducedMotion, type Motion } from "./motion";
 import { Scene, type SceneNode } from "./scene";
 import { labelSpan, placeLabels, type LabelCandidate, type LabelSpot, LABEL_LINE_PX } from "./labels";
 import { HALO_RING_FRAC, TextureBank, labelWidth, renderArcLabel } from "./sprites";
-import { SETTLE_EPS, SPRING_OMEGA, isSettled, makeSpring, retarget, stepSpring, type Spring } from "./springs";
+import { SETTLE_EPS, SPRING_OMEGA, isSettled, makeSpring, retarget, snapSpring, stepSpring, type Spring } from "./springs";
 import { aggregateLook, fileLook, type Rings, type Theme } from "./style";
 
 export type { Theme } from "./style";
@@ -120,6 +121,8 @@ export class MapRenderer {
   #zoomFns: ((scale: number) => void)[] = [];
   #idleFrames = 0;
   #lastHover: string | null = null;
+  #motion: Motion = motionPolicy(false);
+  #stopMotionWatch = (): void => {};
 
   constructor(host: HTMLElement) {
     this.#host = host;
@@ -154,6 +157,10 @@ export class MapRenderer {
     app.canvas.addEventListener("pointerleave", this.#onPointerLeave);
     app.canvas.addEventListener("click", this.#onClick);
     app.ticker.add((t) => this.#frame(t.deltaMS));
+    this.#stopMotionWatch = watchReducedMotion((reduced) => {
+      this.#motion = motionPolicy(reduced);
+      this.#wake();
+    });
   }
 
   update(layout: Map<string, Circle>, visuals: Map<string, NodeVisual>, change: Change): void {
@@ -213,6 +220,7 @@ export class MapRenderer {
     this.#destroyed = true;
     const app = this.#app;
     if (!app) return;
+    this.#stopMotionWatch();
     app.canvas.removeEventListener("pointermove", this.#onPointerMove);
     app.canvas.removeEventListener("pointerleave", this.#onPointerLeave);
     app.canvas.removeEventListener("click", this.#onClick);
@@ -260,6 +268,11 @@ export class MapRenderer {
   /** Advances the camera; returns true while it is still moving. */
   #stepCamera(dt: number): boolean {
     const cam = this.#cam;
+    if (this.#motion.snap) {
+      for (const s of [cam.cx, cam.cy, cam.logk]) snapSpring(s);
+      cam.path = null;
+      return false;
+    }
     stepSpring(cam.logk, dt, SPRING_OMEGA, LOGK_EPS);
     if (cam.path) {
       const at = cam.path(Math.exp(cam.logk.value));
@@ -319,7 +332,7 @@ export class MapRenderer {
     const now = performance.now();
     const camBusy = this.#stepCamera(Math.max(0, Math.min(dtMs || 0, 64)) / 1000);
     const cam = this.#camera();
-    const sceneBusy = this.#scene.step(dtMs, now, worldEps(cam.k));
+    const sceneBusy = this.#scene.step(dtMs, now, worldEps(cam.k), this.#motion.snap);
 
     const { width, height } = this.#size();
     const f: FrameCtx = {
@@ -497,9 +510,10 @@ export class MapRenderer {
       v.flash.anchor.set(0.5);
       v.root.addChild(v.flash);
     }
+    const look = this.#motion.shimmer(p);
     v.flash.visible = true;
-    v.flash.alpha = 0.55 * Math.sin(Math.PI * p);
-    v.flash.width = v.flash.height = R * 2 * (1 + 0.25 * p);
+    v.flash.alpha = look.alpha;
+    v.flash.width = v.flash.height = R * 2 * look.scale;
   }
 
   #labelWidth(name: string): number {
