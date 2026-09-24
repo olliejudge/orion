@@ -40,7 +40,7 @@
 <section class="legend glass" data-testid="legend" aria-label="Worktrees">
   <h1>{repo.repo.name}</h1>
   <p class="base">Compared with {repo.repo.base || "HEAD"}</p>
-  <div class="night-reveal">
+  <div class="night-reveal scroll" data-testid="legend-list">
     <ul>
       {#each model.active as w (w.id)}{@render pill(w)}{/each}
     </ul>
@@ -58,13 +58,34 @@
 </section>
 
 <style>
+  /* Bounded both ways: long branch names ellipsize, and a long idle list
+     scrolls inside the panel instead of running off-screen over the map. */
   .legend {
     position: fixed;
     top: var(--gutter);
     left: var(--gutter);
-    max-width: min(320px, calc(100vw - 2 * var(--gutter)));
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    max-width: min(var(--legend-max-w), calc(100vw - 2 * var(--gutter)));
+    max-height: calc(100vh - var(--gutter) - 64px);
     padding: 10px 12px 12px;
     z-index: 2;
+  }
+  /* Narrow: stop above the activity sheet (Activity.svelte: bottom 64px, ≤ 32vh). */
+  @media (max-width: 720px) {
+    .legend {
+      max-height: calc(68vh - 64px - 2 * var(--gutter));
+    }
+  }
+  .scroll {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    /* Room for the focus ring, which overflow would otherwise clip. */
+    margin: 0 -4px;
+    padding: 0 4px 2px;
   }
   h1 {
     margin: 0;
@@ -76,6 +97,10 @@
     margin: 1px 0 8px;
     color: var(--text-faint);
     font-size: 11px;
+  }
+  li {
+    min-width: 0;
+    max-width: 100%;
   }
   ul {
     list-style: none;
@@ -89,6 +114,7 @@
     margin-top: 6px;
   }
   .pill {
+    box-sizing: border-box;
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -125,6 +151,7 @@
     white-space: nowrap;
   }
   .count {
+    flex: none;
     color: var(--text-dim);
     font-variant-numeric: tabular-nums;
   }

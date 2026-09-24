@@ -19,6 +19,7 @@
   --radius-panel: 14px;
   --radius-row: 8px;
   --gutter: 16px;
+  --legend-max-w: 340px;
 }
 
 :root[data-theme="night"] {
