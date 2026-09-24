@@ -12,12 +12,24 @@ import (
 
 // wtState is the engine's cached view of one worktree. Maps are replaced,
 // never mutated, because model.Store keeps references to published States.
+// Each cached value carries a stamp of the inputs it was computed from,
+// recorded only when the computation succeeded, so a value left stale by a
+// git failure is recomputed on the next refresh.
 type wtState struct {
-	g           gitx.Worktree // g.Path is canonical (symlinks resolved)
-	subject     string        // subject of g.Head
-	subjectFor  string        // the Head that subject belongs to
-	committed   map[string]model.ChangeEntry
-	uncommitted map[string]model.ChangeEntry
+	g            gitx.Worktree // g.Path is canonical (symlinks resolved)
+	subject      string        // subject of g.Head
+	subjectFor   stamp         // head only
+	committed    map[string]model.ChangeEntry
+	committedFor stamp // base and head
+	uncommitted  map[string]model.ChangeEntry
+	statusFor    stamp // head only: status is redone when HEAD moves
+}
+
+// stamp names the inputs a cached value was computed from; the zero stamp
+// matches nothing.
+type stamp struct {
+	ok         bool
+	base, head string
 }
 
 // canon returns p with symlinks resolved (macOS: /var → /private/var), or p

@@ -32,6 +32,8 @@ type Engine struct {
 	baseSha string
 	tree    map[string]int64
 	wts     map[model.WorktreeID]*wtState
+	// routingIncomplete is set while a linked worktree's admin dir is unknown.
+	routingIncomplete bool
 	// watchRoots is set by Run: it receives the roots (outside the main
 	// root) that must be watched, mapped to their worktree.
 	watchRoots func(roots map[string]model.WorktreeID)
@@ -83,9 +85,10 @@ func Open(ctx context.Context, path, baseOverride string, r gitx.Runner) (*Engin
 	e.baseRef, e.baseSha, e.tree = ref, sha, tree
 	e.work.Lock()
 	defer e.work.Unlock()
-	if err := e.syncWorktrees(ctx, true); err != nil { // also builds the router
+	if err := e.syncWorktrees(ctx, false); err != nil { // also builds the router
 		return nil, err
 	}
+	e.refreshAll(ctx)
 	e.store = model.NewStore(e.state(), time.Now())
 	return e, nil
 }
@@ -117,9 +120,11 @@ func (e *Engine) Subscribe() (<-chan model.Patch, func()) {
 	}
 }
 
-// syncWorktrees reconciles e.wts with `git worktree list`: adds new worktrees
-// (fully computed), drops removed or prunable ones, refreshes metadata, and
-// recomputes committed overlays for moved HEADs (all of them when force).
+// syncWorktrees reconciles e.wts with `git worktree list`: adds new
+// worktrees, drops removed or prunable ones and refreshes their metadata.
+// When force is set, every committed overlay is marked stale. The caches
+// themselves are recomputed by refreshAll. Routing is rebuilt when the set
+// changed, or while a linked worktree's admin dir is still unknown.
 func (e *Engine) syncWorktrees(ctx context.Context, force bool) error {
 	list, err := gitx.ListWorktrees(ctx, e.r, e.mainRoot)
 	if err != nil {
@@ -136,22 +141,13 @@ func (e *Engine) syncWorktrees(ctx context.Context, force bool) error {
 		seen[id] = true
 		ws, ok := e.wts[id]
 		if !ok {
-			ws = &wtState{g: g, uncommitted: map[string]model.ChangeEntry{}}
+			ws = &wtState{uncommitted: map[string]model.ChangeEntry{}}
 			e.wts[id] = ws
 			changed = true
-			e.refreshHead(ctx, ws)
-			e.refreshStatus(ctx, ws)
-			continue
 		}
-		moved := ws.g.Head != g.Head
 		ws.g = g
-		if moved || force {
-			e.refreshHead(ctx, ws)
-		}
-		if moved {
-			// A commit moves HEAD and empties status together; recompute both
-			// so one patch shows uncommitted → committed with the new HEAD.
-			e.refreshStatus(ctx, ws)
+		if force {
+			ws.committedFor = stamp{}
 		}
 	}
 	for id := range e.wts {
@@ -160,55 +156,90 @@ func (e *Engine) syncWorktrees(ctx context.Context, force bool) error {
 			changed = true
 		}
 	}
-	if changed {
+	if changed || e.routingIncomplete {
 		e.rebuildRouting()
 	}
 	return nil
 }
 
-// refreshHead recomputes ws's HEAD subject and committed overlay.
-func (e *Engine) refreshHead(ctx context.Context, ws *wtState) {
-	if ws.subjectFor != ws.g.Head {
-		ws.subject, ws.subjectFor = "", ws.g.Head
-		if ws.g.Head != "" {
-			if s, err := gitx.CommitSubject(ctx, e.r, e.mainRoot, ws.g.Head); err == nil {
-				ws.subject = s
-			} else {
-				log.Printf("orion: subject of %s: %v", ws.g.Head, err)
-			}
-		}
+// refreshAll brings every worktree's caches up to date with its HEAD and the
+// current base. Only stale values are recomputed, so it is cheap to call
+// before every publish, and it retries whatever a git failure left stale.
+func (e *Engine) refreshAll(ctx context.Context) {
+	for _, ws := range e.wts {
+		e.refresh(ctx, ws)
 	}
-	m, err := committedOverlay(ctx, e.r, e.mainRoot, e.baseSha, ws.g.Head)
-	if err != nil {
-		log.Printf("orion: committed changes of %s: %v", ws.g.Path, err)
-		return
-	}
-	ws.committed = m
 }
 
-// refreshStatus recomputes ws's uncommitted overlay, keeping the last good
-// one on error.
-func (e *Engine) refreshStatus(ctx context.Context, ws *wtState) {
+// refresh recomputes ws's HEAD subject and committed overlay when they do not
+// match (e.baseSha, ws.g.Head), and its uncommitted overlay when HEAD moved:
+// a commit moves HEAD and empties status together, and recomputing both
+// makes one patch show uncommitted → committed with the new HEAD.
+func (e *Engine) refresh(ctx context.Context, ws *wtState) {
+	head := ws.g.Head
+	if want := (stamp{ok: true, head: head}); ws.subjectFor != want {
+		ws.subject = ""
+		if head == "" {
+			ws.subjectFor = want
+		} else if s, err := gitx.CommitSubject(ctx, e.r, e.mainRoot, head); err != nil {
+			e.logf(ctx, "subject of %s: %v", head, err)
+		} else {
+			ws.subject, ws.subjectFor = s, want
+		}
+	}
+	if want := (stamp{ok: true, base: e.baseSha, head: head}); ws.committedFor != want {
+		if m, err := committedOverlay(ctx, e.r, e.mainRoot, e.baseSha, head); err != nil {
+			e.logf(ctx, "committed changes of %s: %v", ws.g.Path, err)
+		} else {
+			ws.committed, ws.committedFor = m, want
+		}
+	}
+	if ws.statusFor != (stamp{ok: true, head: head}) {
+		if err := e.refreshStatus(ctx, ws); err != nil {
+			e.logf(ctx, "status %s: %v", ws.g.Path, err)
+		}
+	}
+}
+
+// refreshStatus recomputes ws's uncommitted overlay. On error the last good
+// one is kept.
+func (e *Engine) refreshStatus(ctx context.Context, ws *wtState) error {
+	head := ws.g.Head
 	m, err := uncommittedOverlay(ctx, e.r, ws.g.Path)
 	if err != nil {
-		log.Printf("orion: status %s: %v", ws.g.Path, err)
-		return
+		return err
 	}
-	ws.uncommitted = m
+	ws.uncommitted, ws.statusFor = m, stamp{ok: true, head: head}
+	return nil
+}
+
+// logf logs a recompute problem, unless ctx is done (then the failure is
+// just the cancellation).
+func (e *Engine) logf(ctx context.Context, format string, args ...any) {
+	if ctx.Err() == nil {
+		log.Printf("orion: "+format, args...)
+	}
 }
 
 // rebuildRouting installs a Router for the current worktrees and reports the
 // roots that need their own watch (linked worktrees outside the main root) to
-// e.watchRoots, which Run sets. e.work must be held.
+// e.watchRoots, which Run sets. A linked worktree whose admin dir cannot be
+// read yet (its .git file is written after its admin entry) gets file events
+// only, and e.routingIncomplete makes the next sync try again. e.work must be
+// held.
 func (e *Engine) rebuildRouting() {
 	var targets []RouteTarget
 	outside := map[string]model.WorktreeID{}
+	e.routingIncomplete = false
 	for id, ws := range e.wts {
 		t := RouteTarget{ID: id, Root: ws.g.Path}
 		if ws.g.IsMain {
 			t.AdminDir = e.commonDir
 		} else if admin, err := gitx.WorktreeAdminDir(ws.g.Path); err == nil {
 			t.AdminDir = canon(admin)
+		} else {
+			log.Printf("orion: routing %s: %v", ws.g.Path, err)
+			e.routingIncomplete = true
 		}
 		targets = append(targets, t)
 		if _, inside := under(ws.g.Path, e.mainRoot); !inside {
@@ -230,7 +261,7 @@ func (e *Engine) lookupBase(ctx context.Context) (string, string, error) {
 		return ref, sha, err
 	}
 	if !e.warnedBase {
-		log.Printf("orion: %v; falling back to the main worktree's HEAD", err)
+		e.logf(ctx, "%v; falling back to the main worktree's HEAD", err)
 		e.warnedBase = true
 	}
 	wts, err := gitx.ListWorktrees(ctx, e.r, e.mainRoot)

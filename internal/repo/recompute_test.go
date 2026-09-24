@@ -2,6 +2,8 @@ package repo
 
 import (
 	"context"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -170,5 +172,108 @@ func TestFireKeepsLastGoodStateWhenGitFails(t *testing.T) {
 	noPatch(t, ch)
 	if after := e.Snapshot(); after.Seq != before.Seq {
 		t.Fatalf("seq moved from %d to %d on git failure", before.Seq, after.Seq)
+	}
+}
+
+// failingGit returns a git wrapper that exits 2 whenever an argument equals
+// arg, and runs the real git otherwise.
+func failingGit(t *testing.T, arg string) string {
+	t.Helper()
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(t.TempDir(), "git")
+	script := "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = " + arg + " ] && exit 2; done\nexec '" + real + "' \"$@\"\n"
+	if err := os.WriteFile(p, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestFireRepairsCommittedOverlayAfterGitFailure(t *testing.T) {
+	r := initRepo(t, map[string]string{"README.md": "# demo\n"})
+	wt := r.WorktreeAdd(filepath.Join(t.TempDir(), "feature"), "feature")
+	wt.Write("feature.txt", "hello\n")
+	wt.Add("feature.txt")
+	wt.Commit("add feature")
+	e, ch := openEngine(t, r.Path())
+	id := wtID(wt.Path())
+
+	r.Merge("feature")
+	e.r = gitx.Runner{Git: failingGit(t, "merge-base")} // the committed-overlay step fails
+	e.fire(context.Background(), keyRefs, ReasonRefs)
+	if p := nextPatch(t, ch); p.Base == nil {
+		t.Fatalf("patch = %+v, want the new base tree", p)
+	}
+	if n := len(e.Snapshot().Overlays[id]); n != 1 {
+		t.Fatalf("feature overlay has %d entries, want the last good one kept", n)
+	}
+
+	e.r = gitx.Runner{}
+	e.fire(context.Background(), string(wtID(r.Path())), ReasonFiles) // an unrelated event
+	p := nextPatch(t, ch)
+	if rm := p.Overlays[id].Remove; len(rm) != 1 || rm[0] != "feature.txt" {
+		t.Fatalf("overlay remove = %v, want [feature.txt] once git works again", rm)
+	}
+}
+
+func TestFireSeesWorktreesWhenBaseStopsResolving(t *testing.T) {
+	r := initRepo(t, map[string]string{"a.txt": "a"})
+	r.Git("branch", "-m", "trunk") // no main or master: base is the main worktree's branch
+	wt := r.WorktreeAdd(filepath.Join(t.TempDir(), "feature"), "feature")
+	e, ch := openEngine(t, r.Path())
+	if b := e.Snapshot().Repo.Base; b != "trunk" {
+		t.Fatalf("base = %q, want trunk", b)
+	}
+	id := wtID(wt.Path())
+
+	r.Git("checkout", "--quiet", "--orphan", "scratch") // main HEAD is unborn: base no longer resolves
+	wt.Write("f.txt", "f")
+	e.fire(context.Background(), string(id), ReasonFiles|ReasonRef)
+	if c, ok := findUpsert(nextPatch(t, ch), id, "f.txt"); !ok || c.Stage != model.Uncommitted {
+		t.Fatalf("f.txt = %+v (found %v), want uncommitted", c, ok)
+	}
+
+	wt.Add("f.txt")
+	sha := wt.Commit("add f")
+	e.fire(context.Background(), string(id), ReasonRef)
+	p := nextPatch(t, ch)
+	if c, ok := findUpsert(p, id, "f.txt"); !ok || c.Stage != model.Committed {
+		t.Fatalf("f.txt = %+v (found %v), want committed", c, ok)
+	}
+	for _, w := range e.Snapshot().Worktrees {
+		if w.ID == id && w.Head != sha {
+			t.Errorf("head = %s, want %s", w.Head, sha)
+		}
+	}
+}
+
+func TestFireRoutesWorktreeOnceItsGitFileAppears(t *testing.T) {
+	r := initRepo(t, map[string]string{"a.txt": "a"})
+	wt := r.WorktreeAdd(filepath.Join(t.TempDir(), "late"), "late")
+	// Like `git worktree add` mid-way: the entry is locked and <wt>/.git is not written yet.
+	r.Git("worktree", "lock", wt.Path())
+	dotgit := filepath.Join(wt.Path(), ".git")
+	if err := os.Rename(dotgit, dotgit+".hidden"); err != nil {
+		t.Fatal(err)
+	}
+	e, _ := openEngine(t, r.Path())
+	id := wtID(wt.Path())
+	if len(e.Snapshot().Worktrees) != 2 {
+		t.Fatalf("worktrees = %+v, want main + late", e.Snapshot().Worktrees)
+	}
+	head := filepath.Join(canon(r.Path()), ".git", "worktrees", "late", "HEAD")
+	want := Route{WorktreeRefEvent, id}
+	if got := e.router.Load().Route(head); got == want {
+		t.Fatalf("route = %+v before .git exists, want no ref routing", got)
+	}
+
+	if err := os.Rename(dotgit+".hidden", dotgit); err != nil {
+		t.Fatal(err)
+	}
+	e.fire(context.Background(), keyWorktrees, ReasonWorktrees)
+	if got := e.router.Load().Route(head); got != want {
+		t.Fatalf("route = %+v, want %+v once .git exists", got, want)
 	}
 }

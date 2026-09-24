@@ -3,6 +3,8 @@ package repo
 import (
 	"context"
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,6 +13,13 @@ import (
 	"github.com/olliejudge/orion/internal/model"
 	"github.com/olliejudge/orion/internal/testrepo"
 )
+
+// TestMain silences the engine's log output: tests provoke git failures and
+// base fallbacks on purpose, and assert on the resulting state instead.
+func TestMain(m *testing.M) {
+	log.SetOutput(io.Discard)
+	os.Exit(m.Run())
+}
 
 // initRepo returns a repo with one commit (testrepo starts on branch main).
 func initRepo(t *testing.T, files map[string]string) *testrepo.Repo {
