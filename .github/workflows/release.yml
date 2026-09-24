@@ -20,21 +20,22 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # changelog needs full history and tags
           persist-credentials: false
       # No caches: a poisoned cache must not reach a release build.
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: false
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
           version: 12.4.2
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
+          package-manager-cache: false
       # Web assets are built here, with no secrets in the environment, instead
       # of in GoReleaser's before-hooks (skipped below with --skip=before).
       - name: Build web assets
@@ -51,7 +52,9 @@ jobs:
           HAS_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN != '' }}
           TAG: ${{ github.ref_name }}
         run: |
-          case "$TAG" in
+          # Build metadata (v1.2.3+build-5) is not a prerelease marker.
+          base=${TAG%%+*}
+          case "$base" in
             *-*) echo "prerelease tag $TAG: the Homebrew cask is not updated" ;;
             *)
               if [ "$HAS_TAP_TOKEN" != "true" ]; then
@@ -60,7 +63,7 @@ jobs:
               fi
               ;;
           esac
-      - uses: goreleaser/goreleaser-action@v7
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
           version: v2.18.2

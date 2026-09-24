@@ -26,6 +26,7 @@ builds:
       - CGO_CFLAGS=-O2 -g -mmacosx-version-min=13.0
       - CGO_LDFLAGS=-mmacosx-version-min=13.0
     flags: [-trimpath]
+    mod_timestamp: "{{ .CommitTimestamp }}"
     ldflags:
       - -s -w -X github.com/olliejudge/orion/internal/version.Version={{ .Version }}
   - id: linux
@@ -36,6 +37,7 @@ builds:
     env:
       - CGO_ENABLED=0
     flags: [-trimpath]
+    mod_timestamp: "{{ .CommitTimestamp }}"
     ldflags:
       - -s -w -X github.com/olliejudge/orion/internal/version.Version={{ .Version }}
 
@@ -44,9 +46,15 @@ archives:
     ids: [darwin, linux]
     formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    # Commit-derived mtimes (with mod_timestamp on the builds) keep the archives,
+    # and so checksums.txt, identical across rebuilds of the same commit.
     files:
-      - LICENSE
-      - README.md
+      - src: LICENSE
+        info:
+          mtime: "{{ .CommitDate }}"
+      - src: README.md
+        info:
+          mtime: "{{ .CommitDate }}"
 
 checksum:
   name_template: checksums.txt
