@@ -27,7 +27,7 @@ func (h *harness) dial(t *testing.T, origin, cookie string) (*websocket.Conn, in
 		hdr.Set("Origin", origin)
 	}
 	if cookie != "" {
-		hdr.Set("Cookie", "orion_t="+cookie)
+		hdr.Set("Cookie", h.cookie+"="+cookie)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -194,5 +194,42 @@ func waitSubs(t *testing.T, f *fakeSource, n int) {
 			t.Fatalf("subscribers = %d, want %d", f.subscribers(), n)
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestWSRejectsOriginEdgeCases(t *testing.T) {
+	h := startServer(t, Options{})
+	for _, origin := range []string{
+		"null",
+		"http://LOCALHOST:" + h.port,
+		"http://localhost.:" + h.port,
+		"http://[::1]:" + h.port,
+		h.base + "/",
+		"http://user@" + h.host,
+		"http://" + h.host + ".evil.example",
+	} {
+		if _, status, _ := h.dial(t, origin, h.token); status != http.StatusForbidden {
+			t.Errorf("Origin %q: status %d, want 403", origin, status)
+		}
+	}
+}
+
+// TestWSRejectsForeignHostWithValidOrigin: a DNS-rebinding page sends its own
+// Host; a correct-looking Origin must not be enough.
+func TestWSRejectsForeignHostWithValidOrigin(t *testing.T) {
+	h := startServer(t, Options{})
+	for _, host := range []string{"evil.example:" + h.port, "127.0.0.1:5173"} {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		c, resp, err := websocket.Dial(ctx, "ws://"+h.host+"/ws?t="+h.token, &websocket.DialOptions{ //nolint:bodyclose // coder/websocket owns resp.Body ("You never need to close resp.Body yourself")
+			Host:       host,
+			HTTPHeader: http.Header{"Origin": {h.base}},
+		})
+		cancel()
+		if c != nil {
+			_ = c.CloseNow()
+		}
+		if err == nil || resp == nil || resp.StatusCode != http.StatusForbidden {
+			t.Errorf("Host %q: err=%v resp=%v, want 403", host, err, resp)
+		}
 	}
 }

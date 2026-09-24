@@ -22,7 +22,10 @@ import (
 	"github.com/olliejudge/orion/internal/model"
 )
 
-const cookieName = "orion_t"
+// cookiePrefix + PORT names the auth cookie. Browsers scope cookies by host,
+// not port, so a per-port name stops a second orion on a fallback port from
+// overwriting the first one's cookie.
+const cookiePrefix = "orion_t_"
 
 // VitePort is the Vite dev server's port. With Options.Dev the browser page
 // comes from there and Vite proxies /ws to us, so its origin is allowed too.
@@ -56,6 +59,7 @@ type Server struct {
 	opt      Options
 	port     string
 	token    string
+	cookie   string // cookiePrefix + port
 	hasUI    bool
 	fallback []byte
 	http     *http.Server
@@ -86,6 +90,7 @@ func Start(ctx context.Context, src Source, opt Options) (*Server, error) {
 		token: hex.EncodeToString(tok),
 		done:  make(chan struct{}),
 	}
+	s.cookie = cookiePrefix + s.port
 	s.URL = "http://127.0.0.1:" + s.port + "/?t=" + s.token
 	s.hasUI, s.fallback = inspectAssets(opt.Assets)
 	s.http = &http.Server{
@@ -146,7 +151,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/" && s.validToken(r.URL.Query().Get("t")) {
 		http.SetCookie(w, &http.Cookie{
-			Name: cookieName, Value: s.token, Path: "/",
+			Name: s.cookie, Value: s.token, Path: "/",
 			HttpOnly: true, SameSite: http.SameSiteStrictMode,
 		})
 		http.Redirect(w, r, "/", http.StatusFound)
@@ -174,7 +179,7 @@ func (s *Server) authorized(r *http.Request) bool {
 	if s.validToken(r.URL.Query().Get("t")) {
 		return true
 	}
-	c, err := r.Cookie(cookieName)
+	c, err := r.Cookie(s.cookie)
 	return err == nil && s.validToken(c.Value)
 }
 

@@ -1,10 +1,16 @@
 package server
 
 import (
+	"bufio"
 	"context"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -86,6 +92,8 @@ type harness struct {
 	cancel context.CancelFunc
 	base   string // http://127.0.0.1:PORT
 	host   string // 127.0.0.1:PORT
+	port   string
+	cookie string // this server's cookie name: orion_t_PORT
 	token  string
 }
 
@@ -102,7 +110,11 @@ func startServer(t *testing.T, opt Options) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &harness{srv: srv, src: src, cancel: cancel, base: "http://" + u.Host, host: u.Host, token: u.Query().Get("t")}
+	h := &harness{
+		srv: srv, src: src, cancel: cancel,
+		base: "http://" + u.Host, host: u.Host, port: u.Port(),
+		cookie: "orion_t_" + u.Port(), token: u.Query().Get("t"),
+	}
 	t.Cleanup(func() {
 		cancel()
 		if err := srv.Wait(); err != nil {
@@ -129,7 +141,7 @@ func (h *harness) get(t *testing.T, path, cookie string, mutate func(*http.Reque
 		t.Fatal(err)
 	}
 	if cookie != "" {
-		req.AddCookie(&http.Cookie{Name: "orion_t", Value: cookie})
+		req.AddCookie(&http.Cookie{Name: h.cookie, Value: cookie})
 	}
 	if mutate != nil {
 		mutate(req)
@@ -167,12 +179,12 @@ func TestTokenQuerySetsCookieAndRedirects(t *testing.T) {
 	}
 	var c *http.Cookie
 	for _, ck := range resp.Cookies {
-		if ck.Name == "orion_t" {
+		if ck.Name == h.cookie {
 			c = ck
 		}
 	}
 	if c == nil || c.Value != h.token || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode || c.Path != "/" {
-		t.Fatalf("cookie = %+v, want orion_t=<token>; HttpOnly; SameSite=Strict; Path=/", c)
+		t.Fatalf("cookie = %+v, want orion_t_PORT=<token>; HttpOnly; SameSite=Strict; Path=/", c)
 	}
 }
 
@@ -276,5 +288,163 @@ func TestWaitReturnsAfterCancel(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Wait did not return after ctx was cancelled")
+	}
+}
+
+// TestCookiePerPortSurvivesSecondInstance: browsers scope cookies by host, not
+// port, so a second orion on the fallback port must not clobber the first's.
+func TestCookiePerPortSurvivesSecondInstance(t *testing.T) {
+	a := startServer(t, Options{Assets: uiFS})
+	b := startServer(t, Options{Assets: uiFS})
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Jar: jar}
+	status := func(u string) int {
+		t.Helper()
+		resp, err := client.Get(u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	if got := status(a.base + "/?t=" + a.token); got != 200 {
+		t.Fatalf("A login: %d", got)
+	}
+	if got := status(b.base + "/?t=" + b.token); got != 200 {
+		t.Fatalf("B login: %d", got)
+	}
+	if got := status(a.base + "/"); got != 200 {
+		t.Errorf("A reload after B issued its cookie: %d, want 200", got)
+	}
+	if got := status(b.base + "/"); got != 200 {
+		t.Errorf("B reload: %d, want 200", got)
+	}
+	resp := a.get(t, "/", "", func(r *http.Request) {
+		r.AddCookie(&http.Cookie{Name: b.cookie, Value: b.token})
+	})
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("A with only B's cookie: %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestRejectsHostEdgeCases(t *testing.T) {
+	h := startServer(t, Options{Assets: uiFS})
+	for _, host := range []string{
+		"LOCALHOST:" + h.port,
+		"localhost.:" + h.port,
+		"[::1]:" + h.port,
+		"127.0.0.1:5173",
+		"localhost:5173",
+		"127.0.0.1",
+	} {
+		resp := h.get(t, "/", h.token, func(r *http.Request) { r.Host = host })
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("Host %q: status %d, want 403", host, resp.StatusCode)
+		}
+	}
+}
+
+// TestDevModeHost: in --dev, Vite's port is allowed as Host too (the brief
+// allows it for Host and Origin); foreign hosts and ports are still refused.
+func TestDevModeHost(t *testing.T) {
+	h := startServer(t, Options{Dev: true, Assets: uiFS})
+	for host, want := range map[string]int{
+		"127.0.0.1:" + h.port:    http.StatusNotFound, // allowed; dev serves no static
+		"localhost:5173":         http.StatusNotFound,
+		"127.0.0.1:5173":         http.StatusNotFound,
+		"evil.example:5173":      http.StatusForbidden,
+		"localhost:3000":         http.StatusForbidden,
+		"[::1]:5173":             http.StatusForbidden,
+		"evil.example:" + h.port: http.StatusForbidden,
+	} {
+		resp := h.get(t, "/", h.token, func(r *http.Request) { r.Host = host })
+		if resp.StatusCode != want {
+			t.Errorf("dev Host %q: status %d, want %d", host, resp.StatusCode, want)
+		}
+	}
+}
+
+// rawGet sends path byte-for-byte (no client-side cleaning) and returns the
+// status line and body.
+func (h *harness) rawGet(t *testing.T, path string) (string, string) {
+	t.Helper()
+	conn, err := net.Dial("tcp", h.host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_, err = fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: %s\r\nCookie: %s=%s\r\nConnection: close\r\n\r\n", path, h.host, h.cookie, h.token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp.Status, string(b)
+}
+
+func TestStaticNoPathTraversal(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "ui"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ui", "index.html"), []byte("<h1>orion app</h1>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "secret.txt"), []byte("top secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := startServer(t, Options{Assets: os.DirFS(filepath.Join(dir, "ui"))})
+	for _, p := range []string{
+		"/../secret.txt",
+		"/%2e%2e/secret.txt",
+		"/..%2fsecret.txt",
+		"/assets/../../secret.txt",
+		"/../../etc/passwd",
+		"/%2e%2e/%2e%2e/etc/passwd",
+	} {
+		status, body := h.rawGet(t, p)
+		if strings.Contains(body, "top secret") || strings.Contains(body, "root:") {
+			t.Errorf("GET %s escaped the asset FS: %s %q", p, status, body)
+		}
+		if strings.HasPrefix(status, "200") && body != "<h1>orion app</h1>" {
+			t.Errorf("GET %s: 200 with unexpected body %q", p, body)
+		}
+	}
+}
+
+func TestSecurityHeadersOnEveryResponse(t *testing.T) {
+	h := startServer(t, Options{Assets: uiFS})
+	for name, tc := range map[string]struct {
+		path, cookie string
+		mutate       func(*http.Request)
+		status       int
+	}{
+		"ok":           {"/", h.token, nil, 200},
+		"redirect":     {"/?t=" + h.token, "", nil, http.StatusFound},
+		"no token":     {"/", "", nil, http.StatusForbidden},
+		"foreign host": {"/", h.token, func(r *http.Request) { r.Host = "evil.example:" + h.port }, http.StatusForbidden},
+		"not found":    {"/missing.js", h.token, nil, http.StatusNotFound},
+	} {
+		resp := h.get(t, tc.path, tc.cookie, tc.mutate)
+		if resp.StatusCode != tc.status {
+			t.Errorf("%s: status %d, want %d", name, resp.StatusCode, tc.status)
+		}
+		if got := resp.Header.Get("Referrer-Policy"); got != "no-referrer" {
+			t.Errorf("%s: Referrer-Policy = %q, want no-referrer", name, got)
+		}
+		if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Errorf("%s: X-Content-Type-Options = %q, want nosniff", name, got)
+		}
 	}
 }
