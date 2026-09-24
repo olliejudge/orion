@@ -168,6 +168,14 @@ describe("RepoStore", () => {
       expect(last().merged).toEqual([]);
     });
 
+    it("does not report a committed entry dropped while base did not move (e.g. a branch reset)", () => {
+      const store = new RepoStore();
+      store.apply(snapshot());
+      const last = lastChange(store);
+      store.apply(patch(6, { overlays: { w1: { upsert: [], remove: ["src/app.ts"] } } }));
+      expect(last().merged).toEqual([]);
+    });
+
     it("does not report a path another worktree still touches", () => {
       const store = new RepoStore();
       store.apply(
