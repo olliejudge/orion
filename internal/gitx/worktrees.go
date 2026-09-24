@@ -21,13 +21,9 @@ type Worktree struct {
 
 // ListWorktrees lists the repo's worktrees, main first. Bare entries are
 // skipped. Paths are symlink-resolved when the directory exists; a missing
-// directory marks the entry Prunable.
+// directory marks the entry Prunable. The main entry's path is the working
+// tree (see MainRoot), never the git dir.
 func ListWorktrees(ctx context.Context, r Runner, dir string) ([]Worktree, error) {
-	wts, _, err := listWorktrees(ctx, r, dir)
-	return wts, err
-}
-
-func listWorktrees(ctx context.Context, r Runner, dir string) ([]Worktree, bool, error) {
 	// -z needs git 2.36; fall back to newline-separated output on older git.
 	out, err := r.Run(ctx, dir, "worktree", "list", "--porcelain", "-z")
 	sep := byte(0)
@@ -35,11 +31,22 @@ func listWorktrees(ctx context.Context, r Runner, dir string) ([]Worktree, bool,
 		var err2 error
 		out, err2 = r.Run(ctx, dir, "worktree", "list", "--porcelain")
 		if err2 != nil {
-			return nil, false, err
+			return nil, err
 		}
 		sep = '\n'
 	}
-	wts, bare := parseWorktrees(out, sep)
+	wts, _ := parseWorktrees(out, sep)
+	// git reports the git dir as the main worktree of submodules and
+	// --separate-git-dir repos. A real working tree has a .git entry.
+	if len(wts) > 0 && wts[0].IsMain {
+		if _, err := os.Lstat(filepath.Join(wts[0].Path, ".git")); err != nil {
+			root, err := MainRoot(ctx, r, dir)
+			if err != nil {
+				return nil, err
+			}
+			wts[0].Path = root
+		}
+	}
 	for i := range wts {
 		if _, err := os.Stat(wts[i].Path); err != nil {
 			wts[i].Prunable = true
@@ -47,7 +54,7 @@ func listWorktrees(ctx context.Context, r Runner, dir string) ([]Worktree, bool,
 		}
 		wts[i].Path = realPath(wts[i].Path)
 	}
-	return wts, bare, nil
+	return wts, nil
 }
 
 // parseWorktrees parses porcelain records separated by sep, each ending with

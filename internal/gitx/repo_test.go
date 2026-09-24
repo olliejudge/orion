@@ -212,3 +212,67 @@ func TestWorktreeAdminDir(t *testing.T) {
 		t.Fatal("WorktreeAdminDir of a non-worktree: want error")
 	}
 }
+
+// assertMainWorktree checks that MainRoot and the first ListWorktrees entry
+// both name want (the working tree), asked from dir.
+func assertMainWorktree(t *testing.T, dir, want string) {
+	t.Helper()
+	root, err := MainRoot(ctx, Runner{}, dir)
+	if err != nil || root != want {
+		t.Errorf("MainRoot(%s) = %q, %v; want %q", dir, root, err, want)
+	}
+	wts, err := ListWorktrees(ctx, Runner{}, dir)
+	if err != nil {
+		t.Fatalf("ListWorktrees(%s): %v", dir, err)
+	}
+	if len(wts) == 0 || !wts[0].IsMain || wts[0].Path != want || wts[0].Prunable {
+		t.Errorf("ListWorktrees(%s)[0] = %+v, want main worktree at %q", dir, wts, want)
+	}
+}
+
+func TestMainWorktreeOfSubmodule(t *testing.T) {
+	lib := testrepo.New(t)
+	lib.Write("pkg/lib.txt", "lib")
+	lib.Add()
+	lib.Commit("lib")
+	super := testrepo.New(t)
+	super.Write("app.txt", "app")
+	super.Add()
+	super.Commit("app")
+	super.Git("-c", "protocol.file.allow=always", "submodule", "add", "--quiet", lib.Path(), "sm")
+	sm := filepath.Join(super.Path(), "sm")
+
+	assertMainWorktree(t, sm, sm)
+	assertMainWorktree(t, filepath.Join(sm, "pkg"), sm)
+
+	// A linked worktree of the submodule still finds the submodule's working tree.
+	linked := filepath.Join(t.TempDir(), "sm-linked")
+	if _, err := (Runner{}).Run(ctx, sm, "worktree", "add", "--quiet", "-b", "side", linked); err != nil {
+		t.Fatal(err)
+	}
+	linked, _ = filepath.EvalSymlinks(linked)
+	assertMainWorktree(t, linked, sm)
+}
+
+func TestMainWorktreeOfSeparateGitDir(t *testing.T) {
+	r := testrepo.New(t)
+	r.Write("sub/a.txt", "a")
+	r.Add()
+	r.Commit("base")
+	sep := filepath.Join(t.TempDir(), "sep.git")
+	// Re-running init with --separate-git-dir moves .git to sep and leaves a gitfile.
+	r.Git("init", "--quiet", "--separate-git-dir", sep)
+
+	assertMainWorktree(t, r.Path(), r.Path())
+	assertMainWorktree(t, filepath.Join(r.Path(), "sub"), r.Path())
+
+	// From a linked worktree nothing points back at the main working tree,
+	// so MainRoot must fail rather than return the git dir.
+	linked := r.WorktreeAdd(filepath.Join(t.TempDir(), "linked"), "linked")
+	if root, err := MainRoot(ctx, Runner{}, linked.Path()); err == nil {
+		t.Errorf("MainRoot from a linked worktree of a separate-git-dir repo = %q, want error", root)
+	}
+	if wts, err := ListWorktrees(ctx, Runner{}, linked.Path()); err == nil {
+		t.Errorf("ListWorktrees from a linked worktree of a separate-git-dir repo = %+v, want error", wts)
+	}
+}

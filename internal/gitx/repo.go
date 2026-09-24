@@ -47,24 +47,52 @@ func CommonDir(ctx context.Context, r Runner, dir string) (string, error) {
 }
 
 // MainRoot returns the absolute top level of the MAIN worktree, even when dir
-// is inside a linked worktree. Bare repositories are an error.
+// is inside a linked worktree. Bare repositories are an error. git's own
+// answer (worktree list, or the common dir minus "/.git") is the git dir
+// itself for submodules and --separate-git-dir repos, so:
+//   - in the main worktree (git dir == common dir), use --show-toplevel;
+//   - elsewhere, use core.worktree from the common config if set (submodules);
+//   - else the common dir's parent when it is named ".git";
+//   - else fail: a separate git dir does not record its main worktree.
 func MainRoot(ctx context.Context, r Runner, dir string) (string, error) {
-	common, err := CommonDir(ctx, r, dir)
+	// --path-format=absolute needs git 2.31; resolve relative output ourselves.
+	out, err := r.Run(ctx, dir, "rev-parse", "--is-bare-repository", "--git-dir", "--git-common-dir")
 	if err != nil {
 		return "", err
+	}
+	lines := strings.Split(trimOut(out), "\n")
+	if len(lines) != 3 {
+		return "", fmt.Errorf("unexpected rev-parse output %q", out)
+	}
+	abs := func(p string) string {
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(dir, p)
+		}
+		return realPath(p)
+	}
+	gitDir, common := abs(lines[1]), abs(lines[2])
+	if lines[0] == "true" {
+		return "", fmt.Errorf("%s is a bare repository; run orion inside a worktree", common)
+	}
+	if gitDir == common {
+		out, err := r.Run(ctx, dir, "rev-parse", "--show-toplevel")
+		if err != nil {
+			return "", err
+		}
+		return realPath(trimOut(out)), nil
+	}
+	out, err = r.Run(ctx, dir, "config", "--file", filepath.Join(common, "config"), "--get", "core.worktree")
+	if err == nil {
+		wt := trimOut(out)
+		if !filepath.IsAbs(wt) {
+			wt = filepath.Join(common, wt)
+		}
+		return realPath(wt), nil
 	}
 	if filepath.Base(common) == ".git" {
 		return filepath.Dir(common), nil
 	}
-	// Separate git dir or submodule: the first worktree entry is the main one.
-	wts, bare, err := listWorktrees(ctx, r, dir)
-	if err != nil {
-		return "", err
-	}
-	if bare || len(wts) == 0 || !wts[0].IsMain {
-		return "", fmt.Errorf("%s is a bare repository; run orion inside a worktree", common)
-	}
-	return wts[0].Path, nil
+	return "", fmt.Errorf("cannot locate the main worktree of %s from a linked worktree; run orion in the main worktree", common)
 }
 
 // RevParse resolves rev to a full commit sha. It errors when rev is missing.
@@ -122,7 +150,7 @@ func ResolveBase(ctx context.Context, r Runner, dir, override string) (ref, sha 
 			return name, sha, nil
 		}
 	}
-	wts, _, err := listWorktrees(ctx, r, dir)
+	wts, err := ListWorktrees(ctx, r, dir)
 	if err != nil {
 		return "", "", err
 	}
