@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { Circle } from "../layout/pack";
 import {
   arcLetterAngles,
-  clickTarget,
   clipArc,
   dashArcs,
   fitCamera,
@@ -145,30 +144,6 @@ describe("parentDir", () => {
     expect(parentDir("src/lib/a.ts")).toBe("src/lib");
     expect(parentDir("a.ts")).toBe("");
     expect(parentDir("")).toBe("");
-  });
-});
-
-describe("clickTarget", () => {
-  const layout = new Map<string, Circle>([
-    ["", c("", 0, 0, 100, 0)],
-    ["src", c("src", 0, 0, 50, 1)],
-    ["src/lib", c("src/lib", 0, 0, 20, 2)],
-    ["src/lib/a.ts", c("src/lib/a.ts", 0, 0, 5, 3, false)],
-  ]);
-
-  it("zooms into folders and to a file's folder", () => {
-    expect(clickTarget("src", layout, "")).toBe("src");
-    expect(clickTarget("src/lib/a.ts", layout, "")).toBe("src/lib");
-  });
-
-  it("steps out one level when the folder in view is clicked", () => {
-    expect(clickTarget("src/lib", layout, "src/lib")).toBe("src");
-    expect(clickTarget("", layout, "")).toBe("");
-  });
-
-  it("returns to the root for background clicks and unknown paths", () => {
-    expect(clickTarget(null, layout, "src")).toBe("");
-    expect(clickTarget("gone", layout, "src")).toBe("");
   });
 });
 

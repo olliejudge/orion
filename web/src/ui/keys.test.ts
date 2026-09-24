@@ -13,6 +13,10 @@ describe("keyAction", () => {
     expect(keyAction(ev("x"))).toBeNull();
   });
 
+  it("maps Backspace to zooming out one level, like Esc", () => {
+    expect(keyAction(ev("Backspace"))).toBe("zoomOut");
+  });
+
   it("ignores shortcuts with modifiers (Cmd-N, Ctrl-F…)", () => {
     expect(keyAction(ev("n", { metaKey: true }))).toBeNull();
     expect(keyAction(ev("f", { ctrlKey: true }))).toBeNull();

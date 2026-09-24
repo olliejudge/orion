@@ -28,7 +28,7 @@ export interface Camera {
   k: number;
 }
 
-const MAX_ZOOM = 1000;
+export const MAX_ZOOM = 1000;
 const FIT = 0.9;
 
 /**
@@ -200,21 +200,6 @@ export function glideOffset(g: Glide, x: number, y: number): { x: number; y: num
   const p = Math.min(1, Math.max(0, along));
   const bow = Math.sin(Math.PI * p) * 0.15 * dist;
   return { x: (dy / dist) * bow, y: (-dx / dist) * bow };
-}
-
-// ---- click-to-zoom -------------------------------------------------------
-
-/**
- * Where a click should zoom to: a folder (or collapsed folder) zooms into
- * itself; a file zooms to its folder; clicking the folder already in view
- * steps out one level; clicking outside the repo returns to the root.
- */
-export function clickTarget(path: string | null, layout: Map<string, Circle>, current: string): string {
-  if (path === null) return "";
-  if (path === current) return parentDir(current);
-  const c = layout.get(path);
-  if (!c) return "";
-  return c.isDir ? path : parentDir(path);
 }
 
 // ---- label text ----------------------------------------------------------

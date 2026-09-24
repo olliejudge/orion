@@ -6,16 +6,18 @@
   import type { Circle } from "../layout/pack";
   import { nearestShown } from "../layout/shown";
   import type { WorktreeId } from "../protocol";
-  import { clickTarget } from "../render/geometry";
+  import { labelNames } from "../render/geometry";
   import { MapRenderer } from "../render/MapRenderer";
   import { SHIMMER_MS } from "../render/scene";
   import { RepoStore, type Change, type RepoState } from "../store";
   import Activity from "./Activity.svelte";
+  import Breadcrumbs from "./Breadcrumbs.svelte";
   import { FrameCoalescer } from "./coalesce";
   import { keyAction } from "./keys";
   import Legend from "./Legend.svelte";
   import LivePill from "./LivePill.svelte";
   import { hoverTip, mapInsets, shownFolder, type Footprint, type HoverTarget, type TooltipInfo } from "./models";
+  import { clickTarget, crumbs, doubleClickTarget, upOne } from "./nav";
   import { applyTheme, loadTheme, saveTheme, type Theme } from "./theme";
   import Tooltip from "./Tooltip.svelte";
 
@@ -34,8 +36,11 @@
 
   let mapEl: HTMLDivElement;
   let renderer: MapRenderer | null = null;
-  let layout = new Map<string, Circle>();
-  let zoomPath = "";
+  let layout: Map<string, Circle> = $state.raw(new Map());
+  // Folder names as the map shows them: the navigation levels (see nav.ts).
+  let labels: Map<string, string> = $state.raw(new Map());
+  let zoomPath = $state(""); // the folder in view: the last zoom target, or the focus after free zoom/pan
+  let beforeClick = ""; // the folder in view before a double click's first click
   let scale = 1;
   let hovered: string | null = null; // the activity row's path under the pointer
   let mapHover: HoverTarget | null = null; // the map's path under the pointer (drives the tooltip)
@@ -79,6 +84,7 @@
     if (w <= 0 || h <= 0) return; // nothing to lay out into (d3's pack throws on an empty rect)
     const f = computeFrame(s, w, h, scale, mapInsets(theme, w, h, legendBox), linger.paths());
     layout = f.layout;
+    labels = labelNames(f.layout);
     pillX = (f.free.x0 + f.free.x1) / 2;
     renderer.setFreeArea(f.free);
     renderer.update(f.layout, f.visuals, change);
@@ -139,7 +145,7 @@
     else if (action === "zoomOut") {
       // Esc backs out one step: first the isolation, then the zoom.
       if (isolated !== null) isolated = null;
-      else zoom("");
+      else zoom(upOne(zoomPath, layout, labels));
     }
     else if (action === "fullscreen") toggleFullscreen();
   }
@@ -167,7 +173,12 @@
           queue.request(NO_CHANGE);
           queue.flush();
         });
-        r.onClick((path) => zoom(clickTarget(path, layout, zoomPath)));
+        r.onClick((path) => {
+          beforeClick = zoomPath;
+          zoom(clickTarget(path, layout, labels, zoomPath));
+        });
+        r.onDoubleClick((path) => zoom(doubleClickTarget(path, layout, labels, beforeClick)));
+        r.onFocus((path) => (zoomPath = path));
         r.onHover((path, at) => {
           mapHover = path === null ? null : { path, at };
           tip = hoverTip(repo, layout, mapHover);
@@ -215,6 +226,9 @@
   <Activity {repo} {now} onHover={highlight} onSelect={(p) => zoom(shownFolder(p, layout))} />
 {/if}
 <LivePill {status} centerX={pillX} />
+{#if repo}
+  <Breadcrumbs crumbs={crumbs(zoomPath, layout, labels, repo.repo.name)} centerX={pillX} onSelect={zoom} />
+{/if}
 <Tooltip info={tip?.info ?? null} x={tip?.x ?? 0} y={tip?.y ?? 0} />
 
 <style>

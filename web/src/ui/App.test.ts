@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/svelte";
+import { render, screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Patch, Snapshot, Worktree } from "../protocol";
@@ -46,6 +46,8 @@ vi.mock("../render/MapRenderer", () => ({
     }
     onZoom(): void {}
     onClick(): void {}
+    onDoubleClick(): void {}
+    onFocus(): void {}
     onHover(): void {}
     destroy(): void {}
   },
@@ -131,6 +133,29 @@ describe("App", () => {
 
     await userEvent.keyboard("{Escape}");
     expect(h.zoomTo).toEqual([""]);
+  });
+
+  it("shows where the map is zoomed as breadcrumbs, and Backspace steps out one level", async () => {
+    render(App);
+    await waitFor(() => expect(h.store).not.toBeNull());
+    h.store!.apply({
+      ...snapshot,
+      tree: [{ path: "a.ts", size: 10 }, { path: "src/lib/x.ts", size: 10 }, { path: "src/lib/y.ts", size: 10 }, { path: "src/lib/deep/z.ts", size: 10 }],
+      activity: [{ ts: Date.now(), worktree: "w1", kind: "modified", path: "src/lib/deep/z.ts" }],
+    });
+    const crumbs = await screen.findByTestId("breadcrumbs");
+    await waitFor(() => expect(h.updates).toBeGreaterThan(0));
+    expect(crumbs).toHaveTextContent("sample-app");
+
+    await userEvent.click(await screen.findByRole("button", { name: /z\.ts/ }));
+    expect(h.zoomTo.at(-1)).toBe("src/lib/deep");
+    // src holds only lib, so the chain is one level.
+    await waitFor(() => expect([...crumbs.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["sample-app", "src/lib", "deep"]));
+
+    await userEvent.keyboard("{Backspace}");
+    expect(h.zoomTo.at(-1)).toBe("src/lib");
+    await userEvent.click(within(crumbs).getByRole("button", { name: "sample-app" }));
+    expect(h.zoomTo.at(-1)).toBe("");
   });
 
   it("explains a renderer that cannot start instead of showing a blank page", async () => {
