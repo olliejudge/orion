@@ -26,7 +26,8 @@ describe("Legend", () => {
     render(Legend, { repo: repoState(), now: NOW, isolated: null, onIsolate: () => {} });
     expect(screen.getByRole("heading", { name: "sample-app" })).toBeInTheDocument();
     const pills = screen.getAllByTestId("worktree-pill");
-    expect(pills.map((b) => b.textContent?.replace(/\s+/g, " ").trim())).toEqual(["main 1", "feat/a 2"]);
+    expect(pills.map((b) => b.textContent?.replace(/\s+/g, " ").trim())).toEqual(["main 1 changed files", "feat/a 2 changed files"]);
+    expect(screen.getByRole("button", { name: /feat\/a 2 changed files/ })).toBeInTheDocument();
     expect(screen.queryByText("fix/b")).toBeNull();
 
     const more = screen.getByRole("button", { name: "+2 idle" });

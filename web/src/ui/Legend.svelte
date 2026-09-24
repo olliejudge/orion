@@ -43,7 +43,10 @@
     >
       <span class="dot" style:background={w.color}></span>
       <span class="label">{w.label}</span>
-      {#if w.changed > 0}<span class="count" aria-label={`${w.changed} changed files`}>{w.changed}</span>{/if}
+      {#if w.changed > 0}
+        <span class="count">{w.changed}</span>
+        <span class="visually-hidden">changed files</span>
+      {/if}
     </button>
   </li>
 {/snippet}
