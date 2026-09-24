@@ -88,7 +88,9 @@ func Open(ctx context.Context, path, baseOverride string, r gitx.Runner) (*Engin
 	if err := e.syncWorktrees(ctx, false); err != nil { // also builds the router
 		return nil, err
 	}
-	e.refreshAll(ctx)
+	if err := e.refreshAllSynced(ctx); err != nil {
+		e.logf(ctx, "resync after HEAD moved: %v", err)
+	}
 	e.store = model.NewStore(e.state(), time.Now())
 	return e, nil
 }
@@ -165,17 +167,35 @@ func (e *Engine) syncWorktrees(ctx context.Context, force bool) error {
 // refreshAll brings every worktree's caches up to date with its HEAD and the
 // current base. Only stale values are recomputed, so it is cheap to call
 // before every publish, and it retries whatever a git failure left stale.
-func (e *Engine) refreshAll(ctx context.Context) {
+// It reports whether a status saw a HEAD other than the cached one.
+func (e *Engine) refreshAll(ctx context.Context) bool {
+	moved := false
 	for _, ws := range e.wts {
-		e.refresh(ctx, ws)
+		if e.refresh(ctx, ws) {
+			moved = true
+		}
 	}
+	return moved
+}
+
+// refreshAllSynced is refreshAll, followed, when a status saw a moved HEAD,
+// by a resync of base and worktrees and another refreshAll, so the moved
+// worktree's committed overlay matches its status before anything publishes.
+func (e *Engine) refreshAllSynced(ctx context.Context) error {
+	if !e.refreshAll(ctx) {
+		return nil
+	}
+	err := e.recomputeRefs(ctx, false)
+	e.refreshAll(ctx)
+	return err
 }
 
 // refresh recomputes ws's HEAD subject and committed overlay when they do not
 // match (e.baseSha, ws.g.Head), and its uncommitted overlay when HEAD moved:
 // a commit moves HEAD and empties status together, and recomputing both
-// makes one patch show uncommitted → committed with the new HEAD.
-func (e *Engine) refresh(ctx context.Context, ws *wtState) {
+// makes one patch show uncommitted → committed with the new HEAD. It
+// reports whether status saw a HEAD other than ws.g.Head.
+func (e *Engine) refresh(ctx context.Context, ws *wtState) bool {
 	head := ws.g.Head
 	if want := (stamp{ok: true, head: head}); ws.subjectFor != want {
 		ws.subject = ""
@@ -195,22 +215,28 @@ func (e *Engine) refresh(ctx context.Context, ws *wtState) {
 		}
 	}
 	if ws.statusFor != (stamp{ok: true, head: head}) {
-		if err := e.refreshStatus(ctx, ws); err != nil {
+		moved, err := e.refreshStatus(ctx, ws)
+		if err != nil {
 			e.logf(ctx, "status %s: %v", ws.g.Path, err)
 		}
+		return moved
 	}
+	return false
 }
 
-// refreshStatus recomputes ws's uncommitted overlay. On error the last good
-// one is kept.
-func (e *Engine) refreshStatus(ctx context.Context, ws *wtState) error {
-	head := ws.g.Head
-	m, err := uncommittedOverlay(ctx, e.r, ws.g.Path)
+// refreshStatus recomputes ws's uncommitted overlay and reports whether
+// status saw a HEAD other than ws.g.Head (a commit landed since HEAD was last
+// read): the caller must then resync HEAD and the committed overlay before
+// publishing, or the committed files would briefly vanish. On error the last
+// good overlay is kept and its stamp cleared, so any later refresh retries.
+func (e *Engine) refreshStatus(ctx context.Context, ws *wtState) (bool, error) {
+	m, head, err := uncommittedOverlay(ctx, e.r, ws.g.Path)
 	if err != nil {
-		return err
+		ws.statusFor = stamp{}
+		return false, err
 	}
 	ws.uncommitted, ws.statusFor = m, stamp{ok: true, head: head}
-	return nil
+	return head != ws.g.Head, nil
 }
 
 // logf logs a recompute problem, unless ctx is done (then the failure is

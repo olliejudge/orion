@@ -22,7 +22,7 @@ type wtState struct {
 	committed    map[string]model.ChangeEntry
 	committedFor stamp // base and head
 	uncommitted  map[string]model.ChangeEntry
-	statusFor    stamp // head only: status is redone when HEAD moves
+	statusFor    stamp // head only (the one status saw): redone when HEAD moves
 }
 
 // stamp names the inputs a cached value was computed from; the zero stamp
@@ -113,11 +113,12 @@ func committedOverlay(ctx context.Context, r gitx.Runner, dir, baseSha, head str
 }
 
 // uncommittedOverlay is `git status` for the worktree at root, with plain
-// moves paired into renames and sizes taken from the working tree.
-func uncommittedOverlay(ctx context.Context, r gitx.Runner, root string) (map[string]model.ChangeEntry, error) {
-	changes, err := gitx.Status(ctx, r, root)
+// moves paired into renames and sizes taken from the working tree, plus the
+// HEAD that status compared against.
+func uncommittedOverlay(ctx context.Context, r gitx.Runner, root string) (map[string]model.ChangeEntry, string, error) {
+	changes, head, err := gitx.StatusWithHead(ctx, r, root)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	out := map[string]model.ChangeEntry{}
 	for _, c := range gitx.PairMoves(changes) {
@@ -129,7 +130,7 @@ func uncommittedOverlay(ctx context.Context, r gitx.Runner, root string) (map[st
 		}
 		out[c.Path] = e
 	}
-	return out, nil
+	return out, head, nil
 }
 
 // mergeOverlays returns a new map: committed entries, overridden by uncommitted ones.
