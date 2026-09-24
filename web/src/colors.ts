@@ -31,20 +31,20 @@ export const FILE_CHROMA_RATIO = 0.6;
 export const MIN_FILE_WORKTREE_DELTA_E = 20;
 
 // Curated file-type groups for Vision: muted, cool "frosted" tones (CIELAB
-// chroma ≈ 2–20, highlight L ≈ 56–70, shadow L ≈ 30–42) so structure reads
+// chroma ≈ 2–20, highlight L ≈ 60–74, shadow L ≈ 30–42) so structure reads
 // while worktree activity, drawn in the saturated Apple system colours above,
 // stays the most salient thing on the map. colors.test.ts pins the chroma and
 // ΔE separation from every worktree colour. Media and "other" are the
 // dimmest, so unchanged images and vendored blobs never outshine changes.
 export const EXT_GROUPS = {
-  web: { light: "#8da9c1", base: "#3d627d" }, // slate blue
-  systems: { light: "#a09eba", base: "#585677" }, // lavender grey
-  scripting: { light: "#88ada7", base: "#3c6660" }, // sage
-  docs: { light: "#baa991", base: "#726046" }, // sand
-  styles: { light: "#bc979c", base: "#764f55" }, // dusty rose
-  config: { light: "#a5acb2", base: "#575f66" }, // cool grey
-  media: { light: "#848f7f", base: "#434f3e" }, // moss
-  other: { light: "#85868a", base: "#44474b" }, // graphite
+  web: { light: "#98b4cc", base: "#3d627d" }, // slate blue
+  systems: { light: "#aba8c5", base: "#585677" }, // lavender grey
+  scripting: { light: "#92b8b2", base: "#3c6660" }, // sage
+  docs: { light: "#c6b39b", base: "#726046" }, // sand
+  styles: { light: "#c8a2a7", base: "#764f55" }, // dusty rose
+  config: { light: "#b0b7bd", base: "#575f66" }, // cool grey
+  media: { light: "#8e9989", base: "#434f3e" }, // moss
+  other: { light: "#8f9194", base: "#44474b" }, // graphite
 } as const satisfies Record<string, ExtColor>;
 
 /** File-type spheres are slightly translucent in Vision ("frosted"); worktree tints stay opaque. */
