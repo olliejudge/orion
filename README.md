@@ -2,7 +2,7 @@
 
 A live, beautiful map of your git repository. Watch files appear, change, move and get committed in real time, across every worktree, as you and your coding agents work.
 
-<!-- screenshot: docs/images/orion-demo.png (added by the e2e task from the synthetic demo repo) -->
+![Orion showing the synthetic "nebula" demo repo with three agent worktrees](docs/images/orion-demo.png)
 
 Orion draws the repo as nested bubbles: folders are circles, files are bubbles sized by bytes. Each worktree gets a colour, and whatever it touches glows in that colour. Uncommitted work shows as a faint ghost until it is committed, stays tinted while it lives only on its branch, and shimmers back to normal once it is merged.
 
