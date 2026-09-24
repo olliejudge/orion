@@ -516,3 +516,21 @@ func TestRunRewatchesRecreatedRoot(t *testing.T) {
 	})
 	waitFor(t, 5*time.Second, func() bool { _, ok := snapEntry(e, id, "late.txt"); return ok })
 }
+
+// If the watcher cannot be created at all (e.g. linux's inotify instance
+// limit), Run must not fail: it logs and polls every worktree instead.
+func TestRunPollsWhenWatcherCannotStart(t *testing.T) {
+	orig := newWatcher
+	newWatcher = func() (watch.Watcher, error) { return nil, errors.New("too many open files") }
+	t.Cleanup(func() { newWatcher = orig })
+	r := initRepo(t, map[string]string{"README.md": "# demo\n"})
+	_, pl := startEngine(t, r.Path())  // its cleanup fails the test if Run returns an error
+	time.Sleep(debounce + minInterval) // let the startup rescan run first
+	r.Write("polled.txt", "found by polling\n")
+	id := wtID(r.Path())
+	waitFor(t, pollInterval+3*time.Second, func() bool {
+		return pl.any(func(p model.Patch) bool {
+			return upserted(p, id, func(c model.ChangeEntry) bool { return c.Path == "polled.txt" })
+		})
+	})
+}
