@@ -6,6 +6,7 @@ export interface TreeNode {
   isDir: boolean;
   size: number;
   children?: TreeNode[];
+  touched?: true; // file with an overlay entry (or a rename `from`) in any worktree; never culled
 }
 
 /**
@@ -22,11 +23,16 @@ export interface TreeNode {
  * - A file's size is the largest of its base size and any non-deleted overlay
  *   size, so edits grow bubbles live.
  * - If a path is both a file and a directory prefix, the directory wins.
+ * - Files that any worktree touches (an overlay entry, or a rename's `from`
+ *   still in base) are flagged `touched`, so culling never hides activity.
  */
 export function buildTree(state: RepoState): TreeNode {
   const sizes = new Map<string, number>(state.tree);
+  const touched = new Set<string>();
   for (const entries of state.overlays.values()) {
     for (const e of entries.values()) {
+      touched.add(e.path);
+      if (e.kind === "renamed" && e.from) touched.add(e.from);
       if (e.kind === "deleted") {
         if (!sizes.has(e.path)) sizes.set(e.path, 0);
       } else {
@@ -58,7 +64,9 @@ export function buildTree(state: RepoState): TreeNode {
     if (path === "" || dirs.has(path)) continue;
     const slash = path.lastIndexOf("/");
     const parent = dirs.get(slash < 0 ? "" : path.slice(0, slash))!;
-    parent.children!.push({ path, name: path.slice(slash + 1), isDir: false, size });
+    const node: TreeNode = { path, name: path.slice(slash + 1), isDir: false, size };
+    if (touched.has(path)) node.touched = true;
+    parent.children!.push(node);
   }
 
   for (const d of dirs.values()) d.children!.sort(byName);

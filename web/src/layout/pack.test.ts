@@ -73,6 +73,25 @@ describe("computeLayout", () => {
     expect(finer.has("tiny.txt")).toBe(true);
   });
 
+  it("keeps a tiny touched file beside a big sibling, raised to minFileR", () => {
+    const tree = buildTree(
+      makeState({ "big.bin": 10_000_000, "tiny.txt": 1 }, { w1: [{ path: "tiny.txt", kind: "modified", stage: "uncommitted", size: 1 }] }),
+    );
+    const l = computeLayout(tree, 400, 400);
+    expect(l.get("tiny.txt")!.r).toBe(1.5);
+    expect(computeLayout(tree, 400, 400, { minFileR: 0.5 }).get("tiny.txt")!.r).toBe(0.5);
+  });
+
+  it("keeps a tiny touched file beside a subfolder", () => {
+    const tree = buildTree(
+      makeState({ "src/lib/big.bin": 10_000_000, "src/quiet.ts": 1 }, { w1: [{ path: "src/new.ts", kind: "added", stage: "uncommitted", size: 1 }] }),
+    );
+    const l = computeLayout(tree, 400, 400);
+    expect(l.has("src/quiet.ts")).toBe(false);
+    expect(l.get("src/new.ts")).toMatchObject({ isDir: false, r: 1.5 });
+    expect(inside(l.get("src/new.ts")!, l.get("src")!)).toBe(true);
+  });
+
   it("collapses directories under minDirR into one aggregate circle with their file count", () => {
     const files: Record<string, number> = { "big.bin": 50_000_000 };
     for (let i = 0; i < 2; i++) files[`vendor/f${i}.js`] = 10;

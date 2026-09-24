@@ -90,18 +90,38 @@ export function encode(state: RepoState, path: string): NodeVisual {
   return finish(path, extOf(path), touches, renamed?.e.from);
 }
 
+// Per state: directory → worktree → the stage of its touches anywhere below
+// that directory ("uncommitted" wins). Covers overlay entries and base paths
+// renamed away. Built once per RepoState so each aggregate is a lookup.
+const dirIndexCache = new WeakMap<RepoState, Map<string, Map<WorktreeId, Stage>>>();
+
+function dirIndex(state: RepoState): Map<string, Map<WorktreeId, Stage>> {
+  const hit = dirIndexCache.get(state);
+  if (hit) return hit;
+  const idx = new Map<string, Map<WorktreeId, Stage>>();
+  const addUnder = (path: string, id: WorktreeId, stage: Stage): void => {
+    for (let slash = path.lastIndexOf("/"); slash > 0; slash = path.lastIndexOf("/", slash - 1)) {
+      const dir = path.slice(0, slash);
+      let byWorktree = idx.get(dir);
+      if (!byWorktree) idx.set(dir, (byWorktree = new Map()));
+      if (byWorktree.get(id) !== "uncommitted") byWorktree.set(id, stage);
+    }
+  };
+  for (const [id, entries] of state.overlays) {
+    for (const [path, e] of entries) addUnder(path, id, e.stage);
+  }
+  for (const [path, touches] of fromIndex(state)) {
+    for (const t of touches) addUnder(path, t.worktree, t.stage);
+  }
+  dirIndexCache.set(state, idx);
+  return idx;
+}
+
 /** Rolled-up touches for a collapsed directory: one per worktree touching anything below it. */
 function encodeAggregate(state: RepoState, dir: string): NodeVisual {
-  const prefix = dir === "" ? "" : `${dir}/`;
   const touches: Touch[] = [];
-  for (const [id, entries] of state.overlays) {
-    let stage: Stage | null = null;
-    for (const p of entries.keys()) {
-      if (!p.startsWith(prefix)) continue;
-      stage = entries.get(p)!.stage;
-      if (stage === "uncommitted") break;
-    }
-    if (stage) touches.push({ worktree: id, colorIndex: colorIndexOf(state, id), stage, kind: "modified" });
+  for (const [id, stage] of dirIndex(state).get(dir) ?? []) {
+    touches.push({ worktree: id, colorIndex: colorIndexOf(state, id), stage, kind: "modified" });
   }
   return finish(dir, "", touches);
 }

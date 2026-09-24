@@ -84,6 +84,19 @@ describe("buildTree", () => {
     expect(find(root, "docs/intro.md")).toBeDefined();
   });
 
+  it("flags files any worktree touches, including a base rename source", () => {
+    const root = buildTree(
+      makeState({ "a.ts": 1, "old.ts": 1, "quiet.ts": 1 }, {
+        w1: [{ path: "a.ts", kind: "modified", stage: "committed", size: 1 }],
+        w2: [{ path: "new.ts", kind: "renamed", from: "old.ts", stage: "uncommitted", size: 1 }],
+      }),
+    );
+    expect(find(root, "a.ts")!.touched).toBe(true);
+    expect(find(root, "old.ts")!.touched).toBe(true);
+    expect(find(root, "new.ts")!.touched).toBe(true);
+    expect(find(root, "quiet.ts")!.touched).toBeUndefined();
+  });
+
   it("returns an empty root for an empty repo", () => {
     expect(buildTree(makeState({}))).toEqual({ path: "", name: "sample-app", isDir: true, size: 0, children: [] });
   });

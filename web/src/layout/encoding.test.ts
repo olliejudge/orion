@@ -103,4 +103,10 @@ describe("encodeAll", () => {
     ]);
     expect(v.get("vendor")).toMatchObject({ ghost: false, deleted: false, tinted: false });
   });
+
+  it("rolls a base file renamed out of a collapsed folder into that folder's touches", () => {
+    const s = makeState({ "vendor/a.js": 1 }, { w1: [e("lib/a.js", "renamed", "committed", "vendor/a.js")] });
+    const v = encodeAll(s, new Map([["vendor", circle("vendor", true, 1)]]));
+    expect(v.get("vendor")!.touches).toEqual([{ worktree: "w1", colorIndex: 1, stage: "committed", kind: "modified" }]);
+  });
 });
