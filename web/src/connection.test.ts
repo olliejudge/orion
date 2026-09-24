@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { backoffMs, connect, wsUrlFromLocation } from "./connection";
+import { backoffMs, connect, STOPPED_AFTER_FAILURES, statusAfterClose, wsUrlFromLocation } from "./connection";
 import type { Patch, Snapshot } from "./protocol";
 import { RepoStore } from "./store";
 
@@ -73,6 +73,16 @@ describe("backoffMs", () => {
   });
 });
 
+describe("statusAfterClose", () => {
+  it("reports reconnecting until STOPPED_AFTER_FAILURES consecutive failures, then stopped", () => {
+    expect(STOPPED_AFTER_FAILURES).toBe(8);
+    expect(statusAfterClose(1)).toBe("reconnecting");
+    expect(statusAfterClose(7)).toBe("reconnecting");
+    expect(statusAfterClose(8)).toBe("stopped");
+    expect(statusAfterClose(50)).toBe("stopped");
+  });
+});
+
 describe("connect", () => {
   it("applies messages to the store and reports status", () => {
     const store = new RepoStore();
@@ -126,6 +136,28 @@ describe("connect", () => {
     last().drop();
     vi.advanceTimersByTime(250);
     expect(FakeSocket.instances).toHaveLength(4);
+  });
+
+  it("reports stopped after 8 consecutive failed reconnects but keeps retrying quietly", () => {
+    const store = new RepoStore();
+    const statuses: string[] = [];
+    connect(store, { url: "ws://x/ws", onStatus: (s) => statuses.push(s) });
+    last().open();
+    for (let i = 0; i < 7; i++) {
+      last().drop();
+      vi.advanceTimersByTime(5000);
+    }
+    expect(statuses.at(-1)).toBe("reconnecting");
+    last().drop();
+    expect(statuses.at(-1)).toBe("stopped");
+    const before = FakeSocket.instances.length;
+    vi.advanceTimersByTime(5000);
+    expect(FakeSocket.instances).toHaveLength(before + 1);
+    last().drop();
+    expect(statuses.at(-1)).toBe("stopped");
+    vi.advanceTimersByTime(5000);
+    last().open();
+    expect(statuses.at(-1)).toBe("open");
   });
 
   it("stops reconnecting and closes the socket when disposed", () => {

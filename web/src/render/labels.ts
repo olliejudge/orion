@@ -9,12 +9,15 @@
  */
 
 export const LABEL_FONT_PX = 11;
-/** One line of label text, and the clearance kept between two labels' bands. */
-export const LABEL_LINE_PX = 13;
+/**
+ * One inward step: a line of label text plus room for NEAR_PX clearance and a
+ * short name's arc sag, so a child tangent to its parent's top clears it in one step.
+ */
+export const LABEL_LINE_PX = 16;
 export const LABEL_MAX_SPAN = Math.PI * 0.8;
 const SIDE_PAD_PX = 2;
-/** Labels whose bands come closer than this (vertically) count as colliding. */
-const NEAR_PX = 0.5;
+/** Labels whose bands come closer than this (vertically) count as colliding: prefer hiding over near-overlapping text. */
+const NEAR_PX = 2.5;
 export const MAX_INSET = 2;
 
 export interface LabelCandidate {

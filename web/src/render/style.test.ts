@@ -5,7 +5,7 @@ import { makeState } from "../layout/fixtures";
 import type { Circle } from "../layout/pack";
 import type { ChangeEntry } from "../protocol";
 import { RING_GAP_PX, RING_W_PX } from "./draw";
-import { ISOLATE_DIM, NIGHT_IDLE, TINT_RING_GAP_PX, TINT_RING_W_PX, aggregateLook, fileLook } from "./style";
+import { ISOLATE_DIM, NIGHT_IDLE, TINT_RING_GAP_PX, TINT_RING_W_PX, aggregateLook, fileLook, touchSig } from "./style";
 
 // One test per row of the spec §6 worktree-encoding table, built from real
 // overlay entries through encode(), so the whole chain stage × kind → pixels
@@ -148,5 +148,25 @@ describe("aggregateLook", () => {
 
   it("is a faint neutral disc when nothing below it is touched", () => {
     expect(agg({}, "night")).toMatchObject({ fill: { color: 0xffffff, alpha: 0.05 }, halo: null, rings: { arcs: [] } });
+  });
+});
+
+describe("touchSig", () => {
+  const vis = (entries: Record<string, ChangeEntry[]>) => encode(makeState({ "src/a.ts": 5 }, entries), "src/a.ts");
+
+  it("is equal for equal touches and differs when any touch field changes", () => {
+    const a = vis({ w1: [e("src/a.ts", "modified", "uncommitted")] });
+    expect(touchSig(a)).toBe(touchSig(vis({ w1: [e("src/a.ts", "modified", "uncommitted")] })));
+    expect(touchSig(a)).not.toBe(touchSig(vis({ w1: [e("src/a.ts", "modified", "committed")] })));
+    expect(touchSig(a)).not.toBe(touchSig(vis({ w1: [e("src/a.ts", "deleted", "uncommitted")] })));
+    expect(touchSig(a)).not.toBe(touchSig(vis({ w2: [e("src/a.ts", "modified", "uncommitted")] })));
+    expect(touchSig(vis({}))).toBe("");
+  });
+
+  it("is computed once per visual (visuals are immutable, so the per-frame key allocates nothing new)", () => {
+    const a = vis({ w1: [e("src/a.ts", "modified", "uncommitted")] });
+    const first = touchSig(a);
+    a.touches.length = 0; // never happens in practice; shows the cached value is reused
+    expect(touchSig(a)).toBe(first);
   });
 });

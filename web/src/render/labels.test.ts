@@ -25,7 +25,7 @@ describe("placeLabels", () => {
   });
 
   it("leaves a child alone when its rim is more than a line below the parent's", () => {
-    const spots = placeLabels([cand("p", 100, 100, 80), cand("p/c", 100, 75, 40)]);
+    const spots = placeLabels([cand("p", 100, 100, 80), cand("p/c", 100, 77, 40)]);
     expect(spots.get("p/c")!.textR).toBe(40);
   });
 
@@ -58,10 +58,17 @@ describe("placeLabels", () => {
     expect(spots.has("a/b/c/d")).toBe(false);
   });
 
+  // The parent's band ends at y ≈ 26.90; the child's starts at cy − 40 − 5.5.
   it("treats text that nearly touches another label as a collision", () => {
-    // The child's band starts 0.25 px below the parent's: legible only when pushed in.
-    const spots = placeLabels([cand("p", 100, 100, 80), cand("p/c", 100, 72.65, 40)]);
-    expect(spots.get("p/c")!.inset).toBe(1);
+    // Bands ~0.25 px and ~1 px apart: legible only when pushed in.
+    expect(placeLabels([cand("p", 100, 100, 80), cand("p/c", 100, 72.65, 40)]).get("p/c")!.inset).toBe(1);
+    expect(placeLabels([cand("p", 100, 100, 80), cand("p/c", 100, 73.4, 40)]).get("p/c")!.inset).toBe(1);
+    expect(placeLabels([cand("p", 100, 100, 80), cand("p/c", 100, 74.8, 40)]).get("p/c")!.inset).toBe(1);
+  });
+
+  it("keeps a label on its rim once its band clears the other's by a few px", () => {
+    // Bands ~3 px apart.
+    expect(placeLabels([cand("p", 100, 100, 80), cand("p/c", 100, 75.4, 40)]).get("p/c")!.inset).toBe(0);
   });
 
   it("hides rather than pushing a label into a circle too small for it", () => {

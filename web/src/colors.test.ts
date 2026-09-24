@@ -3,6 +3,7 @@ import {
   EXT_GROUPS,
   FILE_CHROMA_RATIO,
   MIN_FILE_WORKTREE_DELTA_E,
+  VISION_FILE_ALPHA,
   WORKTREE_COLORS,
   colorForExt,
   extOf,
@@ -76,10 +77,15 @@ describe("EXT_GROUPS (Vision file-type palette)", () => {
     }
   });
 
-  it("is bright enough to read on the Vision background (some channel above 120 in every highlight)", () => {
-    for (const c of Object.values(EXT_GROUPS)) {
-      const n = parseInt(c.light.slice(1), 16);
-      expect(Math.max((n >> 16) & 255, (n >> 8) & 255, n & 255)).toBeGreaterThan(120);
+  it("is bright enough to read on the Vision background (some channel above 120 in every highlight, as composited)", () => {
+    // File spheres are drawn at VISION_FILE_ALPHA over the background; the
+    // e2e check counts pixels above 120, so test the composite against the
+    // darkest stop of Vision's --bg gradient (theme.css), the worst case.
+    const bg = [0x07, 0x07, 0x0a];
+    const channels = (hex: string): number[] => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+    for (const [name, c] of Object.entries(EXT_GROUPS)) {
+      const composite = channels(c.light).map((v, i) => v * VISION_FILE_ALPHA + bg[i]! * (1 - VISION_FILE_ALPHA));
+      expect(Math.max(...composite), name).toBeGreaterThan(120);
     }
   });
 

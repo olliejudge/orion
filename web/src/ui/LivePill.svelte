@@ -3,7 +3,13 @@
 
   // centerX: where the map's free area is centred (CSS px); null centres on the viewport.
   let { status, centerX = null }: { status: ConnectionStatus; centerX?: number | null } = $props();
-  const text = $derived(status === "open" ? "Live" : status === "connecting" ? "Connecting…" : "Reconnecting…");
+  const TEXT: Record<ConnectionStatus, string> = {
+    connecting: "Connecting…",
+    open: "Live",
+    reconnecting: "Reconnecting…",
+    stopped: "Orion stopped — run orion again and open the new URL",
+  };
+  const text = $derived(TEXT[status]);
 </script>
 
 <div
@@ -50,6 +56,10 @@
   [data-status="reconnecting"] .dot {
     background: #ff9f0a;
     box-shadow: 0 0 8px rgba(255, 159, 10, 0.6);
+  }
+  [data-status="stopped"] .dot {
+    background: #ff453a;
+    box-shadow: 0 0 8px rgba(255, 69, 58, 0.6);
   }
   @keyframes breathe {
     50% {

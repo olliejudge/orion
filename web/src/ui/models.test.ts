@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { makeState, wt } from "../layout/fixtures";
 import type { Circle } from "../layout/pack";
 import type { Activity } from "../protocol";
-import { ACTIVE_WINDOW_MS, activityRows, legendModel, mapInsets, rowFade, shownFolder, tooltipInfo, tooltipPosition } from "./models";
+import { ACTIVE_WINDOW_MS, activityRows, hoverTip, legendModel, mapInsets, rowFade, shownFolder, tooltipInfo, tooltipPosition } from "./models";
 
 const NOW = 10_000_000;
 
@@ -135,6 +135,29 @@ describe("tooltipInfo", () => {
     const s = makeState({ "vendor/a.js": 1, "vendor/b.js": 1 });
     expect(tooltipInfo(s, circle("vendor", true, 2))).toEqual({ dir: "", name: "vendor/", detail: "2 files", touches: [] });
     expect(tooltipInfo(s, circle("vendor", true))).toBeNull();
+  });
+});
+
+describe("hoverTip", () => {
+  const circle = (path: string): Circle => ({ path, x: 0, y: 0, r: 5, depth: 1, isDir: false });
+  const at = { x: 40, y: 60 };
+
+  it("recomputes the hovered file's info from the latest state (a still pointer never goes stale)", () => {
+    const layout = new Map([["a.ts", circle("a.ts")]]);
+    const before = makeState({ "a.ts": 100 });
+    const after = makeState({ "a.ts": 100 }, { w1: [{ path: "a.ts", kind: "modified", stage: "uncommitted", size: 2500 }] });
+    expect(hoverTip(before, layout, { path: "a.ts", at })!.info.detail).toBe("100 bytes");
+    const tip = hoverTip(after, layout, { path: "a.ts", at })!;
+    expect(tip.info.detail).toBe("2.5 KB");
+    expect(tip.info.touches[0]!.text).toBe("Edited, uncommitted");
+    expect([tip.x, tip.y]).toEqual([40, 60]);
+  });
+
+  it("hides when nothing is hovered or the hovered path left the map", () => {
+    const s = makeState({ "a.ts": 100 });
+    expect(hoverTip(s, new Map([["a.ts", circle("a.ts")]]), null)).toBeNull();
+    expect(hoverTip(s, new Map(), { path: "a.ts", at })).toBeNull();
+    expect(hoverTip(null, new Map([["a.ts", circle("a.ts")]]), { path: "a.ts", at })).toBeNull();
   });
 });
 

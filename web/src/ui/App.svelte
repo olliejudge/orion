@@ -15,7 +15,7 @@
   import { keyAction } from "./keys";
   import Legend from "./Legend.svelte";
   import LivePill from "./LivePill.svelte";
-  import { mapInsets, shownFolder, tooltipInfo, type Footprint, type TooltipInfo } from "./models";
+  import { hoverTip, mapInsets, shownFolder, type Footprint, type HoverTarget, type TooltipInfo } from "./models";
   import { applyTheme, loadTheme, saveTheme, type Theme } from "./theme";
   import Tooltip from "./Tooltip.svelte";
 
@@ -38,6 +38,7 @@
   let zoomPath = "";
   let scale = 1;
   let hovered: string | null = null; // the activity row's path under the pointer
+  let mapHover: HoverTarget | null = null; // the map's path under the pointer (drives the tooltip)
   // Relayouts (patches, resizes, theme and linger changes) run at most once per frame.
   const queue = new FrameCoalescer((c) => {
     try {
@@ -82,6 +83,7 @@
     renderer.setFreeArea(f.free);
     renderer.update(f.layout, f.visuals, change);
     highlight(hovered); // what stands in for the hovered path may have changed
+    tip = hoverTip(s, layout, mapHover); // the file under a still pointer may have changed
   }
 
   // A file inside a collapsed folder is highlighted as the folder's aggregate.
@@ -167,9 +169,8 @@
         });
         r.onClick((path) => zoom(clickTarget(path, layout, zoomPath)));
         r.onHover((path, at) => {
-          const c = path === null ? undefined : layout.get(path);
-          const info = c && repo ? tooltipInfo(repo, c) : null;
-          tip = info ? { info, x: at.x, y: at.y } : null;
+          mapHover = path === null ? null : { path, at };
+          tip = hoverTip(repo, layout, mapHover);
         });
         queue.request({ kind: "snapshot", merged: [] });
         start();
