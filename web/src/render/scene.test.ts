@@ -119,6 +119,20 @@ describe("Scene", () => {
     expect(s.shimmer(s.get("a.ts")!, 1000 + SHIMMER_MS + 1)).toBeNull();
   });
 
+  it("snaps every node to its target in one step when asked to (reduced motion)", () => {
+    const s = new Scene();
+    s.update(...frame([circle("old.ts", 0, 0, 8)]), patch, 0);
+    settle(s, 700);
+    s.update(...frame([circle("a.ts", 10, 20, 8), circle("new.ts", 100, 0, 6)], [visual("new.ts", { renamedFrom: "old.ts" })]), patch, 1000);
+    expect(s.step(16, 1016, undefined, true)).toBe(false);
+    const a = s.get("a.ts")!;
+    expect([a.x.value, a.y.value, a.r.value, a.alpha.value]).toEqual([10, 20, 8, 1]);
+    const moved = s.get("new.ts")!;
+    expect([moved.x.value, moved.y.value, moved.r.value]).toEqual([100, 0, 6]);
+    expect(moved.glide).toBeNull();
+    expect(s.get("old.ts")).toBeUndefined(); // leaving nodes are gone at once
+  });
+
   it("reports idle once everything has settled", () => {
     const s = new Scene();
     s.update(...frame([circle("a.ts", 0, 0, 8)]), patch, 0);

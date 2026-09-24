@@ -29,6 +29,12 @@ export function isSettled(s: Spring, eps: number = SETTLE_EPS): boolean {
   return Math.abs(s.value - s.target) < eps && Math.abs(s.velocity) < eps * 10;
 }
 
+/** Jumps straight to the target (reduced motion). */
+export function snapSpring(s: Spring): void {
+  s.value = s.target;
+  s.velocity = 0;
+}
+
 export function stepSpring(s: Spring, dtSec: number, omega: number = SPRING_OMEGA, eps: number = SETTLE_EPS): void {
   if (s.value === s.target && s.velocity === 0) return;
   const x = s.value - s.target;

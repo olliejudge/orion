@@ -165,6 +165,28 @@ describe("mapInsets", () => {
   it("is full-bleed in Night (the stream floats over the map)", () => {
     expect(mapInsets("night", 1440, 900)).toEqual({ top: 48, right: 48, bottom: 48, left: 48 });
   });
+
+  describe("with the legend's footprint (wide Vision)", () => {
+    const legend = { width: 340, height: 186 };
+
+    it("moves the map right of the legend when the root circle would pass under it", () => {
+      expect(mapInsets("vision", 1440, 900, legend)).toEqual({ top: 48, right: 320, bottom: 48, left: 16 + 340 + 16 });
+    });
+
+    it("moves the map below the legend instead when that keeps it larger (tall windows)", () => {
+      expect(mapInsets("vision", 1440, 1300, legend)).toEqual({ top: 16 + 186 + 16, right: 320, bottom: 48, left: 48 });
+    });
+
+    it("leaves the insets alone when the circle already clears the legend", () => {
+      expect(mapInsets("vision", 2600, 900, legend)).toEqual({ top: 48, right: 320, bottom: 48, left: 48 });
+    });
+
+    it("ignores the legend in Night, on narrow screens and before it has been measured", () => {
+      expect(mapInsets("night", 1440, 900, legend)).toEqual(mapInsets("night", 1440, 900));
+      expect(mapInsets("vision", 700, 820, legend)).toEqual(mapInsets("vision", 700, 820));
+      expect(mapInsets("vision", 1440, 900, { width: 0, height: 0 })).toEqual(mapInsets("vision", 1440, 900));
+    });
+  });
 });
 
 describe("tooltipPosition", () => {

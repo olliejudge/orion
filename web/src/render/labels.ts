@@ -2,8 +2,10 @@
  * Folder label placement. A name is set along the top of its folder's rim
  * (the outline is broken behind it). A folder tangent to its parent's top
  * would print its name over the parent's, so an at-rest pass places labels
- * outer (larger) first and pushes a colliding one a line inward, or hides it
- * if that still collides. Pure, so it is unit-tested without Pixi.
+ * outer (larger) first and pushes a colliding one up to MAX_INSET lines
+ * inward, or hides it if that still collides: in a deep chain of nearly
+ * concentric folders the inner name is dropped rather than drawn on top of,
+ * or nearly touching, an outer one. Pure, so it is unit-tested without Pixi.
  */
 
 export const LABEL_FONT_PX = 11;
@@ -11,6 +13,9 @@ export const LABEL_FONT_PX = 11;
 export const LABEL_LINE_PX = 13;
 export const LABEL_MAX_SPAN = Math.PI * 0.8;
 const SIDE_PAD_PX = 2;
+/** Labels whose bands come closer than this (vertically) count as colliding. */
+const NEAR_PX = 0.5;
+export const MAX_INSET = 2;
 
 export interface LabelCandidate {
   path: string;
@@ -23,7 +28,7 @@ export interface LabelCandidate {
 }
 
 export interface LabelSpot {
-  /** Lines pushed inward from the rim: 0 (on the rim) or 1. */
+  /** Lines pushed inward from the rim: 0 (on the rim) up to MAX_INSET. */
   inset: number;
   /** Radius of the text's centre line: r on the rim, less when pushed inward. */
   textR: number;
@@ -54,7 +59,7 @@ function boxOf(c: LabelCandidate, textR: number, half: number): Box {
 }
 
 function overlaps(a: Box, b: Box): boolean {
-  return a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
+  return a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 + NEAR_PX && b.y0 < a.y1 + NEAR_PX;
 }
 
 /** Where each label goes; paths missing from the result are hidden. */
@@ -63,7 +68,7 @@ export function placeLabels(cands: readonly LabelCandidate[]): Map<string, Label
   const placed: Box[] = [];
   const out = new Map<string, LabelSpot>();
   for (const c of order) {
-    for (let inset = 0; inset <= 1; inset++) {
+    for (let inset = 0; inset <= MAX_INSET; inset++) {
       const textR = c.r - inset * LABEL_LINE_PX;
       if (textR < 2 * LABEL_FONT_PX) break;
       const half = labelSpan(c.width, textR) / 2;

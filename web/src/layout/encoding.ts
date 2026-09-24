@@ -51,13 +51,14 @@ function byColor(a: Touch, b: Touch): number {
 function finish(path: string, ext: string, touches: Touch[], renamedFrom?: string): NodeVisual {
   touches.sort(byColor);
   const hasUncommitted = touches.some((t) => t.stage === "uncommitted");
+  const deleted = touches.length > 0 && touches.every((t) => t.kind === "deleted");
   const v: NodeVisual = {
     path,
     ext,
     touches,
     ghost: touches.some((t) => t.stage === "uncommitted" && t.kind === "added"),
-    deleted: touches.length > 0 && touches.every((t) => t.kind === "deleted"),
-    tinted: !hasUncommitted && touches.some((t) => t.stage === "committed"),
+    deleted,
+    tinted: !deleted && !hasUncommitted && touches.some((t) => t.stage === "committed"),
   };
   if (renamedFrom !== undefined) v.renamedFrom = renamedFrom;
   return v;
@@ -68,7 +69,8 @@ function finish(path: string, ext: string, touches: Touch[], renamedFrom?: strin
  * - touches: one per worktree whose overlay has the path, sorted by colour index.
  *   A base path that some worktree renamed away gets a "deleted" touch from it.
  * - ghost: some worktree has it as an uncommitted add.
- * - tinted: at least one committed touch and no uncommitted touch.
+ * - tinted: at least one committed touch, no uncommitted touch, and not
+ *   deleted (committed on branch: drawn as a solid sphere in the worktree colour).
  * - deleted: every touch is a deletion.
  */
 export function encode(state: RepoState, path: string): NodeVisual {

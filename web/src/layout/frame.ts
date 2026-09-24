@@ -64,7 +64,8 @@ export function computeFrame(
   return { layout, visuals: encodeAll(state, layout), free };
 }
 
-function freeArea(width: number, height: number, pad: number | Insets): FreeArea {
+/** The rect left for the map in a width×height viewport after `pad` (see computeFrame). */
+export function freeArea(width: number, height: number, pad: number | Insets): FreeArea {
   if (typeof pad === "number") {
     const p = Math.max(0, Math.min(pad, width / 4, height / 4));
     return { x0: p, y0: p, x1: width - p, y1: height - p };

@@ -13,7 +13,7 @@
   import { keyAction } from "./keys";
   import Legend from "./Legend.svelte";
   import LivePill from "./LivePill.svelte";
-  import { mapInsets, shownFolder, tooltipInfo, type TooltipInfo } from "./models";
+  import { mapInsets, shownFolder, tooltipInfo, type Footprint, type TooltipInfo } from "./models";
   import { applyTheme, loadTheme, saveTheme, type Theme } from "./theme";
   import Tooltip from "./Tooltip.svelte";
 
@@ -27,6 +27,8 @@
   let now = $state(Date.now());
   let tip: { info: TooltipInfo; x: number; y: number } | null = $state.raw(null);
   let noWebGL = $state(false);
+  let legendBox: Footprint = $state.raw({ width: 0, height: 0 });
+  let pillX: number | null = $state(null); // centre of the map's free area
 
   let mapEl: HTMLDivElement;
   let renderer: MapRenderer | null = null;
@@ -46,6 +48,11 @@
   });
 
   $effect(() => {
+    void legendBox; // the map keeps clear of the legend (see mapInsets)
+    relayout(NO_CHANGE);
+  });
+
+  $effect(() => {
     // Read `isolated` unconditionally: behind `renderer?.` it would not be
     // read while the renderer is starting, and the effect would never rerun.
     const id = isolated;
@@ -57,8 +64,9 @@
     if (!s || !renderer) return;
     const w = mapEl.clientWidth;
     const h = mapEl.clientHeight;
-    const f = computeFrame(s, w, h, scale, mapInsets(theme, w, h), linger.paths());
+    const f = computeFrame(s, w, h, scale, mapInsets(theme, w, h, legendBox), linger.paths());
     layout = f.layout;
+    pillX = (f.free.x0 + f.free.x1) / 2;
     renderer.setFreeArea(f.free);
     renderer.update(f.layout, f.visuals, change);
   }
@@ -175,10 +183,10 @@
 {/if}
 
 {#if repo}
-  <Legend {repo} {now} {isolated} onIsolate={(id) => (isolated = id)} />
+  <Legend {repo} {now} {isolated} onIsolate={(id) => (isolated = id)} onFootprint={(b) => (legendBox = b)} />
   <Activity {repo} {now} onHover={(p) => renderer?.highlight(p)} onSelect={(p) => zoom(shownFolder(p, layout))} />
 {/if}
-<LivePill {status} />
+<LivePill {status} centerX={pillX} />
 <Tooltip info={tip?.info ?? null} x={tip?.x ?? 0} y={tip?.y ?? 0} />
 
 <style>

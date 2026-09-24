@@ -1,10 +1,9 @@
-import { Application, Container, Graphics, Sprite, type Texture } from "pixi.js";
-import { colorForExt, hexToNumber, lighten, worktreeColor } from "../colors";
-import type { NodeVisual, Touch } from "../layout/encoding";
+import { Application, Container, Graphics, Sprite } from "pixi.js";
+import type { NodeVisual } from "../layout/encoding";
 import type { Circle } from "../layout/pack";
 import type { WorktreeId } from "../protocol";
 import type { Change } from "../store";
-import { RING_GAP_PX, RING_W_PX, WHOLE, clipFor, dashed, disk, outline, solidArc, type Clip } from "./draw";
+import { WHOLE, clipFor, dashed, disk, outline, solidArc, type Clip } from "./draw";
 import {
   fitCamera,
   labelNames,
@@ -16,18 +15,18 @@ import {
   type Camera,
   type Rect,
 } from "./geometry";
+import { motionPolicy, watchReducedMotion, type Motion } from "./motion";
 import { Scene, type SceneNode } from "./scene";
 import { labelSpan, placeLabels, type LabelCandidate, type LabelSpot, LABEL_LINE_PX } from "./labels";
 import { HALO_RING_FRAC, TextureBank, labelWidth, renderArcLabel } from "./sprites";
-import { SETTLE_EPS, SPRING_OMEGA, isSettled, makeSpring, retarget, stepSpring, type Spring } from "./springs";
+import { SETTLE_EPS, SPRING_OMEGA, isSettled, makeSpring, retarget, snapSpring, stepSpring, type Spring } from "./springs";
+import { aggregateLook, fileLook, type AggregateLook, type FileLook, type Rings, type Theme } from "./style";
 
-export type Theme = "vision" | "night";
+export type { Theme } from "./style";
 
-const NIGHT_IDLE = 0x3a3a44;
 const LABEL_MIN_R = 48; // on-screen px before a folder gets its name
 const LABEL_FADE_MS = 200; // labels fade in over time once placed at rest
 const LABEL_GAP_PAD_PX = 4; // outline clearance either side of a rim label
-const ISOLATE_DIM = 0.15;
 const HALO_PX = 5; // halo peak this far outside the bubble, on screen
 const SPLIT_GAP_PX = 3;
 const LOGK_EPS = 1e-4; // camera scale settles within 0.01%
@@ -112,6 +111,8 @@ export class MapRenderer {
   #isolated: WorktreeId | null = null;
   #highlighted: string | null = null;
   #styleGen = 0;
+  // Looks per visual (the store makes new visuals per patch), recomputed when the theme or isolation changes.
+  #looks = new WeakMap<NodeVisual, { gen: number; look: FileLook | AggregateLook }>();
 
   #zoomPath = "";
   #free: Rect | undefined; // where zoom targets are fitted (see fitCamera)
@@ -122,6 +123,8 @@ export class MapRenderer {
   #zoomFns: ((scale: number) => void)[] = [];
   #idleFrames = 0;
   #lastHover: string | null = null;
+  #motion: Motion = motionPolicy(false);
+  #stopMotionWatch = (): void => {};
 
   constructor(host: HTMLElement) {
     this.#host = host;
@@ -156,6 +159,10 @@ export class MapRenderer {
     app.canvas.addEventListener("pointerleave", this.#onPointerLeave);
     app.canvas.addEventListener("click", this.#onClick);
     app.ticker.add((t) => this.#frame(t.deltaMS));
+    this.#stopMotionWatch = watchReducedMotion((reduced) => {
+      this.#motion = motionPolicy(reduced);
+      this.#wake();
+    });
   }
 
   update(layout: Map<string, Circle>, visuals: Map<string, NodeVisual>, change: Change): void {
@@ -215,6 +222,7 @@ export class MapRenderer {
     this.#destroyed = true;
     const app = this.#app;
     if (!app) return;
+    this.#stopMotionWatch();
     app.canvas.removeEventListener("pointermove", this.#onPointerMove);
     app.canvas.removeEventListener("pointerleave", this.#onPointerLeave);
     app.canvas.removeEventListener("click", this.#onClick);
@@ -262,6 +270,11 @@ export class MapRenderer {
   /** Advances the camera; returns true while it is still moving. */
   #stepCamera(dt: number): boolean {
     const cam = this.#cam;
+    if (this.#motion.snap) {
+      for (const s of [cam.cx, cam.cy, cam.logk]) snapSpring(s);
+      cam.path = null;
+      return false;
+    }
     stepSpring(cam.logk, dt, SPRING_OMEGA, LOGK_EPS);
     if (cam.path) {
       const at = cam.path(Math.exp(cam.logk.value));
@@ -321,7 +334,7 @@ export class MapRenderer {
     const now = performance.now();
     const camBusy = this.#stepCamera(Math.max(0, Math.min(dtMs || 0, 64)) / 1000);
     const cam = this.#camera();
-    const sceneBusy = this.#scene.step(dtMs, now, worldEps(cam.k));
+    const sceneBusy = this.#scene.step(dtMs, now, worldEps(cam.k), this.#motion.snap);
 
     const { width, height } = this.#size();
     const f: FrameCtx = {
@@ -382,9 +395,12 @@ export class MapRenderer {
     this.#views.delete(path);
   }
 
-  /** Alpha for one worktree's marks: full, or dimmed while another worktree is isolated. */
-  #touchAlpha(t: Touch): number {
-    return this.#isolated === null || t.worktree === this.#isolated ? 1 : ISOLATE_DIM;
+  #look(vis: NodeVisual, aggregate: boolean): FileLook | AggregateLook {
+    const hit = this.#looks.get(vis);
+    if (hit && hit.gen === this.#styleGen) return hit.look;
+    const look = aggregate ? aggregateLook(vis, this.#theme, this.#isolated) : fileLook(vis, this.#theme, this.#isolated);
+    this.#looks.set(vis, { gen: this.#styleGen, look });
+    return look;
   }
 
   #draw(n: SceneNode, f: FrameCtx): void {
@@ -410,45 +426,30 @@ export class MapRenderer {
     v.root.alpha = n.alpha.value;
 
     const vis = n.visual;
-    const night = this.#theme === "night";
-    const hidden = vis.ghost || vis.deleted;
-    // The touch that colours the node: the isolated worktree's, else the first.
-    const lead = vis.touches.find((t) => this.#touchAlpha(t) === 1);
+    const look = n.isDir ? null : (this.#look(vis, false) as FileLook);
 
-    // Body (files): texture + tint by theme and lifecycle.
+    // Body (files): a sphere or flat disc per theme and lifecycle; none for ghosts and deletions.
     if (v.body) {
-      v.body.visible = !hidden;
-      if (!hidden) {
-        let tex: Texture;
-        let tint = 0xffffff;
-        let alpha = 1;
-        if (night) {
-          tex = f.bank.disc;
-          tint = lead ? hexToNumber(worktreeColor(lead.colorIndex)) : NIGHT_IDLE;
-          alpha = lead?.stage === "committed" ? 0.85 : 1;
-        } else if (vis.tinted && lead) {
-          tex = f.bank.worktreeSphere(worktreeColor(lead.colorIndex));
-          alpha = 0.9;
-        } else {
-          tex = f.bank.sphere(colorForExt(vis.ext));
-        }
+      const body = look?.body ?? null;
+      v.body.visible = body !== null;
+      if (body) {
+        const tex =
+          body.kind === "flat" ? f.bank.disc : body.kind === "worktree" ? f.bank.worktreeSphere(body.color) : f.bank.sphere(body.color);
         if (v.body.texture !== tex) v.body.texture = tex;
-        v.body.tint = tint;
-        v.body.alpha = alpha;
+        v.body.tint = body.kind === "flat" ? body.tint : 0xffffff;
+        v.body.alpha = body.alpha;
         v.body.width = v.body.height = R * 2;
       }
     }
 
     // Halo: live uncommitted work glows in its worktree's colour.
     if (v.halo) {
-      const live = vis.touches.filter((t) => t.stage === "uncommitted" && t.kind !== "deleted");
-      const glow = live.find((t) => this.#touchAlpha(t) === 1) ?? live[0];
-      const show = glow !== undefined && !hidden;
-      v.halo.visible = show;
-      if (show) {
+      const glow = look ? look.halo : this.#look(vis, true).halo;
+      v.halo.visible = glow !== null;
+      if (glow) {
         v.halo.width = v.halo.height = ((R + HALO_PX) / HALO_RING_FRAC) * 2;
-        v.halo.tint = hexToNumber(worktreeColor(glow.colorIndex));
-        v.halo.alpha = (night ? 0.5 : 0.6) * this.#touchAlpha(glow);
+        v.halo.tint = glow.color;
+        v.halo.alpha = glow.alpha;
       }
     }
 
@@ -463,7 +464,7 @@ export class MapRenderer {
       v.gKey = gKey;
       v.g.clear();
       if (n.isDir) this.#drawDir(v.g, n, R, clip, sx, sy, f, gap);
-      else this.#drawFileRings(v.g, vis, R, clip);
+      else if (look) this.#drawFileMarks(v.g, look, R, clip);
     }
 
     this.#drawShimmer(v, n, R, f);
@@ -472,9 +473,10 @@ export class MapRenderer {
   #drawDir(g: Graphics, n: SceneNode, R: number, clip: Clip, sx: number, sy: number, f: FrameCtx, gap: number): void {
     const night = this.#theme === "night";
     if (n.aggregate !== undefined) {
-      disk(g, R, clip, sx, sy, f.rect, { color: 0xffffff, alpha: night ? 0.05 : 0.07 });
-      outline(g, R, clip, 0xffffff, 0.14, 1);
-      this.#drawRings(g, R, clip, n.visual.touches);
+      const look = this.#look(n.visual, true) as AggregateLook;
+      disk(g, R, clip, sx, sy, f.rect, look.fill);
+      outline(g, R, clip, look.outline.color, look.outline.alpha, 1);
+      this.#drawRings(g, R, clip, look.rings);
       return;
     }
     const isRoot = n.depth === 0;
@@ -482,44 +484,28 @@ export class MapRenderer {
     outline(g, R, clip, 0xffffff, night ? (isRoot ? 0.1 : 0.08) : isRoot ? 0.16 : 0.12, 1, gap);
   }
 
-  #drawFileRings(g: Graphics, vis: NodeVisual, R: number, clip: Clip): void {
-    const lead = vis.touches[0];
-    if (vis.deleted && lead) {
-      // Faint outline that stays until the deletion reaches base.
-      if (clip.fill.kind === "full") g.circle(0, 0, R).fill({ color: 0xffffff, alpha: 0.02 });
-      outline(g, R, clip, hexToNumber(worktreeColor(lead.colorIndex)), 0.45 * this.#touchAlpha(lead), 1);
-      return;
+  /** A file's outline (ghost: dashed with a faint fill; deleted: faint solid) and its worktree rings. */
+  #drawFileMarks(g: Graphics, look: FileLook, R: number, clip: Clip): void {
+    const o = look.outline;
+    if (o) {
+      if (o.fillAlpha > 0 && clip.fill.kind === "full") g.circle(0, 0, R).fill({ color: o.fill, alpha: o.fillAlpha });
+      if (o.dashed) dashed(g, R, -Math.PI / 2, Math.PI * 1.5, clip, o.color, o.alpha, 1, 2, 2);
+      else outline(g, R, clip, o.color, o.alpha, 1);
     }
-    if (vis.ghost && lead) {
-      // Ghost: ~15% fill in the worktree colour and a dashed outline.
-      const ghostTouch = vis.touches.find((t) => t.stage === "uncommitted" && t.kind === "added") ?? lead;
-      const color = hexToNumber(worktreeColor(ghostTouch.colorIndex));
-      const a = this.#touchAlpha(ghostTouch);
-      if (this.#theme === "vision" && clip.fill.kind === "full") g.circle(0, 0, R).fill({ color, alpha: 0.15 * a });
-      dashed(g, R, -Math.PI / 2, Math.PI * 1.5, clip, color, a, 1, 2, 2);
-      this.#drawRings(
-        g,
-        R,
-        clip,
-        vis.touches.filter((t) => t.worktree !== ghostTouch.worktree),
-      );
-      return;
-    }
-    this.#drawRings(g, R, clip, vis.touches);
+    this.#drawRings(g, R, clip, look.rings);
   }
 
   /** One ring (or a split ring with one arc per worktree): dashed = uncommitted, solid = committed. */
-  #drawRings(g: Graphics, R: number, clip: Clip, touches: Touch[]): void {
-    if (touches.length === 0) return;
-    const RR = R + RING_GAP_PX;
-    const segs = splitSegments(touches.length, touches.length > 1 ? SPLIT_GAP_PX / RR : 0);
-    touches.forEach((t, i) => {
+  #drawRings(g: Graphics, R: number, clip: Clip, rings: Rings): void {
+    const arcs = rings.arcs;
+    if (arcs.length === 0) return;
+    const RR = R + rings.gap;
+    const segs = splitSegments(arcs.length, arcs.length > 1 ? SPLIT_GAP_PX / RR : 0);
+    arcs.forEach((a, i) => {
       const [a0, a1] = segs[i]!;
-      const color = hexToNumber(lighten(worktreeColor(t.colorIndex), 0.25));
-      const alpha = this.#touchAlpha(t);
-      if (t.stage === "uncommitted") dashed(g, RR, a0, a1, clip, color, alpha, RING_W_PX, 4, 3);
-      else if (touches.length === 1 && clip.stroke.kind === "full") g.circle(0, 0, RR).stroke({ color, alpha, width: RING_W_PX });
-      else solidArc(g, RR, a0, a1, clip, color, alpha, RING_W_PX);
+      if (a.dashed) dashed(g, RR, a0, a1, clip, a.color, a.alpha, rings.width, 4, 3);
+      else if (arcs.length === 1 && clip.stroke.kind === "full") g.circle(0, 0, RR).stroke({ color: a.color, alpha: a.alpha, width: rings.width });
+      else solidArc(g, RR, a0, a1, clip, a.color, a.alpha, rings.width);
     });
   }
 
@@ -534,9 +520,10 @@ export class MapRenderer {
       v.flash.anchor.set(0.5);
       v.root.addChild(v.flash);
     }
+    const look = this.#motion.shimmer(p);
     v.flash.visible = true;
-    v.flash.alpha = 0.55 * Math.sin(Math.PI * p);
-    v.flash.width = v.flash.height = R * 2 * (1 + 0.25 * p);
+    v.flash.alpha = look.alpha;
+    v.flash.width = v.flash.height = R * 2 * look.scale;
   }
 
   #labelWidth(name: string): number {

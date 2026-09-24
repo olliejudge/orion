@@ -219,12 +219,17 @@ export function clickTarget(path: string | null, layout: Map<string, Circle>, cu
 
 // ---- label text ----------------------------------------------------------
 
+/** A child folder at least this fraction of its parent's radius shares the parent's rim region. */
+export const DOMINANT_CHILD = 0.85;
+
 /**
  * Folder label text per labelled directory. A folder whose only visible
- * child is another folder would draw its name on top of the child's (their
- * rims nearly coincide), so such chains are compressed: `web` › `src` is
- * labelled once, on the inner circle, as "web/src". The root and collapsed
- * (aggregate) folders get no label.
+ * child is another folder, or whose child folder nearly fills it (radius ≥
+ * DOMINANT_CHILD × its own), would draw its name on or just above the
+ * child's (their rims nearly coincide), so such chains are compressed:
+ * `web` › `src` is labelled once, on the inner circle, as "web/src". Other
+ * children of a compressed folder keep their own names. The root and
+ * collapsed (aggregate) folders get no label.
  */
 export function labelNames(layout: Map<string, Circle>): Map<string, string> {
   const kids = new Map<string, Circle[]>();
@@ -235,20 +240,23 @@ export function labelNames(layout: Map<string, Circle>): Map<string, string> {
     if (list) list.push(c);
     else kids.set(p, [c]);
   }
-  const passThrough = (path: string): boolean => {
+  // The child folder that carries `path`'s name, if any.
+  const carrier = (path: string): string | undefined => {
     const k = kids.get(path);
-    return k !== undefined && k.length === 1 && k[0]!.isDir && k[0]!.aggregate === undefined;
+    const self = layout.get(path);
+    if (!k || !self) return undefined;
+    const dirs = k.filter((c) => c.isDir && c.aggregate === undefined);
+    if (k.length === 1 && dirs.length === 1) return dirs[0]!.path;
+    const big = dirs.reduce<Circle | undefined>((m, c) => (m === undefined || c.r > m.r ? c : m), undefined);
+    return big !== undefined && big.r >= DOMINANT_CHILD * self.r ? big.path : undefined;
   };
   const base = (path: string): string => path.slice(path.lastIndexOf("/") + 1);
   const out = new Map<string, string>();
   for (const c of layout.values()) {
-    if (!c.isDir || c.depth === 0 || c.aggregate !== undefined || passThrough(c.path)) continue;
+    if (!c.isDir || c.depth === 0 || c.aggregate !== undefined || carrier(c.path) !== undefined) continue;
     let name = base(c.path);
-    let p = parentDir(c.path);
-    while (p !== "" && passThrough(p)) {
-      name = `${base(p)}/${name}`;
-      p = parentDir(p);
-    }
+    let at = c.path;
+    for (let p = parentDir(at); p !== "" && carrier(p) === at; at = p, p = parentDir(p)) name = `${base(p)}/${name}`;
     out.set(c.path, name);
   }
   return out;

@@ -87,8 +87,10 @@ describe("Activity", () => {
     expect(onSelect).toHaveBeenCalledWith("src/a.ts");
   });
 
-  it("invites the user when there is nothing yet", () => {
+  it("invites the user with a compact empty state (no empty list) when there is nothing yet", () => {
     render(Activity, { repo: repoWith([]), now: NOW, onHover: () => {}, onSelect: () => {} });
+    expect(screen.getByText("No activity yet")).toBeInTheDocument();
     expect(screen.getByText(/appear here as they happen/)).toBeInTheDocument();
+    expect(screen.queryByRole("list")).toBeNull();
   });
 });

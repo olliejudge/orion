@@ -29,48 +29,57 @@
 <section class="activity glass" data-testid="activity" aria-label="Activity">
   <h2>Activity</h2>
   {#if rows.length === 0}
-    <p class="empty">Edits, commits and merges from every worktree appear here as they happen.</p>
+    <div class="empty">
+      <span class="idle-dot" aria-hidden="true"></span>
+      <div>
+        <p class="empty-title">No activity yet</p>
+        <p class="empty-hint">Edits, commits and merges from every worktree appear here as they happen.</p>
+      </div>
+    </div>
+  {:else}
+    <ol>
+      {#each rows as row (row.key)}
+        <li class="row" class:emphasis={row.emphasis} style:--fade={rowFade(row.ts, now)} style:--wt={color(row)}>
+          {#if row.path !== undefined}
+            {@const p = splitPath(row.path)}
+            <button
+              class="hit"
+              title={`${who(row)}: ${row.from ? `${row.from} → ` : ""}${row.path}`}
+              onmouseenter={() => onHover(row.path ?? null)}
+              onmouseleave={() => onHover(null)}
+              onfocus={() => onHover(row.path ?? null)}
+              onblur={() => onHover(null)}
+              onclick={() => onSelect(row.path!)}
+            >
+              <span class="dot"></span>
+              <span class="path"><span class="dir">{p.dir}</span><span class="name">{p.name}</span></span>
+              <span class="kind">{VERB[row.kind] ?? row.kind}{row.count > 1 ? ` ×${row.count}` : ""}</span>
+              <time datetime={new Date(row.ts).toISOString()}>{relativeTime(row.ts, now)}</time>
+            </button>
+          {:else}
+            <div class="hit" title={who(row)}>
+              <span class="dot"></span>
+              <span class="path">
+                <span class="name">{row.kind === "commit" ? `Committed${files(row.files)}` : `Merged${files(row.files)} into ${repo.repo.base || "base"}`}</span>
+                {#if row.subject}<span class="subject">{row.subject}</span>{/if}
+              </span>
+              <time datetime={new Date(row.ts).toISOString()}>{relativeTime(row.ts, now)}</time>
+            </div>
+          {/if}
+        </li>
+      {/each}
+    </ol>
   {/if}
-  <ol>
-    {#each rows as row (row.key)}
-      <li class="row" class:emphasis={row.emphasis} style:--fade={rowFade(row.ts, now)} style:--wt={color(row)}>
-        {#if row.path !== undefined}
-          {@const p = splitPath(row.path)}
-          <button
-            class="hit"
-            title={`${who(row)}: ${row.from ? `${row.from} → ` : ""}${row.path}`}
-            onmouseenter={() => onHover(row.path ?? null)}
-            onmouseleave={() => onHover(null)}
-            onfocus={() => onHover(row.path ?? null)}
-            onblur={() => onHover(null)}
-            onclick={() => onSelect(row.path!)}
-          >
-            <span class="dot"></span>
-            <span class="path"><span class="dir">{p.dir}</span><span class="name">{p.name}</span></span>
-            <span class="kind">{VERB[row.kind] ?? row.kind}{row.count > 1 ? ` ×${row.count}` : ""}</span>
-            <time datetime={new Date(row.ts).toISOString()}>{relativeTime(row.ts, now)}</time>
-          </button>
-        {:else}
-          <div class="hit" title={who(row)}>
-            <span class="dot"></span>
-            <span class="path">
-              <span class="name">{row.kind === "commit" ? `Committed${files(row.files)}` : `Merged${files(row.files)} into ${repo.repo.base || "base"}`}</span>
-              {#if row.subject}<span class="subject">{row.subject}</span>{/if}
-            </span>
-            <time datetime={new Date(row.ts).toISOString()}>{relativeTime(row.ts, now)}</time>
-          </div>
-        {/if}
-      </li>
-    {/each}
-  </ol>
 </section>
 
 <style>
+  /* Sized to its content (a quiet repo gets a small card), up to the space above the live pill. */
   .activity {
     position: fixed;
     top: var(--gutter);
     right: var(--gutter);
-    bottom: 64px;
+    box-sizing: border-box;
+    max-height: calc(100vh - var(--gutter) - 64px);
     width: 288px;
     display: flex;
     flex-direction: column;
@@ -84,11 +93,36 @@
     color: var(--text-dim);
   }
   .empty {
-    margin: 4px 6px;
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    margin: 2px 6px 4px;
+  }
+  .empty p {
+    margin: 0;
+  }
+  .idle-dot {
+    flex: none;
+    width: 7px;
+    height: 7px;
+    margin-top: 5px;
+    border-radius: 50%;
+    background: var(--text-faint);
+  }
+  .empty-title {
+    color: var(--text-dim);
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .empty-hint {
+    max-width: 30ch;
     color: var(--text-faint);
-    font-size: 11.5px;
+    font-size: 11px;
+    line-height: 1.4;
+    text-wrap: pretty;
   }
   ol {
+    min-height: 0;
     list-style: none;
     margin: 0;
     padding: 0;
@@ -188,10 +222,20 @@
   :global(:root[data-theme="night"]) .emphasis .hit {
     background: none;
   }
+  /* Night keeps its one-line hint, without the Vision card's title. */
+  :global(:root[data-theme="night"]) .idle-dot,
+  :global(:root[data-theme="night"]) .empty-title {
+    display: none;
+  }
+  :global(:root[data-theme="night"]) .empty-hint {
+    max-width: none;
+    font-size: 11.5px;
+  }
 
   @media (max-width: 720px) {
     .activity {
       top: auto;
+      bottom: 64px;
       left: var(--gutter);
       width: auto;
       max-height: 32vh;

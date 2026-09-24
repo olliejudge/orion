@@ -25,18 +25,30 @@ export interface ExtColor {
   light: string; // highlight stop at 35%/30%
 }
 
-// Curated file-type groups. Purple, blue and yellow are the exact stops from
-// the approved Vision mockup; the rest are tuned to sit beside them.
+/** File-type chroma is at most this fraction of the least saturated worktree colour's. */
+export const FILE_CHROMA_RATIO = 0.6;
+/** Minimum CIE76 ΔE between any file-type stop and any worktree colour. */
+export const MIN_FILE_WORKTREE_DELTA_E = 20;
+
+// Curated file-type groups for Vision: muted, cool "frosted" tones (CIELAB
+// chroma ≈ 2–20, highlight L ≈ 60–74, shadow L ≈ 30–42) so structure reads
+// while worktree activity, drawn in the saturated Apple system colours above,
+// stays the most salient thing on the map. colors.test.ts pins the chroma and
+// ΔE separation from every worktree colour. Media and "other" are the
+// dimmest, so unchanged images and vendored blobs never outshine changes.
 export const EXT_GROUPS = {
-  web: { light: "#8cc4ff", base: "#2f6fe6" },
-  systems: { light: "#b5a6ff", base: "#6a4fe0" },
-  scripting: { light: "#8fe3d9", base: "#1f9e93" },
-  docs: { light: "#ffe08a", base: "#e8a820" },
-  styles: { light: "#ffb3c7", base: "#d9507a" },
-  config: { light: "#c9ccd8", base: "#737891" },
-  media: { light: "#a9eeb4", base: "#35a353" },
-  other: { light: "#a4a4b0", base: "#5c5c68" },
+  web: { light: "#98b4cc", base: "#3d627d" }, // slate blue
+  systems: { light: "#aba8c5", base: "#585677" }, // lavender grey
+  scripting: { light: "#92b8b2", base: "#3c6660" }, // sage
+  docs: { light: "#c6b39b", base: "#726046" }, // sand
+  styles: { light: "#c8a2a7", base: "#764f55" }, // dusty rose
+  config: { light: "#b0b7bd", base: "#575f66" }, // cool grey
+  media: { light: "#8e9989", base: "#434f3e" }, // moss
+  other: { light: "#8f9194", base: "#44474b" }, // graphite
 } as const satisfies Record<string, ExtColor>;
+
+/** File-type spheres are slightly translucent in Vision ("frosted"); worktree tints stay opaque. */
+export const VISION_FILE_ALPHA = 0.85;
 
 type Group = keyof typeof EXT_GROUPS;
 
