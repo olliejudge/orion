@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"math"
 	"math/rand/v2"
 	"os"
 	"os/exec"
@@ -219,6 +220,9 @@ func TestValidateRejectsBadFlags(t *testing.T) {
 		{Dir: "x", Agents: 0, Speed: 1},
 		{Dir: "x", Agents: maxAgents + 1, Speed: 1},
 		{Dir: "x", Agents: 1, Speed: 0},
+		{Dir: "x", Agents: 1, Speed: math.NaN()},
+		{Dir: "x", Agents: 1, Speed: math.Inf(1)},
+		{Dir: "x", Agents: 1, Speed: 1001},
 		{Dir: "x", Agents: 1, Speed: 1, Steps: -1},
 		{Dir: "", Agents: 1, Speed: 1},
 	} {
