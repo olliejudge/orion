@@ -1,0 +1,214 @@
+package gitx
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/olliejudge/orion/internal/testrepo"
+)
+
+var ctx = context.Background()
+
+func TestCommonDirAndMainRootFromEverywhere(t *testing.T) {
+	r := testrepo.New(t)
+	r.Write("sub/dir/a.txt", "a")
+	r.Add()
+	r.Commit("base")
+	nested := r.WorktreeAdd(".claude/worktrees/agent-x", "agent-x")
+	outside := r.WorktreeAdd(filepath.Join(t.TempDir(), "outside"), "outside")
+
+	for name, dir := range map[string]string{
+		"root":    r.Path(),
+		"subdir":  filepath.Join(r.Path(), "sub", "dir"),
+		"nested":  nested.Path(),
+		"outside": outside.Path(),
+	} {
+		common, err := CommonDir(ctx, Runner{}, dir)
+		if err != nil {
+			t.Fatalf("%s: CommonDir: %v", name, err)
+		}
+		if want := filepath.Join(r.Path(), ".git"); common != want {
+			t.Errorf("%s: CommonDir = %q, want %q", name, common, want)
+		}
+		root, err := MainRoot(ctx, Runner{}, dir)
+		if err != nil {
+			t.Fatalf("%s: MainRoot: %v", name, err)
+		}
+		if root != r.Path() {
+			t.Errorf("%s: MainRoot = %q, want %q", name, root, r.Path())
+		}
+	}
+}
+
+func TestMainRootErrors(t *testing.T) {
+	if _, err := MainRoot(ctx, Runner{}, t.TempDir()); err == nil {
+		t.Error("MainRoot outside a repo: want error")
+	}
+	bare := t.TempDir()
+	if _, err := (Runner{}).Run(ctx, bare, "init", "--bare", "--quiet"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := MainRoot(ctx, Runner{}, bare); err == nil {
+		t.Error("MainRoot in a bare repo: want error")
+	}
+}
+
+func TestRevParseMergeBaseSubject(t *testing.T) {
+	r := testrepo.New(t)
+	r.Write("a.txt", "a")
+	r.Add()
+	base := r.Commit("base commit")
+	r.Branch("feature")
+	r.Checkout("feature")
+	r.Write("b.txt", "b")
+	r.Add()
+	feat := r.Commit("feature: add b")
+	r.Checkout("main")
+	r.Write("c.txt", "c")
+	r.Add()
+	r.Commit("main moves on")
+
+	got, err := RevParse(ctx, Runner{}, r.Path(), "feature")
+	if err != nil || got != feat {
+		t.Fatalf("RevParse(feature) = %q, %v; want %q", got, err, feat)
+	}
+	if _, err := RevParse(ctx, Runner{}, r.Path(), "no-such-branch"); err == nil {
+		t.Error("RevParse(missing) should fail")
+	}
+	if _, err := RevParse(ctx, Runner{}, r.Path(), "--all"); err == nil {
+		t.Error("RevParse must refuse revs that look like options")
+	}
+
+	mb, err := MergeBase(ctx, Runner{}, r.Path(), "main", "feature")
+	if err != nil || mb != base {
+		t.Fatalf("MergeBase = %q, %v; want %q", mb, err, base)
+	}
+
+	r.Git("checkout", "--quiet", "--orphan", "island")
+	r.Git("rm", "-r", "--quiet", "--cached", ".")
+	r.Write("island.txt", "i")
+	r.Add("island.txt")
+	r.Commit("unrelated root")
+	mb, err = MergeBase(ctx, Runner{}, r.Path(), "main", "island")
+	if err != nil || mb != "" {
+		t.Fatalf("MergeBase of unrelated histories = %q, %v; want \"\", nil", mb, err)
+	}
+
+	subj, err := CommitSubject(ctx, Runner{}, r.Path(), feat)
+	if err != nil || subj != "feature: add b" {
+		t.Fatalf("CommitSubject = %q, %v", subj, err)
+	}
+}
+
+func TestResolveBase(t *testing.T) {
+	commit := func(r *testrepo.Repo, name string) string {
+		r.Write(name, name)
+		r.Add()
+		return r.Commit("add " + name)
+	}
+
+	t.Run("unborn repo", func(t *testing.T) {
+		r := testrepo.New(t)
+		ref, sha, err := ResolveBase(ctx, Runner{}, r.Path(), "")
+		if err != nil || ref != "" || sha != "" {
+			t.Fatalf("got %q %q %v, want empty and nil", ref, sha, err)
+		}
+	})
+
+	t.Run("local main", func(t *testing.T) {
+		r := testrepo.New(t)
+		sha := commit(r, "a")
+		r.Branch("other")
+		r.Checkout("other")
+		commit(r, "b")
+		assertBase(t, r.Path(), "", "main", sha)
+	})
+
+	t.Run("master when no main", func(t *testing.T) {
+		r := testrepo.New(t)
+		sha := commit(r, "a")
+		r.Git("branch", "-m", "master")
+		assertBase(t, r.Path(), "", "master", sha)
+	})
+
+	t.Run("current branch of main worktree", func(t *testing.T) {
+		r := testrepo.New(t)
+		commit(r, "a")
+		r.Git("branch", "-m", "trunk")
+		sha := commit(r, "b")
+		wt := r.WorktreeAdd(filepath.Join(t.TempDir(), "wt"), "side")
+		commit(wt, "c")
+		// Asked from the linked worktree, the answer is still the MAIN worktree's branch.
+		assertBase(t, wt.Path(), "", "trunk", sha)
+	})
+
+	t.Run("detached main worktree", func(t *testing.T) {
+		r := testrepo.New(t)
+		sha := commit(r, "a")
+		r.Git("checkout", "--quiet", "--detach")
+		r.Git("branch", "-D", "--quiet", "main")
+		assertBase(t, r.Path(), "", sha[:7], sha)
+	})
+
+	t.Run("origin HEAD wins over local main", func(t *testing.T) {
+		remote := testrepo.New(t)
+		remoteSha := commit(remote, "remote.txt")
+		r := testrepo.New(t)
+		commit(r, "local.txt")
+		r.Git("remote", "add", "origin", remote.Path())
+		r.Git("fetch", "--quiet", "origin")
+		r.Git("remote", "set-head", "origin", "main")
+		assertBase(t, r.Path(), "", "origin/main", remoteSha)
+	})
+
+	t.Run("override wins", func(t *testing.T) {
+		r := testrepo.New(t)
+		commit(r, "a")
+		r.Branch("release")
+		r.Checkout("release")
+		sha := commit(r, "b")
+		assertBase(t, r.Path(), "release", "release", sha)
+		if _, _, err := ResolveBase(ctx, Runner{}, r.Path(), "nope"); err == nil {
+			t.Fatal("unknown override: want error")
+		}
+	})
+}
+
+func assertBase(t *testing.T, dir, override, wantRef, wantSha string) {
+	t.Helper()
+	ref, sha, err := ResolveBase(ctx, Runner{}, dir, override)
+	if err != nil {
+		t.Fatalf("ResolveBase: %v", err)
+	}
+	if ref != wantRef || sha != wantSha {
+		t.Fatalf("ResolveBase = %q %q, want %q %q", ref, sha, wantRef, wantSha)
+	}
+}
+
+func TestWorktreeAdminDir(t *testing.T) {
+	r := testrepo.New(t)
+	r.Write("a.txt", "a")
+	r.Add()
+	r.Commit("base")
+	nested := r.WorktreeAdd(".claude/worktrees/agent-x", "agent-x")
+
+	got, err := WorktreeAdminDir(r.Path())
+	if err != nil || got != filepath.Join(r.Path(), ".git") {
+		t.Fatalf("main admin dir = %q, %v", got, err)
+	}
+	got, err = WorktreeAdminDir(nested.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(r.Path(), ".git", "worktrees", "agent-x"); got != want {
+		t.Fatalf("linked admin dir = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(got, "HEAD")); err != nil {
+		t.Fatalf("admin dir has no HEAD: %v", err)
+	}
+	if _, err := WorktreeAdminDir(t.TempDir()); err == nil {
+		t.Fatal("WorktreeAdminDir of a non-worktree: want error")
+	}
+}
