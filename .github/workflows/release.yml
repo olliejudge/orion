@@ -44,23 +44,51 @@ jobs:
           pnpm -C web build
       - name: Test
         run: go test ./...
-      # A stable tag without the tap token would publish the GitHub release and
-      # then fail the cask push. Prerelease tags (v1.2.3-rc.1) skip the tap
-      # (skip_upload: auto), so they don't need it.
-      - name: Check tap token
+      # Stable tags only; prerelease tags (v1.2.3-rc.1) skip both checks.
+      # - A stable tag without the tap token would publish the GitHub release
+      #   and then fail the cask push (prereleases skip the tap via
+      #   skip_upload: auto).
+      # - The Apple secrets must be all set or all unset: a partial setup would
+      #   ship binaries that are signed but not notarized, or fail mid-release.
+      # Only booleans reach this step, never the secret values.
+      - name: Check release secrets
         env:
           HAS_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN != '' }}
+          HAS_MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 != '' }}
+          HAS_MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD != '' }}
+          HAS_MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY != '' }}
+          HAS_MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID != '' }}
+          HAS_MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID != '' }}
           TAG: ${{ github.ref_name }}
         run: |
           # Build metadata (v1.2.3+build-5) is not a prerelease marker.
           base=${TAG%%+*}
           case "$base" in
-            *-*) echo "prerelease tag $TAG: the Homebrew cask is not updated" ;;
+            *-*)
+              echo "prerelease tag $TAG: the Homebrew cask is not updated; secret checks skipped"
+              exit 0
+              ;;
+          esac
+          if [ "$HAS_TAP_TOKEN" != "true" ]; then
+            echo "::error::HOMEBREW_TAP_GITHUB_TOKEN is not set; stable tag $TAG would release but fail the tap push"
+            exit 1
+          fi
+          set_count=0
+          missing=""
+          for name in MACOS_SIGN_P12 MACOS_SIGN_PASSWORD MACOS_NOTARY_KEY MACOS_NOTARY_KEY_ID MACOS_NOTARY_ISSUER_ID; do
+            has_var="HAS_$name"
+            if [ "${!has_var}" = "true" ]; then
+              set_count=$((set_count + 1))
+            else
+              missing="$missing $name"
+            fi
+          done
+          case "$set_count" in
+            0) echo "::warning::No Apple signing secrets are set; stable tag $TAG ships unsigned macOS binaries (see docs/RELEASING.md)" ;;
+            5) echo "Apple signing secrets set: macOS binaries will be signed and notarized" ;;
             *)
-              if [ "$HAS_TAP_TOKEN" != "true" ]; then
-                echo "::error::HOMEBREW_TAP_GITHUB_TOKEN is not set; stable tag $TAG would release but fail the tap push"
-                exit 1
-              fi
+              echo "::error::Apple signing secrets are only partly set; missing:$missing. Set all five or none (see docs/RELEASING.md)"
+              exit 1
               ;;
           esac
       - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3

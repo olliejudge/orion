@@ -1,8 +1,8 @@
 # Releasing
 
-Push a `vX.Y.Z` tag. The [release workflow](../.github/workflows/release.yml) runs GoReleaser on a macOS runner. It builds the darwin and linux binaries, signs and notarizes the darwin ones, publishes the GitHub release and updates the cask in [olliejudge/homebrew-tap](https://github.com/olliejudge/homebrew-tap).
+Push a `vX.Y.Z` tag. The [release workflow](../.github/workflows/release.yml) runs GoReleaser on a macOS runner. It builds the darwin and linux binaries, signs and notarizes the darwin ones (when the Apple secrets are set), publishes the GitHub release and updates the cask in [olliejudge/homebrew-tap](https://github.com/olliejudge/homebrew-tap).
 
-Signing and notarization are optional. GoReleaser does them only when the `MACOS_SIGN_P12` secret is set. Without it, the release still goes out, with unsigned macOS binaries. The cask clears the quarantine bit after install either way, so `brew install` works in both cases.
+Signing and notarization are optional. GoReleaser does them only when the `MACOS_SIGN_P12` secret is set. Without the Apple secrets, the release still goes out, with unsigned macOS binaries. The five `MACOS_*` secrets are all or nothing: for a stable tag, the workflow fails before publishing if only some of them are set, so a half-finished setup can't ship binaries that are signed but not notarized. The cask clears the quarantine bit after install either way, so `brew install` works in both cases.
 
 The steps below are a one-time setup. Everything happens on a Mac signed in to the Apple Developer account, with the [GitHub CLI](https://cli.github.com/) logged in to an account that can admin `olliejudge/orion`.
 
@@ -36,13 +36,13 @@ Check that the identity is usable:
 
 ```sh
 security find-identity -v -p codesigning
-# 1) ABCDEF… "Developer ID Application: Your Name (TEAMID1234)"
+# 1) ABCDEF… "Developer ID Application: <Team Name> (TEAMID)"
 ```
 
 Export it as a `.p12`:
 
 1. In Keychain Access, open the **login** keychain → **My Certificates**.
-2. Find **Developer ID Application: Your Name (TEAMID1234)**. Expand it and check that a private key is underneath. Without the key, the export is useless.
+2. Find `Developer ID Application: <Team Name> (TEAMID)`. Expand it and check that a private key is underneath. Without the key, the export is useless.
 3. Right-click the certificate → **Export "Developer ID Application: …"…** → File Format **Personal Information Exchange (.p12)** → save as `cert.p12`.
 4. Set a strong password when asked. This becomes `MACOS_SIGN_PASSWORD`.
 
@@ -82,20 +82,22 @@ Then delete `cert.p12` and the `.p8` from disk, keeping the copies in your passw
 
 Only the GoReleaser step of the release workflow gets these secrets. The `notarize.macos` section of [`.goreleaser.yaml`](../.goreleaser.yaml) uses them:
 
-| Secret | What it is | If it's missing |
-|---|---|---|
-| `MACOS_SIGN_P12` | base64 of the Developer ID Application `.p12` | Signing and notarization are skipped |
-| `MACOS_SIGN_PASSWORD` | the `.p12` export password | The release fails to load the certificate |
-| `MACOS_NOTARY_KEY` | base64 of `AuthKey_<KEY_ID>.p8` | Binaries are signed but not notarized |
-| `MACOS_NOTARY_KEY_ID` | the API key's Key ID | Binaries are signed but not notarized |
-| `MACOS_NOTARY_ISSUER_ID` | the team's Issuer ID | Binaries are signed but not notarized |
+| Secret | What it is |
+|---|---|
+| `MACOS_SIGN_P12` | base64 of the Developer ID Application `.p12` |
+| `MACOS_SIGN_PASSWORD` | the `.p12` export password |
+| `MACOS_NOTARY_KEY` | base64 of `AuthKey_<KEY_ID>.p8` |
+| `MACOS_NOTARY_KEY_ID` | the API key's Key ID |
+| `MACOS_NOTARY_ISSUER_ID` | the team's Issuer ID |
+
+Set all five or none. For a stable tag, the workflow's **Check release secrets** step fails before anything is published if only some are set, and lists the missing ones. With none set, it warns that the macOS binaries will be unsigned. Prerelease tags skip the check.
 
 ## What happens during a release
 
 For each darwin binary, GoReleaser (using [quill](https://github.com/goreleaser/quill)) signs with the hardened runtime and an Apple timestamp. It then submits the binary to the notary service and waits up to 15 minutes for the result. These are the log lines to look for in the `goreleaser` step:
 
 - `sign & notarize macOS binaries … reason=disabled`: `MACOS_SIGN_P12` isn't set, so nothing was signed.
-- `will not try to notarize`: signed, but one of the three notary secrets is missing.
+- `will not try to notarize`: signed, but one of the three notary secrets is missing. Only a prerelease tag can get this far with a partial setup.
 - `notarized`: done.
 - `notarize timeout`: Apple hadn't finished within 15 minutes. The release carries on with the signed binary, and Apple usually finishes later. Check with `notarytool history` (below).
 - `invalid` or `rejected`: the release fails. Fetch Apple's log with `notarytool log` (below).
