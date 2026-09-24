@@ -196,6 +196,20 @@ describe("RepoStore", () => {
       expect(last().merged).toEqual([]);
     });
 
+    it("does not report paths a vanished worktree removes in the same patch", () => {
+      const store = new RepoStore();
+      store.apply(snapshot());
+      const last = lastChange(store);
+      store.apply(
+        patch(6, {
+          worktrees: [snapshot().worktrees[0]!],
+          overlays: { w1: { upsert: [], remove: ["src/app.ts", "src/new.ts"] } },
+        }),
+      );
+      expect(last().merged).toEqual([]);
+      expect(store.state!.overlays.has("w1")).toBe(false);
+    });
+
     it("is empty for snapshots", () => {
       const store = new RepoStore();
       const last = lastChange(store);

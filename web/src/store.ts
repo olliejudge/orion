@@ -101,22 +101,26 @@ function applyPatch(prev: RepoState, p: Patch): { state: RepoState; merged: stri
   }
 
   // Entries removed by this patch, remembered with their previous stage.
+  // Only worktrees still present after the patch contribute: the server
+  // removes every path of a vanished worktree in the same patch that drops
+  // it from `worktrees`, and those removals are not merges.
   const removed: ChangeEntry[] = [];
   if (p.overlays || p.worktrees) {
     const overlays = new Map(prev.overlays);
     for (const [id, op] of Object.entries(p.overlays ?? {})) {
       const m = new Map(overlays.get(id) ?? []);
+      const alive = next.worktrees.has(id);
       for (const path of op.remove ?? []) {
         const old = m.get(path);
-        if (old) removed.push(old);
+        if (old && alive) removed.push(old);
         m.delete(path);
       }
       for (const e of op.upsert ?? []) m.set(e.path, e);
       if (m.size === 0) overlays.delete(id);
       else overlays.set(id, m);
     }
-    // Defensive: a worktree that left the list takes its overlay with it.
-    // These removals are NOT merge candidates (the worktree went away).
+    // Defensive: a worktree that left the list takes any remaining overlay
+    // with it. These removals are NOT merge candidates either.
     for (const id of [...overlays.keys()]) {
       if (!next.worktrees.has(id)) overlays.delete(id);
     }
