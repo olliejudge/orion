@@ -20,7 +20,7 @@ import { Scene, type SceneNode } from "./scene";
 import { labelSpan, placeLabels, type LabelCandidate, type LabelSpot, LABEL_LINE_PX } from "./labels";
 import { HALO_RING_FRAC, TextureBank, labelWidth, renderArcLabel } from "./sprites";
 import { SETTLE_EPS, SPRING_OMEGA, isSettled, makeSpring, retarget, snapSpring, stepSpring, type Spring } from "./springs";
-import { aggregateLook, fileLook, type AggregateLook, type FileLook, type Rings, type Theme } from "./style";
+import { aggregateLook, fileLook, touchSig, type AggregateLook, type FileLook, type Rings, type Theme } from "./style";
 
 export type { Theme } from "./style";
 
@@ -458,8 +458,7 @@ export class MapRenderer {
 
     // Vector parts, redrawn only when their inputs change.
     const clip = R > f.big ? clipFor(sx, sy, R, f.rect) : WHOLE;
-    const sig = vis.touches.map((t) => `${t.worktree}:${t.colorIndex}:${t.stage}:${t.kind}`).join(",");
-    const gKey = `${Math.round(R * 2)}|${clip.key}|${this.#styleGen}|${sig}|${vis.ghost}|${vis.deleted}|${n.aggregate ?? -1}|${gap.toFixed(3)}`;
+    const gKey = `${Math.round(R * 2)}|${clip.key}|${this.#styleGen}|${touchSig(vis)}|${vis.ghost}|${vis.deleted}|${n.aggregate ?? -1}|${gap.toFixed(3)}`;
     if (gKey !== v.gKey) {
       v.gKey = gKey;
       v.g.clear();

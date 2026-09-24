@@ -57,6 +57,22 @@ export interface AggregateLook {
   rings: Rings;
 }
 
+const touchSigs = new WeakMap<NodeVisual, string>();
+
+/**
+ * A string key for a visual's touches (who, which colour, what stage and kind),
+ * part of the renderer's redraw key. Visuals are immutable once encoded, so it
+ * is built once per visual rather than once per node per frame.
+ */
+export function touchSig(vis: NodeVisual): string {
+  let sig = touchSigs.get(vis);
+  if (sig === undefined) {
+    sig = vis.touches.map((t) => `${t.worktree}:${t.colorIndex}:${t.stage}:${t.kind}`).join(",");
+    touchSigs.set(vis, sig);
+  }
+  return sig;
+}
+
 /** Alpha for one worktree's marks: full, or dimmed while another worktree is isolated. */
 export function touchAlpha(t: Touch, isolated: WorktreeId | null): number {
   return isolated === null || t.worktree === isolated ? 1 : ISOLATE_DIM;
