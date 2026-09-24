@@ -288,6 +288,23 @@ func TestEngineWorktreeRecreated(t *testing.T) {
 	waitFor(t, 10*time.Second, func() bool { _, ok := snapEntry(e, id, "late.txt"); return ok })
 }
 
+// darwin reports the root itself when its metadata changes (`touch .`); that
+// must not cost the main worktree its watch.
+func TestEngineRootTouched(t *testing.T) {
+	r := initRepo(t, map[string]string{"README.md": "# demo\n"})
+	e, _ := startEngine(t, r.Path())
+	id := wtID(r.Path())
+	now := time.Now()
+	if err := os.Chtimes(r.Path(), now, now); err != nil {
+		t.Fatal(err)
+	}
+	r.Write("first.txt", "1\n")
+	waitFor(t, 10*time.Second, func() bool { _, ok := snapEntry(e, id, "first.txt"); return ok })
+	time.Sleep(time.Second) // a later write must still be watched (scenario setup, not synchronisation)
+	r.Write("second.txt", "2\n")
+	waitFor(t, 10*time.Second, func() bool { _, ok := snapEntry(e, id, "second.txt"); return ok })
+}
+
 func TestEngineCheckoutStorm(t *testing.T) {
 	r := initRepo(t, map[string]string{"README.md": "# demo\n"})
 	r.Branch("storm")
@@ -348,16 +365,16 @@ func TestEngineUnstagedMove(t *testing.T) {
 
 // fakeWatcher is a watch.Watcher the test drives by hand.
 type fakeWatcher struct {
-	events chan watch.Event
-	errs   chan error
-	addErr error // returned by every Add when set
-	mu     sync.Mutex
-	added  []string
+	events  chan watch.Event
+	errs    chan error
+	addErr  error // returned by every Add when set
+	mu      sync.Mutex
+	added   []string
+	removed []string
 }
 
 func (f *fakeWatcher) Events() <-chan watch.Event { return f.events }
 func (f *fakeWatcher) Errors() <-chan error       { return f.errs }
-func (f *fakeWatcher) Remove(string) error        { return nil }
 func (f *fakeWatcher) Close() error               { return nil }
 func (f *fakeWatcher) Add(root string) error {
 	f.mu.Lock()
@@ -367,6 +384,19 @@ func (f *fakeWatcher) Add(root string) error {
 	}
 	f.added = append(f.added, root)
 	return nil
+}
+
+func (f *fakeWatcher) Remove(root string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.removed = append(f.removed, root)
+	return nil
+}
+
+func (f *fakeWatcher) removes() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.removed...)
 }
 
 func (f *fakeWatcher) roots() []string {
@@ -390,11 +420,42 @@ func TestRunWatchesMainAndOutsideRoots(t *testing.T) {
 	outside := r.WorktreeAdd(filepath.Join(t.TempDir(), "outside"), "outside")
 	r.WorktreeAdd(".claude/worktrees/nested", "nested")
 	startEngine(t, r.Path())
+	time.Sleep(2 * (debounce + minInterval)) // let the startup rescan's fires run: they must not re-add or remove
 
 	got := fw.roots()
 	want := []string{canon(r.Path()), canon(outside.Path())}
 	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("watched roots = %v, want %v (nested worktree covered by main)", got, want)
+	}
+	if rm := fw.removes(); len(rm) != 0 {
+		t.Fatalf("removed roots = %v, want none", rm)
+	}
+}
+
+// Only an event naming an outside worktree root itself may make Run touch
+// that root's watch; events for the main root, the git dir or ordinary files
+// must never re-add or remove anything.
+func TestRunEventsLeaveWatchesAlone(t *testing.T) {
+	fw := useFakeWatcher(t)
+	r := initRepo(t, map[string]string{"README.md": "# demo\n"})
+	outside := r.WorktreeAdd(filepath.Join(t.TempDir(), "outside"), "outside")
+	e, _ := startEngine(t, r.Path())
+	main, out := canon(r.Path()), canon(outside.Path())
+	time.Sleep(debounce + minInterval) // let the startup rescan run first
+
+	for _, p := range []string{main, filepath.Join(main, "README.md"), filepath.Join(main, ".git"),
+		filepath.Join(main, ".git", "HEAD"), filepath.Join(out, "README.md")} {
+		fw.events <- watch.Event{Path: p}
+	}
+	r.Write("sentinel.txt", "s\n")
+	fw.events <- watch.Event{Path: filepath.Join(main, "sentinel.txt")}
+	waitFor(t, 5*time.Second, func() bool { _, ok := snapEntry(e, wtID(r.Path()), "sentinel.txt"); return ok })
+
+	if rm := fw.removes(); len(rm) != 0 {
+		t.Errorf("removed roots = %v, want none", rm)
+	}
+	if got := fw.roots(); len(got) != 2 {
+		t.Errorf("added roots = %v, want only the two initial ones", got)
 	}
 }
 
