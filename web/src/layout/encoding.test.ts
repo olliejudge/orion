@@ -48,6 +48,17 @@ describe("encode", () => {
     expect(encode(s, "n.ts")).toMatchObject({ ghost: true, tinted: false });
   });
 
+  it("a committed deletion is deleted, not tinted (it has no body to tint)", () => {
+    const v = encode(makeState({ "a.ts": 5 }, { w1: [e("a.ts", "deleted", "committed")] }), "a.ts");
+    expect(v).toMatchObject({ deleted: true, tinted: false, ghost: false });
+  });
+
+  it("committed rename: the new path is tinted, the base `from` path is a committed deletion", () => {
+    const s = makeState({ "old/a.ts": 5 }, { w1: [e("new/a.ts", "renamed", "committed", "old/a.ts")] });
+    expect(encode(s, "new/a.ts")).toMatchObject({ tinted: true, deleted: false, renamedFrom: "old/a.ts" });
+    expect(encode(s, "old/a.ts")).toMatchObject({ tinted: false, deleted: true });
+  });
+
   it("deleted only when every touch is a deletion", () => {
     const gone = makeState({ "a.ts": 5 }, { w1: [e("a.ts", "deleted", "uncommitted")] });
     expect(encode(gone, "a.ts").deleted).toBe(true);
