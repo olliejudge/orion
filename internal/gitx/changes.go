@@ -118,12 +118,16 @@ func parseStatus(out []byte) []Change {
 				changes = append(changes, Change{Path: parts[8], Kind: kind})
 			}
 		case '2': // 2 XY sub mH mI mW hH hI Xscore path \0 origPath
-			parts := strings.SplitN(line, " ", 10)
-			if len(parts) != 10 || i+1 >= len(fields) {
+			// Consume origPath first so a malformed record cannot desync the parse.
+			if i+1 >= len(fields) {
 				continue
 			}
 			orig := string(fields[i+1])
 			i++
+			parts := strings.SplitN(line, " ", 10)
+			if len(parts) != 10 {
+				continue
+			}
 			x, y := parts[1][0], parts[1][1]
 			switch {
 			case y == 'D':
@@ -135,9 +139,14 @@ func parseStatus(out []byte) []Change {
 			}
 		case 'u': // u XY sub m1 m2 m3 mW h1 h2 h3 path
 			parts := strings.SplitN(line, " ", 11)
-			if len(parts) == 11 {
-				changes = append(changes, Change{Path: parts[10], Kind: Modified})
+			if len(parts) != 11 {
+				continue
 			}
+			kind := Modified
+			if parts[1] == "DU" { // deleted by us: absent from HEAD, present in the worktree
+				kind = Added
+			}
+			changes = append(changes, Change{Path: parts[10], Kind: kind})
 		case '?':
 			p := line[2:]
 			if !strings.HasSuffix(p, "/") {
@@ -154,7 +163,7 @@ func kindForXY(x, y byte) (ChangeKind, bool) {
 		return "", false // added to the index, then deleted: nothing left
 	case x == 'D' || y == 'D':
 		return Deleted, true
-	case x == 'A':
+	case x == 'A' || y == 'A': // Y == 'A' is intent-to-add (git add -N)
 		return Added, true
 	default:
 		return Modified, true

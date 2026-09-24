@@ -101,6 +101,8 @@ func TestStatus(t *testing.T) {
 	r.Write("added-then-deleted.txt", "x")
 	r.Add("added-then-deleted.txt")
 	r.Remove("added-then-deleted.txt")
+	r.Write("intent-to-add.txt", "i")
+	r.Git("add", "-N", "intent-to-add.txt")
 
 	got, err := Status(ctx, Runner{}, r.Path())
 	if err != nil {
@@ -114,6 +116,7 @@ func TestStatus(t *testing.T) {
 		{Path: "renamed.txt", From: "rename-me.txt", Kind: Renamed},
 		{Path: "staged-new.txt", Kind: Added},
 		{Path: "untracked/deep/file.txt", Kind: Added},
+		{Path: "intent-to-add.txt", Kind: Added},
 	})
 }
 
@@ -143,6 +146,7 @@ func TestStatusUnmergedIsModified(t *testing.T) {
 
 func TestParseStatusCaptured(t *testing.T) {
 	sha := strings.Repeat("a", 40)
+	zero := strings.Repeat("0", 40)
 	raw := strings.Join([]string{
 		"# branch.oid " + sha,
 		"# branch.head main",
@@ -150,11 +154,14 @@ func TestParseStatusCaptured(t *testing.T) {
 		"1 A. N... 000000 100644 100644 " + sha + " " + sha + " new\nline.txt",
 		"1 .D N... 100644 100644 000000 " + sha + " " + sha + " gone.txt",
 		"1 AD N... 000000 100644 000000 " + sha + " " + sha + " transient.txt",
+		"1 .A N... 000000 000000 100644 " + zero + " " + zero + " intent.txt",
 		"2 R. N... 100644 100644 100644 " + sha + " " + sha + " R100 to dir/b.txt",
 		"from a.txt",
 		"2 RD N... 100644 100644 000000 " + sha + " " + sha + " R100 moved-then-deleted.txt",
 		"orig.txt",
 		"u UU N... 100644 100644 100644 100644 " + sha + " " + sha + " " + sha + " conflict.txt",
+		"u DU N... 100644 000000 100644 100644 " + sha + " " + zero + " " + sha + " deleted-by-us.txt",
+		"u DD N... 100644 000000 000000 000000 " + sha + " " + zero + " " + zero + " both-deleted.txt",
 		"? untracked/-dash.txt",
 		"? nested/worktree/",
 		"! ignored.log",
@@ -167,8 +174,24 @@ func TestParseStatusCaptured(t *testing.T) {
 		{Path: "to dir/b.txt", From: "from a.txt", Kind: Renamed},
 		{Path: "orig.txt", Kind: Deleted},
 		{Path: "conflict.txt", Kind: Modified},
+		{Path: "intent.txt", Kind: Added},
+		{Path: "deleted-by-us.txt", Kind: Added},
+		{Path: "both-deleted.txt", Kind: Modified},
 		{Path: "untracked/-dash.txt", Kind: Added},
 	})
+}
+
+// A malformed rename record must still consume its origPath field, or that
+// path is parsed as the next record.
+func TestParseStatusMalformedRenameStaysInSync(t *testing.T) {
+	sha := strings.Repeat("a", 40)
+	raw := strings.Join([]string{
+		"2 R. N... truncated",
+		"1 .M N... 100644 100644 100644 " + sha + " " + sha + " orig-looks-like-a-record.txt",
+		"? real.txt",
+		"",
+	}, "\x00")
+	assertChanges(t, parseStatus([]byte(raw)), []Change{{Path: "real.txt", Kind: Added}})
 }
 
 func TestStatusDropsNestedWorktreeDir(t *testing.T) {
@@ -238,6 +261,31 @@ func TestPairMoves(t *testing.T) {
 			want: []Change{
 				{Path: "a.txt", Kind: Modified},
 				{Path: "src/new/util.go", From: "src/old/util.go", Kind: Renamed},
+			},
+		},
+		{
+			name: "rename replaces the added entry, not the deleted one",
+			in: []Change{
+				{Path: "x/u.go", Kind: Deleted},
+				{Path: "m.txt", Kind: Modified},
+				{Path: "y/u.go", Kind: Added},
+			},
+			want: []Change{
+				{Path: "m.txt", Kind: Modified},
+				{Path: "y/u.go", From: "x/u.go", Kind: Renamed},
+			},
+		},
+		{
+			name: "two moves with distinct basenames pair independently",
+			in: []Change{
+				{Path: "a/one.go", Kind: Deleted},
+				{Path: "a/two.go", Kind: Deleted},
+				{Path: "b/two.go", Kind: Added},
+				{Path: "b/one.go", Kind: Added},
+			},
+			want: []Change{
+				{Path: "b/two.go", From: "a/two.go", Kind: Renamed},
+				{Path: "b/one.go", From: "a/one.go", Kind: Renamed},
 			},
 		},
 		{
