@@ -8,12 +8,14 @@
     now: number;
     isolated: WorktreeId | null;
     onIsolate: (id: WorktreeId | null) => void;
+    /** Hidden directories: their changes don't count towards a worktree's badge or active status. */
+    excluded?: ReadonlySet<string>;
     /** Reports the panel's size whenever it changes (the map keeps clear of it). */
     onFootprint?: (size: Footprint) => void;
     /** Room to leave below the panel, CSS px: the live pill, or the map key when it is taller. */
     reserveBottom?: number;
   }
-  let { repo, now, isolated, onIsolate, onFootprint, reserveBottom = 64 }: Props = $props();
+  let { repo, now, isolated, onIsolate, excluded, onFootprint, reserveBottom = 64 }: Props = $props();
 
   let panel: HTMLElement;
   $effect(() => {
@@ -25,7 +27,7 @@
   });
 
   let showIdle = $state(false);
-  const model = $derived(legendModel(repo, now));
+  const model = $derived(legendModel(repo, now, excluded));
 
   function toggle(id: WorktreeId): void {
     onIsolate(isolated === id ? null : id);

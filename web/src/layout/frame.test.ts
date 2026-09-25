@@ -82,6 +82,23 @@ describe("computeFrame", () => {
     expect(f.visuals.get("tiny.txt")!.touches).toEqual([]);
     expect(f.layout.has("not/in/tree.ts")).toBe(false);
   });
+
+  it("drops an excluded directory and its files entirely from the layout", () => {
+    const s = makeState({ "src/a.ts": 100, "docs/guide.md": 5000 });
+    const f = computeFrame(s, 400, 400, 1, 0, undefined, new Set(["docs"]));
+    expect(f.layout.has("docs")).toBe(false);
+    expect(f.layout.has("docs/guide.md")).toBe(false);
+    expect(f.layout.has("src")).toBe(true);
+  });
+
+  it("leaves a hidden subdirectory's files out of a collapsed sibling's aggregate", () => {
+    const s = makeState({ "big.bin": 50_000_000, "vendor/sub/f0.js": 10, "vendor/sub/f1.js": 10, "vendor/sub/hide/f2.js": 10, "vendor/g.js": 10 });
+    // With `hide` present, vendor/sub still nests a directory, so it stays expanded rather than collapsing.
+    expect(computeFrame(s, 400, 400, 1).layout.get("vendor/sub")?.aggregate).toBeUndefined();
+    // Excluding it leaves only the two plain files, small enough to collapse; the hidden file isn't counted.
+    const withoutHide = computeFrame(s, 400, 400, 1, 0, undefined, new Set(["vendor/sub/hide"])).layout.get("vendor/sub")!.aggregate;
+    expect(withoutHide).toBe(2);
+  });
 });
 
 // Each patch makes a new RepoState, but most patches (an edit that stays in
@@ -100,6 +117,16 @@ describe("pack reuse across states", () => {
     expect(packedFor(makeState({ "a.ts": 100, "src/b.ts": 200 }, { w1: [{ path: "src/c.ts", kind: "added", stage: "uncommitted", size: 5 }] }), 400, 400)).not.toBe(c);
     const d = packedFor(makeState({ "a.ts": 100, "src/b.ts": 200 }), 400, 400);
     expect(packedFor(makeState({ "a.ts": 100, "src/b.ts": 200 }), 500, 400)).not.toBe(d);
+  });
+
+  it("re-packs when the excluded set changes on the very same state", () => {
+    const s = makeState({ "a.ts": 100, "src/b.ts": 200 });
+    const a = packedFor(s, 400, 400);
+    const withExclusion = packedFor(s, 400, 400, new Set(["src"]));
+    expect(withExclusion).not.toBe(a);
+    expect(withExclusion.node?.leaves().some((l) => l.data.path === "src/b.ts")).toBe(false);
+    // Same state, same exclusion again (no other call in between): the single-slot pack cache reuses it.
+    expect(packedFor(s, 400, 400, new Set(["src"]))).toBe(withExclusion);
   });
 
   it("culls a reused pack with the current state's touched files", () => {

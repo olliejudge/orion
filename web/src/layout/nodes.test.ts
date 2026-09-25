@@ -100,4 +100,30 @@ describe("buildTree", () => {
   it("returns an empty root for an empty repo", () => {
     expect(buildTree(makeState({}))).toEqual({ path: "", name: "sample-app", isDir: true, size: 0, children: [] });
   });
+
+  it("drops an excluded directory's base paths and its own node", () => {
+    const s = makeState({ "src/a.ts": 5, "docs/guide.md": 3, "README.md": 1 });
+    const root = buildTree(s, new Set(["docs"]));
+    expect(paths(root)).toEqual(["", "README.md", "src", "src/a.ts"]);
+  });
+
+  it("drops overlay-only paths under an excluded directory too", () => {
+    const s = makeState({ "src/a.ts": 5 }, { w1: [{ path: "docs/new.md", kind: "added", stage: "uncommitted", size: 2 }] });
+    const root = buildTree(s, new Set(["docs"]));
+    expect(find(root, "docs")).toBeUndefined();
+    expect(find(root, "docs/new.md")).toBeUndefined();
+  });
+
+  it("never false-matches a sibling directory with the same name prefix", () => {
+    const s = makeState({ "src/a.ts": 5, "srcfoo/b.ts": 7 });
+    const root = buildTree(s, new Set(["src"]));
+    expect(find(root, "src")).toBeUndefined();
+    expect(find(root, "srcfoo")).toBeDefined();
+    expect(find(root, "srcfoo/b.ts")).toBeDefined();
+  });
+
+  it("an empty exclusion set behaves exactly like no exclusion at all", () => {
+    const s = makeState({ "src/a.ts": 5, "docs/guide.md": 3 });
+    expect(buildTree(s, new Set())).toEqual(buildTree(s));
+  });
 });

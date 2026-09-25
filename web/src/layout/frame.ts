@@ -30,32 +30,42 @@ export interface Insets {
 // packValue buckets) plus the viewport size, not by RepoState identity; the
 // touched set, which the pack does not depend on, is passed to the cull.
 // Keys are memoised per RepoState, so zooming (same state, same size, new
-// scale) only re-culls and re-encodes.
+// scale) only re-culls and re-encodes. `excluded` is folded into the
+// signature (via a separate exSig check) rather than into the RepoState
+// identity, since toggling a directory in the filter panel changes it
+// without the state itself changing.
 interface PackKey {
   sig: string;
   touched: ReadonlySet<string>;
+  exSig: string;
 }
 const keyCache = new WeakMap<RepoState, PackKey>();
 let lastPack: { sig: string; packed: PackedTree } | null = null;
 
-function packKey(state: RepoState): PackKey {
+function excludedSig(excluded: ReadonlySet<string> | undefined): string {
+  if (!excluded || excluded.size === 0) return "";
+  return [...excluded].sort().join("\0");
+}
+
+function packKey(state: RepoState, excluded?: ReadonlySet<string>): PackKey {
+  const exSig = excludedSig(excluded);
   const hit = keyCache.get(state);
-  if (hit) return hit;
-  const { sizes, touched } = nodeSizes(state);
+  if (hit && hit.exSig === exSig) return hit;
+  const { sizes, touched } = nodeSizes(state, excluded);
   // Paths never contain NUL, so this is unambiguous. Map order is not sorted:
   // the same set in another order only costs a re-pack, never a wrong hit.
   const parts = [state.repo.name];
   for (const [path, size] of sizes) parts.push(path, String(packValue(size)));
-  const key = { sig: parts.join("\0"), touched };
+  const key = { sig: parts.join("\0"), touched, exSig };
   keyCache.set(state, key);
   return key;
 }
 
-/** The packed tree for `state` in a width×height rect, reused while its inputs are unchanged. */
-export function packedFor(state: RepoState, width: number, height: number): PackedTree {
-  const { sig } = packKey(state);
+/** The packed tree for `state` in a width×height rect, reused while its inputs (including `excluded`) are unchanged. */
+export function packedFor(state: RepoState, width: number, height: number, excluded?: ReadonlySet<string>): PackedTree {
+  const { sig } = packKey(state, excluded);
   if (lastPack && lastPack.sig === sig && lastPack.packed.width === width && lastPack.packed.height === height) return lastPack.packed;
-  const packed = packTree(buildTree(state), width, height);
+  const packed = packTree(buildTree(state, excluded), width, height);
   lastPack = { sig, packed };
   return packed;
 }
@@ -70,7 +80,9 @@ export function packedFor(state: RepoState, width: number, height: number): Pack
  * The identity camera still shows the root where it is laid out; `free` is
  * that rect, for fitting zoom targets. `linger` paths (e.g. files shimmering
  * after a merge) are kept like touched files, so a merge never reads as a
- * deletion at low zoom.
+ * deletion at low zoom. `excluded` directories (and everything under them)
+ * are dropped before packing, so toggling one re-lays out like any other
+ * change to the node set.
  */
 export function computeFrame(
   state: RepoState,
@@ -79,11 +91,12 @@ export function computeFrame(
   scale: number,
   pad: number | Insets = 0,
   linger?: ReadonlySet<string>,
+  excluded?: ReadonlySet<string>,
 ): Frame {
   const k = Math.max(scale, 1e-6);
   const free = freeArea(width, height, pad);
-  const packed = packedFor(state, free.x1 - free.x0, free.y1 - free.y0);
-  const cull = { minFileR: MIN_FILE_R / k, minDirR: MIN_DIR_R / k, keep: linger, touched: packKey(state).touched };
+  const packed = packedFor(state, free.x1 - free.x0, free.y1 - free.y0, excluded);
+  const cull = { minFileR: MIN_FILE_R / k, minDirR: MIN_DIR_R / k, keep: linger, touched: packKey(state, excluded).touched };
   const layout = cullLayout(packed, cull, free.x0, free.y0);
   return { layout, visuals: encodeAll(state, layout), free };
 }

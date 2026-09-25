@@ -2,6 +2,7 @@
 // without rendering, and the Svelte components stay thin.
 import { worktreeColor } from "../colors";
 import { encode, encodeAll } from "../layout/encoding";
+import { isExcluded } from "../layout/exclude";
 import { freeArea, type Insets } from "../layout/frame";
 import type { Circle } from "../layout/pack";
 import type { Activity, WorktreeId } from "../protocol";
@@ -23,13 +24,18 @@ export interface LegendItem {
   path: string;
 }
 
-export function legendModel(state: RepoState, now: number): { active: LegendItem[]; idle: LegendItem[] } {
+export function legendModel(state: RepoState, now: number, excluded?: ReadonlySet<string>): { active: LegendItem[]; idle: LegendItem[] } {
   const recent = new Set<WorktreeId>();
-  for (const a of state.activity) if (now - a.ts <= ACTIVE_WINDOW_MS) recent.add(a.worktree);
+  for (const a of state.activity) {
+    if (now - a.ts > ACTIVE_WINDOW_MS) continue;
+    if (excluded && a.path !== undefined && isExcluded(a.path, excluded)) continue;
+    recent.add(a.worktree);
+  }
   const active: LegendItem[] = [];
   const idle: LegendItem[] = [];
   for (const w of state.worktrees.values()) {
-    const changed = state.overlays.get(w.id)?.size ?? 0;
+    let changed = 0;
+    for (const path of state.overlays.get(w.id)?.keys() ?? []) if (!excluded || !isExcluded(path, excluded)) changed++;
     const item: LegendItem = { id: w.id, label: w.label, color: worktreeColor(w.colorIndex), changed, isMain: w.isMain, path: w.path };
     if (changed > 0 || recent.has(w.id)) active.push(item);
     else idle.push(item);
@@ -70,11 +76,12 @@ export interface ActivityRow {
  * the buffer from the front, and new items join the newest row, so the key
  * survives both and Svelte keeps the row's DOM (focus, hover) across patches.
  */
-export function activityRows(activity: Activity[], limit = 80): ActivityRow[] {
+export function activityRows(activity: Activity[], limit = 80, excluded?: ReadonlySet<string>): ActivityRow[] {
   const rows: ActivityRow[] = [];
   const oldest: Activity[] = [];
   for (let i = activity.length - 1; i >= 0 && rows.length <= limit; i--) {
     const a = activity[i]!;
+    if (excluded && a.path !== undefined && isExcluded(a.path, excluded)) continue;
     const prev = rows[rows.length - 1];
     const fileKind = a.kind !== "commit" && a.kind !== "merge";
     if (prev && fileKind && prev.kind === a.kind && prev.worktree === a.worktree && prev.path === a.path && oldest[oldest.length - 1]!.ts - a.ts <= COALESCE_MS) {
@@ -189,6 +196,38 @@ const LEGEND_CLEAR = 8; // min gap between the root circle and a corner panel
 export interface Footprint {
   width: number;
   height: number;
+}
+
+const STACK_GAP = 8; // gap between two panels stacked in the same corner
+
+/**
+ * Two panels stacked in the same corner (e.g. the map key and the directory
+ * filter, both bottom-left) as the one combined footprint `mapInsets` treats
+ * as a single obstacle. An unmeasured panel (zero size) is ignored.
+ */
+export function stackFootprint(a: Footprint, b: Footprint, gap = STACK_GAP): Footprint {
+  const hasA = a.width > 0 && a.height > 0;
+  const hasB = b.width > 0 && b.height > 0;
+  if (hasA && hasB) return { width: Math.max(a.width, b.width), height: a.height + gap + b.height };
+  return hasA ? a : hasB ? b : { width: 0, height: 0 };
+}
+
+// DirFilter.svelte's own header (the "Folders" toggle button plus the open
+// panel's "Show all" row and padding), which sits above its scrolling tree.
+const DIRFILTER_CHROME = 84;
+
+/**
+ * How tall the open folder filter's scrolling tree may grow, CSS px, before
+ * the panel — anchored at the gutter and lifted `liftBy` above it to stack
+ * over the map key (see `stackFootprint`) — would overlap the legend above
+ * it. Driven entirely by measured/viewport inputs, so it adapts to the
+ * legend growing or shrinking (worktrees appearing), a window resize, and
+ * the map key being open or collapsed (which changes `liftBy`).
+ */
+export function dirFilterTreeMaxHeight(viewportHeight: number, legend: Footprint, liftBy: number): number {
+  const legendBottom = legend.width > 0 && legend.height > 0 ? GUTTER + legend.height + STACK_GAP : GUTTER;
+  const panelBottom = viewportHeight - GUTTER - liftBy;
+  return Math.max(0, panelBottom - legendBottom - DIRFILTER_CHROME);
 }
 
 /** A panel in a left corner: the legend at the top, the map key at the bottom. */

@@ -1,4 +1,5 @@
 import type { RepoState } from "../store";
+import { isExcluded } from "./exclude";
 
 export interface TreeNode {
   path: string;
@@ -25,9 +26,14 @@ export interface TreeNode {
  * - If a path is both a file and a directory prefix, the directory wins.
  * - Files that any worktree touches (an overlay entry, or a rename's `from`
  *   still in base) are flagged `touched`, so culling never hides activity.
+ *
+ * `excluded` drops every path inside a hidden directory (base and overlay
+ * alike) before the tree is built, so the map, the pack cache and anything
+ * downstream of either stay consistent. Omit it (or pass an empty set) to
+ * get the unfiltered tree, e.g. to enumerate every directory for a filter UI.
  */
-export function buildTree(state: RepoState): TreeNode {
-  const { sizes, touched } = nodeSizes(state);
+export function buildTree(state: RepoState, excluded?: ReadonlySet<string>): TreeNode {
+  const { sizes, touched } = nodeSizes(state, excluded);
   const root: TreeNode = { path: "", name: state.repo.name, isDir: true, size: 0, children: [] };
   const dirs = new Map<string, TreeNode>([["", root]]);
 
@@ -60,12 +66,24 @@ export function buildTree(state: RepoState): TreeNode {
   return root;
 }
 
-/** buildTree's inputs: every node path with its size, and the touched files. */
-export function nodeSizes(state: RepoState): { sizes: Map<string, number>; touched: Set<string> } {
-  const sizes = new Map<string, number>(state.tree);
+/**
+ * buildTree's inputs: every node path with its size, and the touched files.
+ * A path under an excluded directory is dropped entirely, from both the base
+ * tree and every overlay, so an excluded folder (and its subtree) never
+ * reaches the pack.
+ */
+export function nodeSizes(state: RepoState, excluded?: ReadonlySet<string>): { sizes: Map<string, number>; touched: Set<string> } {
+  const hidden = excluded && excluded.size > 0 ? excluded : undefined;
+  const sizes = new Map<string, number>();
+  if (hidden) {
+    for (const [path, size] of state.tree) if (!isExcluded(path, hidden)) sizes.set(path, size);
+  } else {
+    for (const [path, size] of state.tree) sizes.set(path, size);
+  }
   const touched = new Set<string>();
   for (const entries of state.overlays.values()) {
     for (const e of entries.values()) {
+      if (hidden && isExcluded(e.path, hidden)) continue;
       touched.add(e.path);
       if (e.kind === "renamed" && e.from) touched.add(e.from);
       if (e.kind === "deleted") {
