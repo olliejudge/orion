@@ -212,6 +212,24 @@ export function stackFootprint(a: Footprint, b: Footprint, gap = STACK_GAP): Foo
   return hasA ? a : hasB ? b : { width: 0, height: 0 };
 }
 
+// DirFilter.svelte's own header (the "Folders" toggle button plus the open
+// panel's "Show all" row and padding), which sits above its scrolling tree.
+const DIRFILTER_CHROME = 84;
+
+/**
+ * How tall the open folder filter's scrolling tree may grow, CSS px, before
+ * the panel — anchored at the gutter and lifted `liftBy` above it to stack
+ * over the map key (see `stackFootprint`) — would overlap the legend above
+ * it. Driven entirely by measured/viewport inputs, so it adapts to the
+ * legend growing or shrinking (worktrees appearing), a window resize, and
+ * the map key being open or collapsed (which changes `liftBy`).
+ */
+export function dirFilterTreeMaxHeight(viewportHeight: number, legend: Footprint, liftBy: number): number {
+  const legendBottom = legend.width > 0 && legend.height > 0 ? GUTTER + legend.height + STACK_GAP : GUTTER;
+  const panelBottom = viewportHeight - GUTTER - liftBy;
+  return Math.max(0, panelBottom - legendBottom - DIRFILTER_CHROME);
+}
+
 /** A panel in a left corner: the legend at the top, the map key at the bottom. */
 interface CornerPanel {
   edge: "top" | "bottom";

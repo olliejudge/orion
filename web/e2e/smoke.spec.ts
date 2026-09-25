@@ -196,6 +196,35 @@ test("unticking a folder changes the map's bubbles; Show all restores them", asy
   expect(Math.abs(restored - baseline), "Show all should bring the map back close to how it looked before").toBeLessThan(0.02);
 });
 
+/** Axis-aligned overlap test for two Playwright bounding boxes. */
+function boxesOverlap(a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }): boolean {
+  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+}
+
+test("the open folder filter never overlaps the legend, at a normal or a short viewport", async ({ page }) => {
+  await openOrion(page);
+  const panel = page.getByTestId("dir-filter");
+  const legend = page.getByTestId("legend");
+
+  for (const size of [{ width: 1440, height: 900 }, { width: 1440, height: 700 }]) {
+    await page.setViewportSize(size);
+    // Reopen at each size: a resize can change how much room the panel has,
+    // and its own layout effect only recomputes while mounted and open.
+    const toggle = panel.getByRole("button", { name: /Folders/ });
+    if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await page.waitForTimeout(300); // let the ResizeObserver-driven cap settle
+
+    const legendBox = await legend.boundingBox();
+    const panelBox = await panel.boundingBox();
+    expect(legendBox, "the legend should be measurable").not.toBeNull();
+    expect(panelBox, "the open panel should be measurable").not.toBeNull();
+    expect(boxesOverlap(legendBox!, panelBox!), `at ${size.width}x${size.height}: legend ${JSON.stringify(legendBox)} vs panel ${JSON.stringify(panelBox)}`).toBe(
+      false,
+    );
+  }
+});
+
 test("N toggles Night and Vision and remembers the choice", async ({ page }) => {
   await openOrion(page);
   expect(await theme(page)).toBe("vision");

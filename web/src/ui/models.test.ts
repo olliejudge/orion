@@ -8,6 +8,7 @@ import {
   crumbsSize,
   crumbsSlot,
   crumbsStart,
+  dirFilterTreeMaxHeight,
   hoverTip,
   legendModel,
   mapInsets,
@@ -232,6 +233,39 @@ describe("stackFootprint", () => {
 
   it("is empty when neither is measured", () => {
     expect(stackFootprint({ width: 0, height: 0 }, { width: 0, height: 0 })).toEqual({ width: 0, height: 0 });
+  });
+});
+
+describe("dirFilterTreeMaxHeight", () => {
+  const legend = { width: 340, height: 186 };
+
+  it("leaves the tree room down to just above the legend's bottom edge", () => {
+    // panelBottom = 900 - 16 = 884; legendBottom = 16 + 186 + 8 = 210; minus the panel's own ~84px chrome.
+    expect(dirFilterTreeMaxHeight(900, legend, 0)).toBe(590);
+  });
+
+  it("shrinks when the map key stacked below lifts the panel higher", () => {
+    expect(dirFilterTreeMaxHeight(900, legend, 190)).toBe(400);
+  });
+
+  it("grows when the legend is taller (more worktrees) and shrinks back when it isn't", () => {
+    const taller = dirFilterTreeMaxHeight(900, { width: 340, height: 300 }, 0);
+    const shorter = dirFilterTreeMaxHeight(900, { width: 340, height: 100 }, 0);
+    expect(taller).toBeLessThan(dirFilterTreeMaxHeight(900, legend, 0));
+    expect(shorter).toBeGreaterThan(dirFilterTreeMaxHeight(900, legend, 0));
+  });
+
+  it("grows and shrinks with the viewport (a window resize)", () => {
+    expect(dirFilterTreeMaxHeight(1300, legend, 0)).toBeGreaterThan(dirFilterTreeMaxHeight(900, legend, 0));
+    expect(dirFilterTreeMaxHeight(700, legend, 0)).toBeLessThan(dirFilterTreeMaxHeight(900, legend, 0));
+  });
+
+  it("falls back to a plain gutter margin when the legend hasn't been measured yet", () => {
+    expect(dirFilterTreeMaxHeight(900, { width: 0, height: 0 }, 0)).toBe(784);
+  });
+
+  it("never goes negative on a short window", () => {
+    expect(dirFilterTreeMaxHeight(300, legend, 190)).toBe(0);
   });
 });
 

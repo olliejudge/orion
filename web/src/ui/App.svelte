@@ -23,6 +23,7 @@
   import MapKey from "./MapKey.svelte";
   import {
     crumbsSlot,
+    dirFilterTreeMaxHeight,
     hoverTip,
     mapInsets,
     shownFolder,
@@ -53,6 +54,7 @@
   let dirFilterBox: Footprint = $state.raw({ width: 0, height: 0 });
   let pillX: number | null = $state(null); // centre of the map's free area
   let viewW = $state(0);
+  let viewH = $state(0);
   let crumbsBox: CrumbsSize = $state.raw({ full: 0, min: 0 });
   // The breadcrumbs keep clear of the legend (and Vision's activity panel).
   const crumbsAt = $derived(viewW > 0 ? crumbsSlot(theme, viewW, legendBox, pillX, crumbsBox) : null);
@@ -60,6 +62,11 @@
   // (and the filter's own position) treat them as one combined obstacle.
   const bottomLeftBox = $derived(stackFootprint(keyBox, dirFilterBox, DIRFILTER_GAP));
   const dirFilterLift = $derived(keyBox.height > 0 ? keyBox.height + DIRFILTER_GAP : 0);
+  // Caps the open filter's scrolling tree so it can never grow into the
+  // legend above it, however tall the legend gets (more worktrees), however
+  // the window is sized, and whichever way the map key (above `dirFilterLift`
+  // folds in) is toggled.
+  const dirFilterTreeMax = $derived(viewH > 0 ? dirFilterTreeMaxHeight(viewH, legendBox, dirFilterLift) : undefined);
 
   // Directories hidden from the map, persisted per repo (see layout/exclude.ts).
   let excluded: ReadonlySet<string> = $state.raw(new Set());
@@ -297,7 +304,7 @@
   });
 </script>
 
-<svelte:window onkeydown={onKey} bind:innerWidth={viewW} />
+<svelte:window onkeydown={onKey} bind:innerWidth={viewW} bind:innerHeight={viewH} />
 
 <div class="map" data-testid="map" role="img" aria-label="Repository map" bind:this={mapEl}></div>
 
@@ -325,7 +332,8 @@
     {excluded}
     onChange={setExcluded}
     onFootprint={(b) => (dirFilterBox = b)}
-    lift={dirFilterLift} />
+    lift={dirFilterLift}
+    treeMaxHeight={dirFilterTreeMax} />
 {/if}
 {#if !noWebGL}
   <MapKey {theme} onFootprint={(b) => (keyBox = b)} />

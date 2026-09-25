@@ -13,10 +13,12 @@
     onFootprint?: (size: Footprint) => void;
     /** Extra px to lift the panel above the gutter, e.g. clear of the map key stacked below it. */
     lift?: number;
+    /** Caps the scrolling tree's height, CSS px, so the open panel never grows into the legend above it. Undefined falls back to a rough viewport-relative guess. */
+    treeMaxHeight?: number;
     /** Where the open/closed choice is remembered (defaults to localStorage). */
     storage?: Storage | null;
   }
-  let { dirs, excluded, onChange, onFootprint, lift = 0, storage }: Props = $props();
+  let { dirs, excluded, onChange, onFootprint, lift = 0, treeMaxHeight, storage }: Props = $props();
 
   const uid = $props.id();
   // Read once, on mount: afterwards `open` is the panel's own state (see MapKey).
@@ -120,7 +122,7 @@
     {#if dirs.length === 0}
       <p class="empty">No folders yet.</p>
     {:else}
-      <ul class="tree">
+      <ul class="tree" style:max-height={treeMaxHeight !== undefined ? `${Math.max(0, treeMaxHeight)}px` : undefined}>
         {#each dirs as d (d.path)}
           {@render row(d, 0)}
         {/each}
@@ -237,7 +239,11 @@
     overflow-y: auto;
     overscroll-behavior: contain;
     scrollbar-width: thin;
-    /* Header + toggle + gutters roughly account for 96px; --lift stacks another panel below. */
+    /* Fallback only: App.svelte sets an exact inline max-height (dirFilterTreeMaxHeight
+       in models.ts) once it knows the legend's footprint and the viewport size, so the
+       open panel never grows into the legend above it. This rough guess (header +
+       toggle + gutters ~96px; --lift stacks another panel below) only applies before
+       that first measurement, or when nothing computes one (e.g. a bare component test). */
     max-height: calc(100vh - 2 * var(--gutter) - 96px - var(--lift, 0px));
     margin: 0 -4px;
     padding: 0 4px 2px;
