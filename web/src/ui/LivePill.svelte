@@ -7,7 +7,7 @@
     connecting: "Connecting…",
     open: "Live",
     reconnecting: "Reconnecting…",
-    stopped: "Orion stopped — run orion again and open the new URL",
+    stopped: "Orion stopped — this page reconnects when it restarts",
   };
   const text = $derived(TEXT[status]);
 </script>

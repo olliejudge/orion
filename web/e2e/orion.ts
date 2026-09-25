@@ -1,5 +1,5 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -104,8 +104,18 @@ export async function startOrion(): Promise<Orion> {
       timeout: 120_000,
     });
     const port = await freePort();
+    // Orion persists its auth token under the OS config dir (see
+    // cmd/orion/main.go's tokenPath, derived from os.UserConfigDir()), which
+    // reads $HOME on macOS and $XDG_CONFIG_HOME (falling back to $HOME) on
+    // Linux. Point both at a directory inside this run's temp work dir so
+    // the e2e suite never creates or reads the developer's real
+    // ~/Library/Application Support/orion/token (or $XDG_CONFIG_HOME
+    // equivalent).
+    const fakeHome = path.join(work, "home");
+    mkdirSync(fakeHome, { recursive: true });
     proc = spawn(bin, [demoDir, "--no-open", "--port", String(port)], {
       stdio: ["ignore", "pipe", "inherit"],
+      env: { ...process.env, HOME: fakeHome, XDG_CONFIG_HOME: fakeHome },
     });
     const url = await waitForUrl(proc, 20_000);
     return { url, demoDir, stop };

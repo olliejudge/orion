@@ -13,10 +13,10 @@ describe("LivePill", () => {
     expect(screen.getByTestId("live-pill").style.left).toBe("");
   });
 
-  it("tells the user to rerun Orion once reconnecting has given up hope", () => {
+  it("tells the user the page reconnects once reconnecting has given up hope", () => {
     render(LivePill, { status: "stopped" });
     const pill = screen.getByTestId("live-pill");
-    expect(pill).toHaveTextContent("Orion stopped — run orion again and open the new URL");
+    expect(pill).toHaveTextContent("Orion stopped — this page reconnects when it restarts");
     expect(pill.dataset.status).toBe("stopped");
   });
 });

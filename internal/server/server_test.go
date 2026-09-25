@@ -183,8 +183,8 @@ func TestTokenQuerySetsCookieAndRedirects(t *testing.T) {
 			c = ck
 		}
 	}
-	if c == nil || c.Value != h.token || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode || c.Path != "/" {
-		t.Fatalf("cookie = %+v, want orion_t_PORT=<token>; HttpOnly; SameSite=Strict; Path=/", c)
+	if c == nil || c.Value != h.token || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode || c.Path != "/" || c.MaxAge != cookieMaxAge {
+		t.Fatalf("cookie = %+v, want orion_t_PORT=<token>; HttpOnly; SameSite=Strict; Path=/; Max-Age=%d", c, cookieMaxAge)
 	}
 }
 

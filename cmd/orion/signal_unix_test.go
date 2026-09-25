@@ -20,17 +20,6 @@ import (
 	"github.com/olliejudge/orion/internal/model"
 )
 
-// runMainEnv makes the test binary act as orion itself (see TestMain), so a
-// test can run the real CLI as a child process and send it real signals.
-const runMainEnv = "ORION_TEST_RUN_MAIN"
-
-func TestMain(m *testing.M) {
-	if os.Getenv(runMainEnv) == "1" {
-		main() // os.Args[1:] are orion's arguments
-	}
-	os.Exit(m.Run())
-}
-
 // TestMainExitsZeroOnSIGINTWithBrowserTab runs orion as a real process with
 // default flags (so it spawns the platform's browser opener, here a stub on
 // PATH), connects a WebSocket client like the opened tab, then sends the
@@ -47,7 +36,11 @@ func TestMainExitsZeroOnSIGINTWithBrowserTab(t *testing.T) {
 	}
 
 	cmd := exec.Command(os.Args[0], "--port", "0", r.Path())
-	cmd.Env = append(os.Environ(), runMainEnv+"=1", "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// A temp HOME keeps the subprocess's saved token (os.UserConfigDir) out
+	// of the user's real config dir.
+	home := t.TempDir()
+	cmd.Env = append(os.Environ(), runMainEnv+"=1", "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"HOME="+home, "XDG_CONFIG_HOME="+filepath.Join(home, ".config"))
 	out, errOut := &syncBuffer{}, &syncBuffer{}
 	cmd.Stdout, cmd.Stderr = out, errOut
 	if err := cmd.Start(); err != nil {

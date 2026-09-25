@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { connect, type ConnectionStatus } from "../connection";
+  import { servedBuildChanged } from "../build";
+  import { connect, repoIdentity, type ConnectionStatus } from "../connection";
   import { computeFrame } from "../layout/frame";
   import { Linger } from "../layout/linger";
   import type { Circle } from "../layout/pack";
   import { nearestShown } from "../layout/shown";
-  import type { WorktreeId } from "../protocol";
+  import type { Snapshot, WorktreeId } from "../protocol";
   import { labelNames } from "../render/geometry";
   import { MapRenderer } from "../render/MapRenderer";
   import { SHIMMER_MS } from "../render/scene";
@@ -157,8 +158,33 @@
     const tick = setInterval(() => (now = Date.now()), 5000);
     const onResize = (): void => queue.request(NO_CHANGE);
     let stop = (): void => {};
+    // The repo this page has shown since it loaded, so a reconnect that
+    // lands on a different repo (orion restarted serving a different repo
+    // on this port) can be told apart from one that lands back on the same
+    // repo. Set from the first snapshot of this page load; never reloads on it.
+    let shownRepo: string | null = null;
     const start = (): void => {
-      if (!disposed) stop = connect(store, { onStatus: (s) => (status = s) });
+      if (!disposed)
+        stop = connect(store, {
+          onStatus: (s) => (status = s),
+          // Orion may have restarted on a newer build; if the served bundle
+          // changed, reload so we pick up the new UI instead of running stale JS.
+          onReconnect: () => {
+            void servedBuildChanged(document).then((changed) => {
+              if (changed) location.reload();
+            });
+          },
+          // A restarted orion may now be serving a different repo on this
+          // port. One token now covers every orion instance, so this tab
+          // would otherwise silently switch repos with stale navigation
+          // state. Reload before the snapshot is applied, so the page
+          // starts clean instead of flashing the other repo's map.
+          onSnapshot: (s: Snapshot) => {
+            const id = repoIdentity(s);
+            if (shownRepo === null) shownRepo = id;
+            else if (id !== shownRepo) location.reload();
+          },
+        });
     };
 
     r.init().then(
