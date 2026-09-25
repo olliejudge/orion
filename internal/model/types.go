@@ -36,19 +36,26 @@ const (
 	Committed   Stage = "committed"
 )
 
-// ChangeEntry is one path in a worktree's overlay.
+// ChangeEntry is one path in a worktree's overlay. Touched is unix ms, 0
+// meaning unknown, derived per Stage and Kind: uncommitted and not deleted →
+// the file's mtime; uncommitted and deleted → when the deletion was first
+// observed (stable across recomputes, not the removal's own git history,
+// since it has none); committed → the committer time of the latest commit on
+// the worktree's branch (since its merge-base with base) that touched Path.
 type ChangeEntry struct {
-	Path  string `json:"path"`
-	Kind  Kind   `json:"kind"`
-	From  string `json:"from,omitempty"`
-	Stage Stage  `json:"stage"`
-	Size  int64  `json:"size"`
+	Path    string `json:"path"`
+	Kind    Kind   `json:"kind"`
+	From    string `json:"from,omitempty"`
+	Stage   Stage  `json:"stage"`
+	Size    int64  `json:"size"`
+	Touched int64  `json:"touched,omitempty"`
 }
 
 // File is one base-tree file.
 type File struct {
-	Path string `json:"path"`
-	Size int64  `json:"size"`
+	Path    string `json:"path"`
+	Size    int64  `json:"size"`
+	Touched int64  `json:"touched,omitempty"` // unix ms committer time of the latest commit on base that touched Path; 0 = unknown.
 }
 
 // Worktree is one git worktree as sent to clients.
@@ -75,7 +82,7 @@ type RepoInfo struct {
 type State struct {
 	Repo      RepoInfo
 	Worktrees []Worktree                            // sorted: main first, then by Path
-	Tree      map[string]int64                      // base tree path → size
+	Tree      map[string]File                       // base tree path → File
 	Overlays  map[WorktreeID]map[string]ChangeEntry // absent/empty map = no changes
 }
 
