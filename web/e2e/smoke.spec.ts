@@ -190,11 +190,13 @@ test("loads via the tokenised URL and shows the chrome", async ({ page, request 
 
 test("the map canvas draws the repo", async ({ page }) => {
   await openOrion(page);
-  // Night: pure black background and folder outlines at most ~25 per channel;
-  // even the faintest (oldest) unchanged file is ~33, so anything > 30 is a bubble.
+  // Night: pure black background and folder outlines at most ~25 per channel,
+  // so anything > 30 is a bubble: every changed file, and unchanged ones
+  // committed within about the last year (the oldest fade to ~22, below it;
+  // without server times, all unchanged files take that oldest tone).
   await page.keyboard.press("n");
   await expect.poll(() => theme(page)).toBe("night");
-  await expectLit(page, "night", 30, 0.01);
+  await expectLit(page, "night", 30, 0.005);
   // Vision: the background stays at or below 100 per channel; changed files,
   // filled in their worktree colours, are brighter.
   await page.keyboard.press("n");

@@ -39,8 +39,8 @@ const CX = SWATCH_W / 2;
 const KEY_NOW = Date.UTC(2026, 0, 1);
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
-/** Ages along the age strip: now, an hour, a day, a week, three months (style.ts AGE_STOPS). */
-export const AGE_SAMPLES_MS = [0, HOUR, DAY, 7 * DAY, 90 * DAY] as const;
+/** Ages along the age strip: now, a day, a week, a month, half a year, a year (style.ts AGE_STOPS). */
+export const AGE_SAMPLES_MS = [0, DAY, 7 * DAY, 30 * DAY, 180 * DAY, 365 * DAY] as const;
 
 /** The main worktree ("you", always blue) stands in for any worktree. */
 const MAIN: Worktree = { id: "key", path: "", label: "main", head: "", isMain: true, locked: false, colorIndex: 0 };
@@ -73,8 +73,8 @@ export function keyEntries(theme: Theme): KeyEntry[] {
       id: "unchanged",
       label: "Unchanged file",
       hint: "A file no worktree has changed: a quiet grey disc. Bubble size is the file's size.",
-      // Two sizes so size reads; both last committed a day ago.
-      marks: [mark(sample(DAY), theme, 3.5, CX - 6.5), mark(sample(DAY), theme, R + 0.5, CX + 3.5)],
+      // Two sizes so size reads; both last committed a week ago.
+      marks: [mark(sample(7 * DAY), theme, 3.5, CX - 6.5), mark(sample(7 * DAY), theme, R + 0.5, CX + 3.5)],
     },
     {
       id: "edited",
@@ -109,10 +109,10 @@ export function keyEntries(theme: Theme): KeyEntry[] {
     },
     {
       id: "age",
-      label: "Now → months ago",
-      hint: "Brightness is how recently a file was touched: brightest now, dimmer after an hour, a day and a week, faintest after a few months. Changed files always stay brighter than unchanged ones.",
+      label: "Now → a year ago",
+      hint: "Brightness is how recently a file was touched (unchanged files: its last commit): brightest within the hour, then dimmer after a day, a week, a month and half a year, faintest after a year. Changed files stay brighter than unchanged ones of the same age.",
       // Unchanged files, last committed at each sample age, left to right.
-      marks: AGE_SAMPLES_MS.map((age, i) => mark(sample(age), theme, 2.4, step * (i + 0.5))),
+      marks: AGE_SAMPLES_MS.map((age, i) => mark(sample(age), theme, 2.2, step * (i + 0.5))),
     },
   ];
 }

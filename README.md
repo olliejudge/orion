@@ -15,7 +15,7 @@ The page has its own collapsible key in the bottom-left corner. It shows these m
 - **Circles are folders**, nested as they are on disk, with the folder's name set along the top of its circle.
 - **Bubbles are files.** A bubble's area grows with the file's size in bytes.
 - **Colour is the worktree.** Unchanged files are quiet grey discs. Whatever a worktree touches is filled with that worktree's colour.
-- **Brightness is recency.** Bubbles are brightest when just touched and fade over an hour, a day and a week, to faint after a few months. Unchanged files fade by their last commit, so busy parts of the repo stand out from cold ones; changed files always stay brighter than unchanged ones. Hover a file for the exact time.
+- **Brightness is recency.** Bubbles are brightest when touched within the hour and step down at a day, a week, a month and half a year, to faint after a year. Unchanged files fade by their last commit, so busy parts of the repo stand out from cold ones; changed files stay brighter than unchanged ones of the same age. Hover a file for the exact time.
 
 Every change is shown relative to the **base branch**, and goes through three stages:
 

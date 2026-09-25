@@ -130,16 +130,17 @@ type Snapshot = {
   type: "snapshot"; seq: number;
   repo: { name: string; base: string; baseSha: string };
   worktrees: Worktree[];
-  tree: { path: string; size: number; touched?: number }[]; // base tree; touched = last commit, unix ms
+  tree: File[];                                      // base tree
   overlays: Record<WorktreeId, ChangeEntry[]>;
   activity: Activity[];                             // most recent ≤ 200
 };
+type File = { path: string; size: number; touched?: number };  // touched: unix ms, 0/absent = unknown
 type Worktree = { id: string; path: string; label: string; branch?: string; head: string;
                   isMain: boolean; locked: boolean; colorIndex: number };
 type Patch = {
   type: "patch"; seq: number;
   worktrees?: Worktree[];                            // full list, present only when it changed
-  base?: { sha: string; upsert: { path: string; size: number; touched?: number }[]; remove: string[] };
+  base?: { sha: string; upsert: File[]; remove: string[] };
   overlays?: Record<WorktreeId, { upsert: ChangeEntry[]; remove: string[] }>;
   activity?: Activity[];
 };
@@ -148,7 +149,7 @@ type Activity = { ts: number; worktree: WorktreeId;
                   path?: string; from?: string; sha?: string; subject?: string; files?: number };
 ```
 
-`ChangeEntry` (an overlay entry: `path`, `kind`, `from?`, `stage`, `size`) also carries `touched?: number`, when the change was last touched (unix ms). An absent or zero `touched` means unknown: the client treats a change with no time as just now, and an unchanged file with none as old.
+`ChangeEntry` and `File` carry `touched` (§2). An absent or zero `touched` means unknown: the client treats a change with no time as just now, and an unchanged file with none as old.
 
 Client → server: `{ "type": "resync" }`. The client sends this if it sees a gap in `seq`; the server replies with a fresh snapshot. Every new connection receives a snapshot first.
 
@@ -186,12 +187,18 @@ Vite, TypeScript, **Svelte 5** for panels and chrome, **PixiJS v8** (WebGL) for 
     | Merged into base (leaves the overlay) | Back to neutral, freshly committed so bright | A one-off shimmer (about 600 ms) | None |
 
     Glyphs scale with the bubble's on-screen radius (they stop growing at 24 px) and are hidden below 5 px, where the fill alone carries the state. The ink of a **+** is white or near-black, whichever keeps at least 3:1 contrast against the fill at every age; a **×** is drawn in the (lightened) worktree colour.
-  - **When is brightness.** Every bubble's alpha encodes how long ago it was last touched (its newest change, else the base file's last commit), on a log scale: full within a minute, then 75% of the way down the range at an hour, 50% at a day, 25% at a week, and the floor from three months on. Changed files fade within a higher band than unchanged ones, so they stay clearly brighter at any age; unchanged files get texture from their last commit, so active areas of the repo stand out from cold ones. Collapsed folders take the newest time below them. The renderer re-ages bubbles every 30 s (the frame loop stops when idle).
+  - **When is brightness.** Every bubble's alpha encodes how long ago it was last touched (its newest change, else the base file's last commit), on a log scale stretched over the hours-to-weeks band where agent work lives. Recency (1 = just touched, 0 = old) is interpolated on log(age) between these stops:
 
-    | Theme | Unchanged (oldest → now) | Changed (oldest → now) | Glow |
-    |---|---|---|---|
-    | Vision | `#b4b8d0` at 16% → 50% | worktree colour at 70% → 100% | 55% |
-    | Night | `#a4a4b2` at 20% → 50% | worktree colour at 66% → 100% | 45% |
+    | Age | ≤ 1 hour | 1 day | 1 week | 30 days | 180 days | ≥ 1 year |
+    |---|---|---|---|---|---|---|
+    | Recency | 1 | 0.8 | 0.6 | 0.4 | 0.2 | 0 |
+
+    Each theme maps recency onto an alpha range. Unchanged files get a wide range (and warm slightly, staying neutral, as they get fresher), so active areas of the repo stand out from cold ones at a glance; changed files fade within a higher band, at least 0.2 brighter than an unchanged file of the same age. Collapsed folders take the newest time below them. The renderer re-ages bubbles every 30 s (the frame loop stops when idle).
+
+    | Theme | Unchanged (oldest → now) | Changed (oldest → now) | Glow | Collapsed folder, unchanged / changed |
+    |---|---|---|---|---|
+    | Vision | `#a8adc6` at 11% → `#e0dcd2` at 78% | worktree colour at 62% → 100% | 55% | white 5% → 34% / worktree colour 30% → 60% |
+    | Night | `#9ea1b4` at 12% → `#d8d4ca` at 76% | worktree colour at 60% → 100% | 45% | white 5% → 30% / worktree colour 25% → 50% |
 
   - **Collapsed folders** are a disc in the colour of the worktree changing something below them (a faint neutral disc when nothing is), as bright as the newest touch below them, with one ring arc per worktree, the glow of live work, and their file count.
 - **Worktree colours:** a 10-colour palette built from Apple system colours (blue, orange, green, pink, purple, teal, yellow, indigo, red, mint). The main worktree is always blue ("you"). Other worktrees get colours in order of first activity during the session. Colours are reused only when more than 10 worktrees are active at once, and hover always shows the worktree's label.

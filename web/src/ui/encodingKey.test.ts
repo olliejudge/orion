@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hexToNumber, worktreeColor } from "../colors";
-import { TONES, glyphSize } from "../render/style";
+import { TONES, glyphSize, idleTint } from "../render/style";
 import { AGE_SAMPLES_MS, KEY_OPEN_KEY, SWATCH_W, hexOf, keyEntries, loadKeyOpen, saveKeyOpen, type KeyEntry, type KeyEntryId } from "./encodingKey";
 
 const MAIN = worktreeColor(0);
@@ -37,7 +37,7 @@ describe("keyEntries", () => {
       const [small, big] = entry(theme, "unchanged").marks;
       expect(small!.r).toBeLessThan(big!.r);
       for (const m of [small!, big!]) {
-        expect(m.look.body!.tint).toBe(TONES[theme].idle);
+        expect(m.look.body!.tint).toBe(idleTint(theme, 0.6)); // a week old
         expect(m.look).toMatchObject({ halo: null, glyph: null, rings: { arcs: [] } });
       }
     }
@@ -80,11 +80,11 @@ describe("keyEntries", () => {
   it("marks a merge as a freshly committed unchanged file with the shimmer", () => {
     const m = entry("vision", "merged").marks;
     expect(m.map((x) => x.shimmer)).toEqual([true]);
-    expect(m[0]!.look.body).toEqual({ tint: TONES.vision.idle, alpha: TONES.vision.idleAlpha[1] });
+    expect(m[0]!.look.body).toEqual({ tint: idleTint("vision", 1), alpha: TONES.vision.idleAlpha[1] });
     expect(keyEntries("vision").flatMap((e) => e.marks).filter((x) => x.shimmer)).toHaveLength(1);
   });
 
-  it("draws the age strip as the map's own tones, fading left to right from now to months ago", () => {
+  it("draws the age strip as the map's own tones, fading left to right from now to a year ago", () => {
     for (const theme of ["vision", "night"] as const) {
       const marks = entry(theme, "age").marks;
       expect(marks).toHaveLength(AGE_SAMPLES_MS.length);

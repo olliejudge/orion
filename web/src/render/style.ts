@@ -31,25 +31,26 @@ export const DELETED_RIM_W_PX = 1.25;
 
 // ---- when: age → brightness ---------------------------------------------
 
-const MINUTE = 60_000;
-const HOUR = 60 * MINUTE;
+const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 const WEEK = 7 * DAY;
 
 /**
  * Recency (1 = just touched, 0 = old) at each age, interpolated on log(age)
- * between stops: it drops a quarter by an hour, a day, a week, and reaches
- * the floor after about three months.
+ * between stops. Agent-driven repos mostly live between hours and weeks, so
+ * the curve spends its range there: full for the last hour, then a fifth
+ * down at a day, a week, a month and half a year, and the floor at a year.
  */
 export const AGE_STOPS: readonly (readonly [ageMs: number, recency: number])[] = [
-  [MINUTE, 1],
-  [HOUR, 0.75],
-  [DAY, 0.5],
-  [WEEK, 0.25],
-  [90 * DAY, 0],
+  [HOUR, 1],
+  [DAY, 0.8],
+  [WEEK, 0.6],
+  [30 * DAY, 0.4],
+  [180 * DAY, 0.2],
+  [365 * DAY, 0],
 ];
 
-/** 1 for anything touched in the last minute (or in the future: clock skew), down to 0 at three months or more; Infinity (unknown) is 0. */
+/** 1 for anything touched in the last hour (or in the future: clock skew), down to 0 at a year or more; Infinity (unknown) is 0. */
 export function recency(ageMs: number): number {
   if (Number.isNaN(ageMs)) return 0;
   if (ageMs <= AGE_STOPS[0]![0]) return 1;
@@ -78,10 +79,10 @@ export function ageOf(vis: NodeVisual, now: number): number {
 export interface Tone {
   /** The map's background (darkest stop of Vision's gradient; Night's black): glyph ink is chosen against it. */
   bg: string;
-  /** Unchanged files: one neutral colour, brighter the more recently committed. */
-  idle: number;
+  /** Unchanged files: a neutral that warms slightly from [oldest] to [just touched], and brightens a lot. */
+  idle: readonly [number, number];
   idleAlpha: readonly [number, number];
-  /** Changed files' fill (and their marks): always above idleAlpha's top. */
+  /** Changed files' fill (and their marks): well above idleAlpha at the same age. */
   changedAlpha: readonly [number, number];
   halo: number;
   /** A collapsed folder's disc: neutral when nothing below it is changed, else its worktree's colour. */
@@ -92,26 +93,39 @@ export interface Tone {
 export const TONES: Readonly<Record<Theme, Tone>> = {
   vision: {
     bg: "#0c0c14",
-    idle: 0xb4b8d0,
-    idleAlpha: [0.16, 0.5],
-    changedAlpha: [0.7, 1],
+    idle: [0xa8adc6, 0xe0dcd2],
+    idleAlpha: [0.11, 0.78],
+    changedAlpha: [0.62, 1],
     halo: 0.55,
-    aggIdleAlpha: [0.05, 0.14],
-    aggChangedAlpha: [0.3, 0.55],
+    aggIdleAlpha: [0.05, 0.34],
+    aggChangedAlpha: [0.3, 0.6],
   },
   night: {
     bg: "#000000",
-    idle: 0xa4a4b2,
-    idleAlpha: [0.2, 0.5],
-    changedAlpha: [0.66, 1],
+    idle: [0x9ea1b4, 0xd8d4ca],
+    idleAlpha: [0.12, 0.76],
+    changedAlpha: [0.6, 1],
     halo: 0.45,
-    aggIdleAlpha: [0.04, 0.12],
-    aggChangedAlpha: [0.25, 0.45],
+    aggIdleAlpha: [0.05, 0.3],
+    aggChangedAlpha: [0.25, 0.5],
   },
 };
 
 function at(range: readonly [number, number], r: number): number {
   return range[0] + (range[1] - range[0]) * r;
+}
+
+/** Channel-wise mix of two 0xrrggbb colours, `r` of the way from `range[0]` to `range[1]`. */
+function mixColor(range: readonly [number, number], r: number): number {
+  const [a, b] = range;
+  let out = 0;
+  for (const shift of [16, 8, 0]) out |= Math.round(at([(a >> shift) & 255, (b >> shift) & 255], r)) << shift;
+  return out;
+}
+
+/** The unchanged-file disc colour at recency `r` (0..1). */
+export function idleTint(theme: Theme, r: number): number {
+  return mixColor(TONES[theme].idle, r);
 }
 
 // ---- what: marks -----------------------------------------------------------
@@ -250,7 +264,7 @@ export function fileLook(vis: NodeVisual, theme: Theme, isolated: WorktreeId | n
   const r = recency(ageOf(vis, now));
   const lead = leadTouch(vis, isolated);
   if (vis.state === "unchanged" || !lead) {
-    return { body: { tint: tone.idle, alpha: at(tone.idleAlpha, r) }, halo: null, outline: null, glyph: null, rings: fileRings(vis, isolated), marks: 1 };
+    return { body: { tint: idleTint(theme, r), alpha: at(tone.idleAlpha, r) }, halo: null, outline: null, glyph: null, rings: fileRings(vis, isolated), marks: 1 };
   }
   const fade = at(tone.changedAlpha, r);
   const a = touchAlpha(lead, isolated);

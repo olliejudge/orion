@@ -2,7 +2,7 @@ import { render, screen, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { worktreeColor } from "../colors";
-import { TONES } from "../render/style";
+import { idleTint } from "../render/style";
 import { KEY_OPEN_KEY, countSwatch, hexOf } from "./encodingKey";
 import MapKey from "./MapKey.svelte";
 
@@ -27,7 +27,7 @@ const LABELS = [
   "Committed on branch",
   "Deleted",
   "Merged into base",
-  "Now → months ago",
+  "Now → a year ago",
   "Files in a small folder",
 ];
 
@@ -51,7 +51,7 @@ describe("MapKey", () => {
     const vision = screen.getByRole("region", { name: "Map key" });
     const row = (el: HTMLElement, id: string): Element => el.querySelector(`[data-entry="${id}"]`)!;
     // Flat discs: grey when unchanged, the worktree's colour when changed.
-    const idle = hexOf(TONES.vision.idle);
+    const idle = hexOf(idleTint("vision", 0.6));
     expect([...row(vision, "unchanged").querySelectorAll(".body")].map((b) => b.getAttribute("fill"))).toEqual([idle, idle]);
     expect(row(vision, "edited").querySelector(".body")).toHaveAttribute("fill", worktreeColor(0));
     expect(row(vision, "edited").querySelector(".ring")).toBeNull();
@@ -62,10 +62,10 @@ describe("MapKey", () => {
     expect(row(vision, "deleted").querySelector(".outline")).not.toBeNull();
     expect(row(vision, "deleted").querySelector(".glyph")).toHaveAttribute("data-shape", "cross");
     expect(row(vision, "merged").querySelector(".flash")).not.toBeNull();
-    // The age strip: five discs, fading from now to months ago.
+    // The age strip: six discs, fading from now to a year ago.
     const ages = [...row(vision, "age").querySelectorAll(".body")].map((b) => Number(b.getAttribute("opacity")));
-    expect(ages).toHaveLength(5);
-    expect(ages[0]).toBeGreaterThan(ages[4]!);
+    expect(ages).toHaveLength(6);
+    expect(ages[0]).toBeGreaterThan(ages[5]! * 4);
     // A collapsed folder: a faint disc with its file count, as the map draws it.
     expect(row(vision, "collapsed").querySelector(".disc")).toHaveAttribute("fill-opacity", String(countSwatch("vision").fill.alpha));
     expect(row(vision, "collapsed").querySelector(".count")).toHaveTextContent("12");
@@ -76,7 +76,7 @@ describe("MapKey", () => {
     expect(row(night, "collapsed").querySelector(".disc")).toHaveAttribute("fill-opacity", String(countSwatch("night").fill.alpha));
     // Night: the same system in its own tones.
     const nightIdle = row(night, "unchanged").querySelectorAll(".body");
-    expect([...nightIdle].map((b) => b.getAttribute("fill"))).toEqual([hexOf(TONES.night.idle), hexOf(TONES.night.idle)]);
+    expect([...nightIdle].map((b) => b.getAttribute("fill"))).toEqual([hexOf(idleTint("night", 0.6)), hexOf(idleTint("night", 0.6))]);
   });
 
   it("collapses and expands from its button (mouse or keyboard) and remembers the choice", async () => {

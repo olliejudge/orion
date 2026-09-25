@@ -56,7 +56,7 @@ const LABEL_GAP_PAD_PX = 4; // outline clearance either side of a rim label
 const HALO_PX = 5; // halo peak this far outside the bubble, on screen
 const SPLIT_GAP_PX = 3;
 const LOGK_EPS = 1e-4; // camera scale settles within 0.01%
-/** How often bubbles re-age (their brightness is how long ago they were touched); the finest step, an hour's quarter, is far slower. */
+/** How often bubbles re-age (their brightness is how long ago they were touched); the curve moves far slower than this. */
 export const AGE_TICK_MS = 30_000;
 
 /** Settle epsilon for world-space springs at zoom k: half a screen pixel, or SETTLE_EPS if k is unusable. */

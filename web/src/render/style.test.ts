@@ -18,6 +18,7 @@ import {
   aggregateLook,
   fileLook,
   glyphInk,
+  idleTint,
   glyphSize,
   recency,
   touchSig,
@@ -56,25 +57,33 @@ function look(entries: Record<string, ChangeEntry[]>, path: string, theme: Theme
 }
 
 describe("recency (age → brightness)", () => {
-  it("hits each stop: now, an hour, a day, a week, three months", () => {
-    expect(AGE_STOPS.map(([age]) => recency(age))).toEqual([1, 0.75, 0.5, 0.25, 0]);
+  it("hits each stop: an hour, a day, a week, a month, half a year, a year", () => {
+    expect(AGE_STOPS.map(([age]) => recency(age))).toEqual([1, 0.8, 0.6, 0.4, 0.2, 0]);
+    expect(AGE_STOPS.map(([age]) => age)).toEqual([HOUR, DAY, 7 * DAY, 30 * DAY, 180 * DAY, 365 * DAY]);
     expect(recency(0)).toBe(1);
-    expect(recency(30_000)).toBe(1);
+    expect(recency(59 * MIN)).toBe(1);
+  });
+
+  it("separates the hours-to-weeks band where agent work lives", () => {
+    // Each step (a day, three days, a week, two weeks, a month) is clearly apart.
+    const r = [DAY, 3 * DAY, 7 * DAY, 14 * DAY, 30 * DAY].map(recency);
+    for (let i = 1; i < r.length; i++) expect(r[i - 1]! - r[i]!).toBeGreaterThan(0.05);
   });
 
   it("falls monotonically on a log scale between the stops", () => {
     let prev = 1;
-    for (let age = MIN; age < 200 * DAY; age *= 1.3) {
+    for (let age = MIN; age < 400 * DAY; age *= 1.3) {
       const r = recency(age);
       expect(r).toBeLessThanOrEqual(prev);
       prev = r;
     }
     // Log-interpolated: the geometric midpoint of a span sits halfway between its stops.
-    expect(recency(Math.sqrt(HOUR * DAY))).toBeCloseTo(0.625, 6);
+    expect(recency(Math.sqrt(HOUR * DAY))).toBeCloseTo(0.9, 6);
   });
 
   it("floors at 0 for anything older, unknown (Infinity) or NaN; clock skew (the future) counts as now", () => {
     expect(recency(365 * DAY)).toBe(0);
+    expect(recency(3 * 365 * DAY)).toBe(0);
     expect(recency(Infinity)).toBe(0);
     expect(recency(NaN)).toBe(0);
     expect(recency(-5 * MIN)).toBe(1);
@@ -94,22 +103,25 @@ describe("ageOf", () => {
 });
 
 describe("tones", () => {
-  it.each(THEMES)("%s: changed files are brighter than unchanged ones at any age", (theme) => {
-    const t = TONES[theme];
-    expect(t.changedAlpha[0]).toBeGreaterThan(t.idleAlpha[1] + 0.1);
-    for (const age of [0, HOUR, DAY, 30 * DAY, Infinity]) {
+  it.each(THEMES)("%s: changed files are clearly brighter than unchanged ones of the same age", (theme) => {
+    for (const age of [0, HOUR, DAY, 7 * DAY, 30 * DAY, 180 * DAY, Infinity]) {
       const base = { "src/a.ts": NOW - age };
       const changed = look({ w1: [e("src/a.ts", "modified", "committed", undefined, NOW - age)] }, "src/a.ts", theme, null, base);
       const idle = look({}, "src/a.ts", theme, null, base);
-      expect(changed.body!.alpha, `age ${age}`).toBeGreaterThan(idle.body!.alpha);
+      expect(changed.body!.alpha - idle.body!.alpha, `age ${age}`).toBeGreaterThan(0.2);
     }
   });
 
-  it.each(THEMES)("%s: unchanged files are a quiet neutral, brighter when recently committed", (theme) => {
-    expect(chroma(`#${TONES[theme].idle.toString(16)}`)).toBeLessThan(15); // Apple colours are 70–90
-    const fresh = look({}, "src/a.ts", theme, null, { "src/a.ts": NOW - 5 * MIN }).body!.alpha;
-    const stale = look({}, "src/a.ts", theme, null, { "src/a.ts": NOW - 60 * DAY }).body!.alpha;
-    expect(fresh).toBeGreaterThan(stale * 2);
+  it.each(THEMES)("%s: unchanged files stay neutral (cool when old, slightly warm when fresh)", (theme) => {
+    for (const r of [0, 0.5, 1]) expect(chroma(`#${idleTint(theme, r).toString(16)}`)).toBeLessThan(15); // Apple colours are 70–90
+  });
+
+  it.each(THEMES)("%s: unchanged files span a wide brightness range, readable step to step", (theme) => {
+    const alpha = (age: number) => look({}, "src/a.ts", theme, null, { "src/a.ts": NOW - age }).body!.alpha;
+    expect(alpha(5 * MIN)).toBeGreaterThan(alpha(2 * 365 * DAY) * 5);
+    // A day, a week, a month and half a year each read as their own tone.
+    const steps = [DAY, 7 * DAY, 30 * DAY, 180 * DAY, 365 * DAY].map(alpha);
+    for (let i = 1; i < steps.length; i++) expect(steps[i - 1]! - steps[i]!).toBeGreaterThan(0.1);
   });
 });
 
@@ -117,7 +129,7 @@ describe("fileLook (spec §6 rows)", () => {
   it("unchanged: a flat neutral disc, as bright as its last commit is recent; nothing else", () => {
     const t = TONES.vision;
     expect(look({}, "src/a.ts", "vision", null, { "src/a.ts": NOW })).toEqual({
-      body: { tint: t.idle, alpha: t.idleAlpha[1] },
+      body: { tint: idleTint("vision", 1), alpha: t.idleAlpha[1] },
       halo: null,
       outline: null,
       glyph: null,
@@ -125,7 +137,7 @@ describe("fileLook (spec §6 rows)", () => {
       marks: 1,
     });
     // No known time: the oldest tone.
-    expect(look({}, "src/a.ts").body).toEqual({ tint: t.idle, alpha: t.idleAlpha[0] });
+    expect(look({}, "src/a.ts").body).toEqual({ tint: idleTint("vision", 0), alpha: t.idleAlpha[0] });
   });
 
   it("edited, uncommitted: a flat fill in the worktree colour with a live glow, no glyph or ring", () => {
@@ -192,18 +204,18 @@ describe("fileLook (spec §6 rows)", () => {
   });
 
   it("merged into base (left the overlay): back to the unchanged disc, now freshly committed", () => {
-    expect(look({}, "src/a.ts", "vision", null, { "src/a.ts": NOW }).body).toEqual({ tint: TONES.vision.idle, alpha: TONES.vision.idleAlpha[1] });
+    expect(look({}, "src/a.ts", "vision", null, { "src/a.ts": NOW }).body).toEqual({ tint: idleTint("vision", 1), alpha: TONES.vision.idleAlpha[1] });
   });
 
   it("fades a change's fill, glow and marks with age, but never its glyph", () => {
-    const old = look({ w1: [e("src/new.ts", "added", "uncommitted", undefined, NOW - 120 * DAY)] }, "src/new.ts");
+    const old = look({ w1: [e("src/new.ts", "added", "uncommitted", undefined, NOW - 400 * DAY)] }, "src/new.ts");
     const floor = TONES.vision.changedAlpha[0];
     expect(old.body!.alpha).toBe(floor);
     expect(old.marks).toBe(floor);
     expect(old.halo!.alpha).toBeCloseTo(TONES.vision.halo * floor, 9);
     expect(old.glyph!.alpha).toBe(1);
-    const hourOld = look({ w1: [e("src/a.ts", "modified", "committed", undefined, NOW - HOUR)] }, "src/a.ts");
-    expect(hourOld.body!.alpha).toBeCloseTo(floor + (1 - floor) * 0.75, 9);
+    const dayOld = look({ w1: [e("src/a.ts", "modified", "committed", undefined, NOW - DAY)] }, "src/a.ts");
+    expect(dayOld.body!.alpha).toBeCloseTo(floor + (1 - floor) * 0.8, 9);
   });
 
   it("isolation dims other worktrees' fill, glyph and rings", () => {
@@ -222,7 +234,7 @@ describe("fileLook (spec §6 rows)", () => {
   it("draws Night with the same system, tuned darker", () => {
     const l = look({ w1: [e("src/new.ts", "added", "uncommitted")] }, "src/new.ts", "night");
     expect(l).toMatchObject({ body: { tint: W1, alpha: 1 }, glyph: { shape: "plus" } });
-    expect(look({}, "src/a.ts", "night").body).toEqual({ tint: TONES.night.idle, alpha: TONES.night.idleAlpha[0] });
+    expect(look({}, "src/a.ts", "night").body).toEqual({ tint: idleTint("night", 0), alpha: TONES.night.idleAlpha[0] });
   });
 });
 
@@ -274,10 +286,13 @@ describe("aggregateLook", () => {
 
   it("is a faint neutral disc when nothing below it is touched, brighter the more recent its newest commit", () => {
     expect(agg({}, "night")).toMatchObject({ fill: { color: 0xffffff, alpha: TONES.night.aggIdleAlpha[0] }, halo: null, rings: { arcs: [] } });
-    const hot = agg({}, "vision", { "vendor/x.js": NOW - 90 * DAY, "vendor/y.js": NOW - MIN });
-    const cold = agg({}, "vision", { "vendor/x.js": NOW - 90 * DAY, "vendor/y.js": NOW - 60 * DAY });
+    const hot = agg({}, "vision", { "vendor/x.js": NOW - 400 * DAY, "vendor/y.js": NOW - MIN });
+    const week = agg({}, "vision", { "vendor/x.js": NOW - 400 * DAY, "vendor/y.js": NOW - 7 * DAY });
+    const cold = agg({}, "vision", { "vendor/x.js": NOW - 400 * DAY, "vendor/y.js": NOW - 200 * DAY });
     expect(hot.fill.alpha).toBe(TONES.vision.aggIdleAlpha[1]);
-    expect(cold.fill.alpha).toBeLessThan(hot.fill.alpha);
+    // On the same stretched curve as files, so a week-old folder sits clearly between a hot and a cold one.
+    expect(hot.fill.alpha - week.fill.alpha).toBeGreaterThan(0.08);
+    expect(week.fill.alpha - cold.fill.alpha).toBeGreaterThan(0.08);
   });
 
   it("dims a changed folder's fill as its newest change ages", () => {
