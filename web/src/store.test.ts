@@ -91,6 +91,53 @@ describe("RepoStore", () => {
     expect(before.overlays.get("w1")!.has("src/new.ts")).toBe(true);
   });
 
+  it("keeps base touch times from the snapshot and up to date through base patches", () => {
+    const store = new RepoStore();
+    store.apply(
+      snapshot({
+        tree: [
+          { path: "README.md", size: 120, touched: 1_000 },
+          { path: "src/app.ts", size: 900, touched: 2_000 },
+          { path: "src/old.ts", size: 5 }, // unknown: no entry
+        ],
+      }),
+    );
+    const before = store.state!;
+    expect([...before.touched]).toEqual([
+      ["README.md", 1_000],
+      ["src/app.ts", 2_000],
+    ]);
+    store.apply(
+      patch(6, {
+        base: {
+          sha: "b2",
+          upsert: [
+            { path: "src/app.ts", size: 950, touched: 3_000 }, // newer commit
+            { path: "src/old.ts", size: 6, touched: 2_500 }, // now known
+            { path: "docs/new.md", size: 7, touched: 0 }, // 0 is unknown
+          ],
+          remove: ["README.md"],
+        },
+      }),
+    );
+    const s = store.state!;
+    expect(Object.fromEntries(s.touched)).toEqual({ "src/app.ts": 3_000, "src/old.ts": 2_500 });
+    expect(before.touched.get("src/app.ts")).toBe(2_000); // copy-on-write
+    // An upsert that drops the time clears the stale one.
+    store.apply(patch(7, { base: { sha: "b3", upsert: [{ path: "src/app.ts", size: 950 }], remove: [] } }));
+    expect(store.state!.touched.has("src/app.ts")).toBe(false);
+    expect(store.state!.touched.get("src/old.ts")).toBe(2_500);
+  });
+
+  it("replaces overlay entries whole, so their touch times follow each upsert", () => {
+    const store = new RepoStore();
+    store.apply(snapshot());
+    store.apply(patch(6, { overlays: { w1: { upsert: [{ path: "src/new.ts", kind: "added", stage: "uncommitted", size: 41, touched: 5_000 }], remove: [] } } }));
+    expect(store.state!.overlays.get("w1")!.get("src/new.ts")!.touched).toBe(5_000);
+    store.apply(patch(7, { overlays: { w1: { upsert: [{ path: "src/new.ts", kind: "added", stage: "committed", size: 41, touched: 6_000 }], remove: [] } } }));
+    expect(store.state!.overlays.get("w1")!.get("src/new.ts")!.touched).toBe(6_000);
+  });
+
   it("drops a worktree's overlay map when it becomes empty", () => {
     const store = new RepoStore();
     store.apply(snapshot());

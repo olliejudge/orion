@@ -45,6 +45,7 @@ function sample(ext: string, change?: { stage: Stage; kind: Kind }): NodeVisual 
     seq: 0,
     worktrees: new Map([[MAIN.id, MAIN]]),
     tree: new Map([[path, 1]]),
+    touched: new Map(),
     overlays: new Map(overlay ? [[MAIN.id, overlay]] : []),
     activity: [],
   };

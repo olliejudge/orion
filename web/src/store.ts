@@ -7,6 +7,8 @@ export interface RepoState {
   seq: number;
   worktrees: Map<WorktreeId, Worktree>;
   tree: Map<string, number>;
+  /** Base files' last commit times (unix ms), for the paths whose time is known. */
+  touched: Map<string, number>;
   overlays: Map<WorktreeId, Map<string, ChangeEntry>>;
   activity: Activity[]; // newest LAST, ≤200
 }
@@ -73,6 +75,7 @@ function fromSnapshot(s: Snapshot): RepoState {
     seq: s.seq,
     worktrees: new Map((s.worktrees ?? []).map((w) => [w.id, w])),
     tree: new Map((s.tree ?? []).map((f) => [f.path, f.size])),
+    touched: new Map((s.tree ?? []).flatMap((f): [string, number][] => (f.touched ? [[f.path, f.touched]] : []))),
     overlays,
     activity: (s.activity ?? []).slice(-ACTIVITY_LIMIT),
   };
@@ -88,15 +91,20 @@ function applyPatch(prev: RepoState, p: Patch): { state: RepoState; merged: stri
   const baseTouched = new Set<string>();
   if (p.base) {
     const tree = new Map(prev.tree);
+    const touched = new Map(prev.touched);
     for (const f of p.base.upsert ?? []) {
       tree.set(f.path, f.size);
+      if (f.touched) touched.set(f.path, f.touched);
+      else touched.delete(f.path);
       baseTouched.add(f.path);
     }
     for (const path of p.base.remove ?? []) {
       tree.delete(path);
+      touched.delete(path);
       baseTouched.add(path);
     }
     next.tree = tree;
+    next.touched = touched;
     next.repo = { ...prev.repo, baseSha: p.base.sha };
   }
 
