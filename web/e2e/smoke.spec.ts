@@ -132,7 +132,7 @@ test("loads via the tokenised URL and shows the chrome", async ({ page, request 
   await expect(page.getByTestId("live-pill")).toContainText("Live");
   const key = page.getByRole("region", { name: "Map key" });
   await expect(key).toBeVisible();
-  await expect(key.getByTestId("map-key-entry")).toHaveCount(6);
+  await expect(key.getByTestId("map-key-entry")).toHaveCount(7);
 });
 
 test("the map canvas draws the repo", async ({ page }) => {

@@ -36,7 +36,7 @@ import {
 } from "./labels";
 import { HALO_RING_FRAC, TextureBank, labelWidth, renderArcLabel, renderStraightLabel } from "./sprites";
 import { SETTLE_EPS, SPRING_OMEGA, isSettled, makeSpring, retarget, snapSpring, stepSpring, type Spring } from "./springs";
-import { aggregateLook, fileLook, touchSig, type AggregateLook, type FileLook, type Rings, type Theme } from "./style";
+import { aggregateLook, countColor, fileLook, touchSig, type AggregateLook, type FileLook, type Rings, type Theme } from "./style";
 
 export type { Theme } from "./style";
 
@@ -613,8 +613,7 @@ export class MapRenderer {
       v.root.addChild(v.count);
     }
     if (v.countN !== files || v.countFont !== font || v.countGen !== this.#styleGen) {
-      const color = this.#theme === "night" ? "rgba(235,235,245,0.5)" : "rgba(235,235,245,0.62)";
-      v.count.texture = f.bank.count(files, font, color, dpr);
+      v.count.texture = f.bank.count(files, font, countColor(this.#theme), dpr);
       v.countN = files;
       v.countFont = font;
       v.countGen = this.#styleGen;

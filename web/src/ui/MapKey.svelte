@@ -1,7 +1,7 @@
 <script lang="ts">
   import { lighten, type ExtColor } from "../colors";
   import type { Theme } from "../render/style";
-  import { SWATCH_H, SWATCH_W, hexOf, keyEntries, loadKeyOpen, saveKeyOpen, type KeyMark } from "./encodingKey";
+  import { SWATCH_H, SWATCH_W, countSwatch, hexOf, keyEntries, loadKeyOpen, saveKeyOpen, type KeyMark } from "./encodingKey";
   import type { Footprint } from "./models";
 
   interface Props {
@@ -22,6 +22,7 @@
   // svelte-ignore state_referenced_locally
   let open = $state(loadKeyOpen(storage, !narrow));
   const entries = $derived(keyEntries(theme));
+  const counted = $derived(countSwatch(theme));
 
   // Mirrors the renderer's halo sprite (sprites.ts HALO_RING_FRAC; MapRenderer
   // HALO_PX), scaled down so a swatch's glow stays inside its row.
@@ -140,6 +141,30 @@
           <span>{e.label}</span>
         </li>
       {/each}
+      <li data-testid="map-key-entry" data-entry="collapsed" title={counted.hint}>
+        <svg class="swatch" width={SWATCH_W} height={SWATCH_H} viewBox={`0 0 ${SWATCH_W} ${SWATCH_H}`} aria-hidden="true">
+          <circle
+            class="disc"
+            cx={SWATCH_W / 2}
+            cy={SWATCH_H / 2}
+            r={counted.r}
+            fill={hexOf(counted.fill.color)}
+            fill-opacity={counted.fill.alpha}
+            stroke={hexOf(counted.outline.color)}
+            stroke-opacity={counted.outline.alpha}
+            stroke-width="1" />
+          <text
+            class="count"
+            x={SWATCH_W / 2}
+            y={SWATCH_H / 2}
+            fill={counted.color}
+            font-size={counted.font}
+            font-weight="500"
+            text-anchor="middle"
+            dominant-baseline="central">{counted.count}</text>
+        </svg>
+        <span>{counted.label}</span>
+      </li>
     </ul>
     <p class="note">Circles are folders. Colours are worktrees; a split ring means several.</p>
     <p class="note">Click: in one level · Double-click: straight in · Scroll: zoom · Esc: out · 0: home</p>

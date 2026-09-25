@@ -18,7 +18,15 @@ function storage(initial: Record<string, string> = {}): Storage {
   };
 }
 
-const LABELS = ["Unchanged file", "Edited, uncommitted", "New, uncommitted", "Committed on branch", "Deleted", "Merged into base"];
+const LABELS = [
+  "Unchanged file",
+  "Edited, uncommitted",
+  "New, uncommitted",
+  "Committed on branch",
+  "Deleted",
+  "Merged into base",
+  "Files in a small folder",
+];
 
 describe("MapKey", () => {
   it("starts open on a first visit, listing every mark with a swatch and a fuller tooltip", () => {
@@ -26,7 +34,7 @@ describe("MapKey", () => {
     const key = screen.getByRole("region", { name: "Map key" });
     expect(within(key).getByRole("button", { name: "Key" })).toHaveAttribute("aria-expanded", "true");
     const rows = within(key).getAllByTestId("map-key-entry");
-    expect(rows.map((r) => r.textContent?.trim())).toEqual(LABELS);
+    expect(rows.map((r) => r.querySelector("span")?.textContent?.trim())).toEqual(LABELS);
     for (const r of rows) {
       expect(r.querySelector("svg.swatch")).toHaveAttribute("aria-hidden", "true");
       expect(r.getAttribute("title")?.length).toBeGreaterThan(20);
@@ -47,10 +55,14 @@ describe("MapKey", () => {
     expect(row(vision, "added").querySelector(".outline")).toHaveAttribute("stroke-dasharray", "2 2");
     expect(row(vision, "added").querySelector(".body")).toBeNull();
     expect(row(vision, "merged").querySelector(".flash")).not.toBeNull();
+    // A collapsed folder: a faint disc with its file count, as the map draws it.
+    expect(row(vision, "collapsed").querySelector(".disc")).toHaveAttribute("fill-opacity", "0.07");
+    expect(row(vision, "collapsed").querySelector(".count")).toHaveTextContent("12");
     unmount();
 
     render(MapKey, { theme: "night", storage: storage() });
     const night = screen.getByRole("region", { name: "Map key" });
+    expect(row(night, "collapsed").querySelector(".disc")).toHaveAttribute("fill-opacity", "0.05");
     // Night: flat discs, idle files in graphite.
     const idle = row(night, "unchanged").querySelectorAll(".body");
     expect([...idle].map((b) => [b.getAttribute("data-kind"), b.getAttribute("fill")])).toEqual([

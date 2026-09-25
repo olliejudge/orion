@@ -4,7 +4,8 @@
 import { encode, type NodeVisual } from "../layout/encoding";
 import type { Kind, Stage, Worktree } from "../protocol";
 import { DELETED_SCALE } from "../render/scene";
-import { fileLook, type FileLook, type Theme } from "../render/style";
+import { countFontPx, digitCount } from "../render/labels";
+import { aggregateLook, countColor, fileLook, type FileLook, type Theme } from "../render/style";
 import type { RepoState } from "../store";
 
 export type KeyEntryId = "unchanged" | "edited" | "added" | "committed" | "deleted" | "merged";
@@ -97,6 +98,35 @@ export function keyEntries(theme: Theme): KeyEntry[] {
       marks: [mark(sample("ts"), theme, R, CX, true)],
     },
   ];
+}
+
+/** The collapsed-folder row: a disc drawn as the map draws one, with its file count. */
+export interface CountSwatch {
+  label: string;
+  hint: string;
+  r: number;
+  fill: { color: number; alpha: number };
+  outline: { color: number; alpha: number };
+  count: number;
+  font: number;
+  color: string;
+}
+
+const COUNT_R = 9;
+const COUNT_SAMPLE = 12;
+
+export function countSwatch(theme: Theme): CountSwatch {
+  const look = aggregateLook({ path: "", ext: "", touches: [], ghost: false, deleted: false, tinted: false }, theme, null);
+  return {
+    label: "Files in a small folder",
+    hint: "A folder too small to open up at this zoom is one faint disc; the number is how many files it holds. Zoom in to open it.",
+    r: COUNT_R,
+    fill: look.fill,
+    outline: look.outline,
+    count: COUNT_SAMPLE,
+    font: countFontPx(COUNT_R, digitCount(COUNT_SAMPLE)) ?? 8,
+    color: countColor(theme),
+  };
 }
 
 /** 0xrrggbb → "#rrggbb". */
