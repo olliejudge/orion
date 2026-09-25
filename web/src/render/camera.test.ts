@@ -178,6 +178,17 @@ describe("focusFolder", () => {
     expect(focusFolder(layout, HOME, W, H, FREE)).toBe("");
   });
 
+  it("is the root at (about) home even when a folder dominates the repo", () => {
+    // big spans 2*300 = 600 px of the 800 px short side (75%) at k = 1.
+    const dominated = new Map<string, Circle>([
+      ["", c("", 500, 400, 360, 0)],
+      ["big", c("big", 480, 400, 300, 1)],
+    ]);
+    expect(focusFolder(dominated, HOME, W, H, FREE)).toBe("");
+    expect(focusFolder(dominated, { ...HOME, k: 1.04 }, W, H, FREE)).toBe("");
+    expect(focusFolder(dominated, { ...HOME, k: 1.2 }, W, H, FREE)).toBe("big");
+  });
+
   it("is the deepest folder under the view centre that fills most of the view", () => {
     // web fills 2*200*2 = 800 px of the 800 px short side; web/src fills 480 px (60%): too small.
     expect(focusFolder(layout, { cx: 400, cy: 400, k: 2 }, W, H, FREE)).toBe("web");
