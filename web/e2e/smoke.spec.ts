@@ -331,6 +331,8 @@ test("+ zooms in a level, 0 returns home, and the breadcrumbs (and the home butt
 test("keeps the focused folder in the URL hash, with Back and reload restoring it", async ({ page }) => {
   await openOrion(page);
   expect(new URL(page.url()).hash, "no location yet at the root").toBe("");
+  // + has nothing to step into until the map has laid out: wait for it to draw.
+  await expectLit(page, "before +", 120, 0.005);
 
   // + (with the pointer off the map) steps into the largest child, so this
   // is deterministic without guessing screen coordinates.
@@ -361,6 +363,8 @@ test("keeps the focused folder in the URL hash, with Back and reload restoring i
 
 test("a click into a folder updates the URL hash", async ({ page }) => {
   await openOrion(page);
+  // The map has nothing to click into until it has laid out: wait for it to draw.
+  await expectLit(page, "before click", 120, 0.005);
   await clickIntoFolder(page);
   const path1 = await focusedPath(page);
   expect(path1, "the click landed on a folder").not.toBe("");
@@ -381,6 +385,8 @@ test("a deep link's hash survives the token redirect", async ({ page }) => {
 
 test("hiding the folder you're in backs the camera out and replaces the hash, without pushing a history entry", async ({ page }) => {
   await openOrion(page);
+  // + has nothing to step into until the map has laid out: wait for it to draw.
+  await expectLit(page, "before +", 120, 0.005);
   await page.keyboard.press("+");
   const path1 = await focusedPath(page);
   expect(path1).not.toBe("");
@@ -407,6 +413,8 @@ test("hiding the folder you're in backs the camera out and replaces the hash, wi
 
 test("Back into a folder hidden since you navigated there lands on the visible ancestor, without revealing it", async ({ page }) => {
   await openOrion(page);
+  // + has nothing to step into until the map has laid out: wait for it to draw.
+  await expectLit(page, "before +", 120, 0.005);
   await page.keyboard.press("+"); // path1: a top-level folder
   const path1 = await focusedPath(page);
   await page.keyboard.press("+"); // path2: one of path1's children
