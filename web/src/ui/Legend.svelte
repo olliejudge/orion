@@ -10,8 +10,10 @@
     onIsolate: (id: WorktreeId | null) => void;
     /** Reports the panel's size whenever it changes (the map keeps clear of it). */
     onFootprint?: (size: Footprint) => void;
+    /** Room to leave below the panel, CSS px: the live pill, or the map key when it is taller. */
+    reserveBottom?: number;
   }
-  let { repo, now, isolated, onIsolate, onFootprint }: Props = $props();
+  let { repo, now, isolated, onIsolate, onFootprint, reserveBottom = 64 }: Props = $props();
 
   let panel: HTMLElement;
   $effect(() => {
@@ -51,7 +53,12 @@
   </li>
 {/snippet}
 
-<section class="legend glass" data-testid="legend" aria-label="Worktrees" bind:this={panel}>
+<section
+  class="legend glass"
+  data-testid="legend"
+  aria-label="Worktrees"
+  style:--legend-reserve={`${reserveBottom}px`}
+  bind:this={panel}>
   <h1>{repo.repo.name}</h1>
   <p class="base">Compared with {repo.repo.base || "HEAD"}</p>
   <div class="night-reveal scroll" data-testid="legend-list">
@@ -82,7 +89,7 @@
     display: flex;
     flex-direction: column;
     max-width: min(var(--legend-max-w), calc(100vw - 2 * var(--gutter)));
-    max-height: calc(100vh - var(--gutter) - 64px);
+    max-height: calc(100vh - var(--gutter) - var(--legend-reserve, 64px));
     padding: 10px 12px 12px;
     z-index: 2;
   }

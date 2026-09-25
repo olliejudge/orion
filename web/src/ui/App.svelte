@@ -17,6 +17,7 @@
   import { keyAction } from "./keys";
   import Legend from "./Legend.svelte";
   import LivePill from "./LivePill.svelte";
+  import MapKey from "./MapKey.svelte";
   import { hoverTip, mapInsets, shownFolder, type Footprint, type HoverTarget, type TooltipInfo } from "./models";
   import { clickTarget, crumbs, doubleClickTarget, upOne } from "./nav";
   import { applyTheme, loadTheme, saveTheme, type Theme } from "./theme";
@@ -33,6 +34,7 @@
   let tip: { info: TooltipInfo; x: number; y: number } | null = $state.raw(null);
   let noWebGL = $state(false);
   let legendBox: Footprint = $state.raw({ width: 0, height: 0 });
+  let keyBox: Footprint = $state.raw({ width: 0, height: 0 });
   let pillX: number | null = $state(null); // centre of the map's free area
 
   let mapEl: HTMLDivElement;
@@ -66,7 +68,8 @@
   });
 
   $effect(() => {
-    void legendBox; // the map keeps clear of the legend (see mapInsets)
+    void legendBox; // the map keeps clear of the legend and the key (see mapInsets)
+    void keyBox;
     queue.request(NO_CHANGE);
   });
 
@@ -83,7 +86,7 @@
     const w = mapEl.clientWidth;
     const h = mapEl.clientHeight;
     if (w <= 0 || h <= 0) return; // nothing to lay out into (d3's pack throws on an empty rect)
-    const f = computeFrame(s, w, h, scale, mapInsets(theme, w, h, legendBox), linger.paths());
+    const f = computeFrame(s, w, h, scale, mapInsets(theme, w, h, legendBox, keyBox), linger.paths());
     layout = f.layout;
     labels = labelNames(f.layout);
     pillX = (f.free.x0 + f.free.x1) / 2;
@@ -248,8 +251,17 @@
 {/if}
 
 {#if repo}
-  <Legend {repo} {now} {isolated} onIsolate={(id) => (isolated = id)} onFootprint={(b) => (legendBox = b)} />
+  <Legend
+    {repo}
+    {now}
+    {isolated}
+    onIsolate={(id) => (isolated = id)}
+    onFootprint={(b) => (legendBox = b)}
+    reserveBottom={Math.max(64, keyBox.height + 32)} />
   <Activity {repo} {now} onHover={highlight} onSelect={(p) => zoom(shownFolder(p, layout))} />
+{/if}
+{#if !noWebGL}
+  <MapKey {theme} onFootprint={(b) => (keyBox = b)} />
 {/if}
 <LivePill {status} centerX={pillX} />
 {#if repo}

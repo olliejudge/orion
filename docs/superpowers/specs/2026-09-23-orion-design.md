@@ -188,6 +188,7 @@ Vite, TypeScript, **Svelte 5** for panels and chrome, **PixiJS v8** (WebGL) for 
 - **Top-left, repo + worktrees legend:** the repo name, then a pill per *active* worktree (one with a non-empty overlay or recent activity), showing its colour dot, label and a count of changed files. Idle worktrees collapse into "+N idle", which expands on click. Clicking a worktree pill **isolates** it: other worktrees' encodings dim. Clicking again clears the isolation.
 - **Right, activity stream:** newest first. Each row shows the worktree dot, the file name (with the parent folder dimmed), the kind and a relative time. Commit and merge rows are emphasised. Hovering a row highlights the node on the map, and clicking zooms to it. In Night mode, rows fade with age.
 - **Bottom-centre, time pill:** in Phase 1 a "● Live" indicator. In Phase 2 it expands into the scrubber.
+- **Bottom-left, map key:** a small swatch per mark (unchanged file, edited and new uncommitted, committed on branch, deleted, merged), drawn from the renderer's own encoding in the current theme, plus a note that circles are folders and colours are worktrees. It collapses to a "Key" button, and the choice is remembered in `localStorage`; it starts open, except on narrow screens. The map keeps clear of it like it does of the legend.
 - **Tooltip on hover:** the full path, size, and which worktrees are touching the file and at what stage.
 
 ### Interactions

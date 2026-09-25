@@ -210,6 +210,43 @@ describe("mapInsets", () => {
       expect(mapInsets("vision", 1440, 900, { width: 0, height: 0 })).toEqual(mapInsets("vision", 1440, 900));
     });
   });
+
+  describe("with the map key's footprint (bottom-left, wide Vision)", () => {
+    const key = { width: 196, height: 190 };
+
+    it("leaves the insets alone when the circle clears the key", () => {
+      expect(mapInsets("vision", 1440, 900, undefined, key)).toEqual(mapInsets("vision", 1440, 900));
+    });
+
+    it("moves the map right of the open key on a small window", () => {
+      expect(mapInsets("vision", 1024, 700, undefined, key)).toEqual({ top: 48, right: 320, bottom: 48, left: 16 + 196 + 16 });
+    });
+
+    it("moves the map above the key instead when that keeps it larger (tall windows)", () => {
+      const wideKey = { width: 340, height: 186 };
+      expect(mapInsets("vision", 1440, 1300, undefined, wideKey)).toEqual({ top: 48, right: 320, bottom: 16 + 186 + 16, left: 48 });
+    });
+
+    it("needs no room for the collapsed key", () => {
+      expect(mapInsets("vision", 1024, 700, undefined, { width: 64, height: 28 })).toEqual(mapInsets("vision", 1024, 700));
+    });
+
+    it("keeps clear of the legend and the key at once", () => {
+      const legend = { width: 340, height: 186 };
+      const ins = mapInsets("vision", 1440, 900, legend, key);
+      expect(ins).toEqual({ top: 48, right: 320, bottom: 48, left: 16 + 340 + 16 });
+      // Stacked above the key and below the legend there'd be no room: it goes beside both.
+      const tall = mapInsets("vision", 1024, 700, { width: 240, height: 120 }, key);
+      expect(tall.left).toBeGreaterThanOrEqual(16 + 196 + 16);
+      expect(tall.top).toBe(48);
+      expect(tall.bottom).toBe(48);
+    });
+
+    it("ignores the key in Night and on narrow screens", () => {
+      expect(mapInsets("night", 1024, 700, undefined, key)).toEqual(mapInsets("night", 1024, 700));
+      expect(mapInsets("vision", 700, 820, undefined, key)).toEqual(mapInsets("vision", 700, 820));
+    });
+  });
 });
 
 describe("tooltipPosition", () => {

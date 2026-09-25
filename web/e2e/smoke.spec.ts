@@ -66,7 +66,7 @@ async function openOrion(page: Page, url = env("ORION_URL")): Promise<void> {
  */
 async function litFraction(page: Page, threshold: number): Promise<number> {
   const png = await page.getByTestId("map").screenshot({
-    mask: [page.getByTestId("legend"), page.getByTestId("activity"), page.getByTestId("live-pill")],
+    mask: [page.getByTestId("legend"), page.getByTestId("activity"), page.getByTestId("live-pill"), page.getByTestId("map-key")],
     maskColor: "#000000",
     animations: "disabled",
     scale: "css",
@@ -127,6 +127,9 @@ test("loads via the tokenised URL and shows the chrome", async ({ page, request 
   await expect(page.getByTestId("legend")).toBeVisible();
   await expect(page.getByTestId("activity")).toBeVisible();
   await expect(page.getByTestId("live-pill")).toContainText("Live");
+  const key = page.getByRole("region", { name: "Map key" });
+  await expect(key).toBeVisible();
+  await expect(key.getByTestId("map-key-entry")).toHaveCount(6);
 });
 
 test("the map canvas draws the repo", async ({ page }) => {
