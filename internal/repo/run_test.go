@@ -32,6 +32,17 @@ func (l *patchLog) collect(ch <-chan model.Patch) {
 	}
 }
 
+// caughtUp reports whether the log holds every patch up to seq. By the time
+// a Snapshot shows a patch's effect, the patch is in the subscriber channel,
+// but collect may not have appended it yet: a test that waits on the
+// Snapshot must also wait for caughtUp(snap.Seq) before it inspects patches.
+func (l *patchLog) caughtUp(seq uint64) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := len(l.patches)
+	return seq == 0 || n > 0 && l.patches[n-1].Seq >= seq
+}
+
 func (l *patchLog) len() int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -190,7 +201,15 @@ func TestEngineNestedWorktree(t *testing.T) {
 		return ok && c.Stage == model.Uncommitted && c.Kind == model.Added
 	})
 	r.Write("notes.md", "main work\n") // proves main was recomputed after the nested write
-	waitFor(t, 10*time.Second, func() bool { _, ok := snapEntry(e, mainID, "notes.md"); return ok })
+	waitFor(t, 10*time.Second, func() bool {
+		snap := e.Snapshot()
+		for _, c := range snap.Overlays[mainID] {
+			if c.Path == "notes.md" {
+				return pl.caughtUp(snap.Seq)
+			}
+		}
+		return false
+	})
 
 	for _, c := range e.Snapshot().Overlays[mainID] {
 		if strings.HasPrefix(c.Path, ".claude/") {
@@ -225,7 +244,7 @@ func TestEngineWorktreeRemoved(t *testing.T) {
 			}
 		}
 		_, has := snap.Overlays[id]
-		return !has
+		return !has && pl.caughtUp(snap.Seq)
 	})
 	if !pl.any(func(p model.Patch) bool {
 		if p.Worktrees == nil {
