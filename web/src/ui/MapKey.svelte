@@ -142,6 +142,7 @@
       {/each}
     </ul>
     <p class="note">Circles are folders. Colours are worktrees; a split ring means several.</p>
+    <p class="note">Click: in one level · Double-click: straight in · Scroll: zoom · Esc: out · 0: home</p>
   </div>
 </section>
 

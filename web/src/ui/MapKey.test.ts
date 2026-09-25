@@ -32,6 +32,7 @@ describe("MapKey", () => {
       expect(r.getAttribute("title")?.length).toBeGreaterThan(20);
     }
     expect(within(key).getByText(/Circles are folders/)).toBeVisible();
+    expect(within(key).getByText(/Click: in one level/)).toHaveTextContent("Click: in one level · Double-click: straight in · Scroll: zoom · Esc: out · 0: home");
   });
 
   it("draws the swatches as the map does in each theme", () => {
