@@ -1,7 +1,9 @@
 import { render, screen, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { KEY_OPEN_KEY } from "./encodingKey";
+import { worktreeColor } from "../colors";
+import { TONES } from "../render/style";
+import { KEY_OPEN_KEY, countSwatch, hexOf } from "./encodingKey";
 import MapKey from "./MapKey.svelte";
 
 function storage(initial: Record<string, string> = {}): Storage {
@@ -25,6 +27,7 @@ const LABELS = [
   "Committed on branch",
   "Deleted",
   "Merged into base",
+  "Now → months ago",
   "Files in a small folder",
 ];
 
@@ -47,28 +50,33 @@ describe("MapKey", () => {
     const { unmount } = render(MapKey, { theme: "vision", storage: storage() });
     const vision = screen.getByRole("region", { name: "Map key" });
     const row = (el: HTMLElement, id: string): Element => el.querySelector(`[data-entry="${id}"]`)!;
-    // Vision: gradient spheres; edits get a dashed ring, commits a solid one.
-    expect(row(vision, "unchanged").querySelectorAll('.body[data-kind="ext"]')).toHaveLength(2);
-    expect(row(vision, "edited").querySelector(".ring")).toHaveAttribute("stroke-dasharray", "4 3");
+    // Flat discs: grey when unchanged, the worktree's colour when changed.
+    const idle = hexOf(TONES.vision.idle);
+    expect([...row(vision, "unchanged").querySelectorAll(".body")].map((b) => b.getAttribute("fill"))).toEqual([idle, idle]);
+    expect(row(vision, "edited").querySelector(".body")).toHaveAttribute("fill", worktreeColor(0));
+    expect(row(vision, "edited").querySelector(".ring")).toBeNull();
+    expect(row(vision, "edited").querySelector(".glyph")).toBeNull();
+    expect(row(vision, "added").querySelector(".glyph")).toHaveAttribute("data-shape", "plus");
     expect(row(vision, "committed").querySelector(".ring")).not.toHaveAttribute("stroke-dasharray");
-    expect(row(vision, "committed").querySelector(".body")).toHaveAttribute("data-kind", "worktree");
-    expect(row(vision, "added").querySelector(".outline")).toHaveAttribute("stroke-dasharray", "2 2");
-    expect(row(vision, "added").querySelector(".body")).toBeNull();
+    expect(row(vision, "deleted").querySelector(".body")).toBeNull();
+    expect(row(vision, "deleted").querySelector(".outline")).not.toBeNull();
+    expect(row(vision, "deleted").querySelector(".glyph")).toHaveAttribute("data-shape", "cross");
     expect(row(vision, "merged").querySelector(".flash")).not.toBeNull();
+    // The age strip: five discs, fading from now to months ago.
+    const ages = [...row(vision, "age").querySelectorAll(".body")].map((b) => Number(b.getAttribute("opacity")));
+    expect(ages).toHaveLength(5);
+    expect(ages[0]).toBeGreaterThan(ages[4]!);
     // A collapsed folder: a faint disc with its file count, as the map draws it.
-    expect(row(vision, "collapsed").querySelector(".disc")).toHaveAttribute("fill-opacity", "0.07");
+    expect(row(vision, "collapsed").querySelector(".disc")).toHaveAttribute("fill-opacity", String(countSwatch("vision").fill.alpha));
     expect(row(vision, "collapsed").querySelector(".count")).toHaveTextContent("12");
     unmount();
 
     render(MapKey, { theme: "night", storage: storage() });
     const night = screen.getByRole("region", { name: "Map key" });
-    expect(row(night, "collapsed").querySelector(".disc")).toHaveAttribute("fill-opacity", "0.05");
-    // Night: flat discs, idle files in graphite.
-    const idle = row(night, "unchanged").querySelectorAll(".body");
-    expect([...idle].map((b) => [b.getAttribute("data-kind"), b.getAttribute("fill")])).toEqual([
-      ["flat", "#3a3a44"],
-      ["flat", "#3a3a44"],
-    ]);
+    expect(row(night, "collapsed").querySelector(".disc")).toHaveAttribute("fill-opacity", String(countSwatch("night").fill.alpha));
+    // Night: the same system in its own tones.
+    const nightIdle = row(night, "unchanged").querySelectorAll(".body");
+    expect([...nightIdle].map((b) => b.getAttribute("fill"))).toEqual([hexOf(TONES.night.idle), hexOf(TONES.night.idle)]);
   });
 
   it("collapses and expands from its button (mouse or keyboard) and remembers the choice", async () => {

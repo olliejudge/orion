@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { lighten, type ExtColor } from "../colors";
-  import type { Theme } from "../render/style";
+  import { DELETED_RIM_W_PX, GLYPH_ARM, GLYPH_STROKE, type Theme } from "../render/style";
   import { SWATCH_H, SWATCH_W, countSwatch, hexOf, keyEntries, loadKeyOpen, saveKeyOpen, type KeyMark } from "./encodingKey";
   import type { Footprint } from "./models";
 
@@ -43,11 +42,10 @@
     saveKeyOpen(open, storage);
   }
 
-  function sphere(m: KeyMark): ExtColor | null {
-    const b = m.look.body;
-    if (b?.kind === "ext") return b.color;
-    if (b?.kind === "worktree") return { light: lighten(b.color, 0.45), base: b.color };
-    return null;
+  /** The glyph texture's strokes (sprites.ts), centred at (cx, cy) with half-size h. */
+  function glyphPath(cx: number, cy: number, h: number): string {
+    const arm = GLYPH_ARM * h;
+    return `M${cx - arm} ${cy}H${cx + arm}M${cx} ${cy - arm}V${cy + arm}`;
   }
 </script>
 
@@ -55,66 +53,63 @@
   <svg class="swatch" width={SWATCH_W} height={SWATCH_H} viewBox={`0 0 ${SWATCH_W} ${SWATCH_H}`} aria-hidden="true">
     {#each marks as m, i (i)}
       {@const cy = SWATCH_H / 2}
-      {@const sph = sphere(m)}
       {@const body = m.look.body}
       {@const halo = m.look.halo}
       {@const o = m.look.outline}
+      {@const glyph = m.look.glyph}
       {@const gid = `${uid}-${id}-${i}`}
-      <defs>
-        {#if sph}
-          <!-- The sphere texture's gradient: centred at 35%/30%, radius half the box. -->
-          <radialGradient id={`${gid}-body`} cx="35%" cy="30%" r="50%">
-            <stop offset="0" stop-color={sph.light} />
-            <stop offset="1" stop-color={sph.base} />
-          </radialGradient>
-        {/if}
-        {#if halo}
+      {#if halo}
+        <defs>
           <radialGradient id={`${gid}-halo`}>
             <stop offset="0.4" stop-color={hexOf(halo.color)} stop-opacity="0" />
             <stop offset={HALO_RING_FRAC} stop-color={hexOf(halo.color)} stop-opacity="0.9" />
             <stop offset="1" stop-color={hexOf(halo.color)} stop-opacity="0" />
           </radialGradient>
-        {/if}
-      </defs>
-      {#if halo}
+        </defs>
         <circle cx={m.cx} {cy} r={(m.r + HALO_PX) / HALO_RING_FRAC} fill={`url(#${gid}-halo)`} opacity={halo.alpha} />
       {/if}
       {#if body}
-        <circle
-          class="body"
-          data-kind={body.kind}
-          cx={m.cx}
-          {cy}
-          r={m.r}
-          fill={sph ? `url(#${gid}-body)` : body.kind === "flat" ? hexOf(body.tint) : "none"}
-          opacity={body.alpha} />
+        <circle class="body" cx={m.cx} {cy} r={m.r} fill={hexOf(body.tint)} opacity={body.alpha} />
       {/if}
-      {#if o}
-        {#if o.fillAlpha > 0}<circle cx={m.cx} {cy} r={m.r} fill={hexOf(o.fill)} opacity={o.fillAlpha} />{/if}
-        <circle
-          class="outline"
-          cx={m.cx}
-          {cy}
-          r={m.r}
+      <!-- Rim and rings age together, as the map sets their alpha as a group. -->
+      <g opacity={m.look.marks}>
+        {#if o}
+          <circle
+            class="outline"
+            cx={m.cx}
+            {cy}
+            r={m.r - DELETED_RIM_W_PX / 2}
+            fill="none"
+            stroke={hexOf(o.color)}
+            stroke-opacity={o.alpha}
+            stroke-width={DELETED_RIM_W_PX} />
+        {/if}
+        {#each m.look.rings.arcs as a, j (j)}
+          <circle
+            class="ring"
+            data-dashed={a.dashed}
+            cx={m.cx}
+            {cy}
+            r={m.r + m.look.rings.gap}
+            fill="none"
+            stroke={hexOf(a.color)}
+            stroke-opacity={a.alpha}
+            stroke-width={m.look.rings.width}
+            stroke-dasharray={a.dashed ? "4 3" : undefined} />
+        {/each}
+      </g>
+      {#if glyph && m.glyph !== null}
+        <path
+          class="glyph"
+          data-shape={glyph.shape}
+          d={glyphPath(m.cx, cy, m.glyph)}
+          transform={glyph.shape === "cross" ? `rotate(45 ${m.cx} ${cy})` : undefined}
           fill="none"
-          stroke={hexOf(o.color)}
-          stroke-opacity={o.alpha}
-          stroke-width="1"
-          stroke-dasharray={o.dashed ? "2 2" : undefined} />
+          stroke={hexOf(glyph.color)}
+          stroke-opacity={glyph.alpha}
+          stroke-width={GLYPH_STROKE * m.glyph}
+          stroke-linecap="round" />
       {/if}
-      {#each m.look.rings.arcs as a, j (j)}
-        <circle
-          class="ring"
-          data-dashed={a.dashed}
-          cx={m.cx}
-          {cy}
-          r={m.r + m.look.rings.gap}
-          fill="none"
-          stroke={hexOf(a.color)}
-          stroke-opacity={a.alpha}
-          stroke-width={m.look.rings.width}
-          stroke-dasharray={a.dashed ? "4 3" : undefined} />
-      {/each}
       {#if m.shimmer}<circle class="flash" cx={m.cx} {cy} r={m.r} fill="#fff" />{/if}
     {/each}
   </svg>
@@ -166,7 +161,7 @@
         <span>{counted.label}</span>
       </li>
     </ul>
-    <p class="note">Circles are folders. Colours are worktrees; a split ring means several.</p>
+    <p class="note">Circles are folders. Colours are worktrees; a split ring means several. Brightness is recency.</p>
     <p class="note">Click: in one level · Double-click: straight in · Scroll: zoom · Esc: out · 0: home</p>
   </div>
 </section>

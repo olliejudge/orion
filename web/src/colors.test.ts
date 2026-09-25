@@ -1,16 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  EXT_GROUPS,
-  FILE_CHROMA_RATIO,
-  MIN_FILE_WORKTREE_DELTA_E,
-  VISION_FILE_ALPHA,
-  WORKTREE_COLORS,
-  colorForExt,
-  extOf,
-  lighten,
-  worktreeColor,
-} from "./colors";
-import { chroma, deltaE } from "./perceptual";
+import { WORKTREE_COLORS, lighten, worktreeColor } from "./colors";
 
 describe("WORKTREE_COLORS", () => {
   it("is exactly the 10 Apple system colours, main (index 0) blue", () => {
@@ -26,74 +15,6 @@ describe("worktreeColor", () => {
     expect(worktreeColor(0)).toBe("#0a84ff");
     expect(worktreeColor(11)).toBe("#ff9f0a");
     expect(worktreeColor(-1)).toBe("#8e8e93");
-  });
-});
-
-describe("extOf", () => {
-  it("lower-cases the last extension of the base name", () => {
-    expect(extOf("src/App.Svelte")).toBe("svelte");
-    expect(extOf("a.b/c.tar.GZ")).toBe("gz");
-  });
-  it("uses the whole base name when there is no extension or it is a dotfile", () => {
-    expect(extOf("Makefile")).toBe("makefile");
-    expect(extOf("dir.d/Dockerfile")).toBe("dockerfile");
-    expect(extOf(".gitignore")).toBe(".gitignore");
-  });
-});
-
-describe("colorForExt", () => {
-  it("groups related extensions", () => {
-    expect(colorForExt("ts")).toEqual(colorForExt("tsx"));
-    expect(colorForExt("go")).toEqual(colorForExt("rs"));
-    expect(colorForExt("md")).toEqual(EXT_GROUPS.docs);
-    expect(colorForExt("makefile")).toEqual(EXT_GROUPS.config);
-  });
-  it("falls back to the neutral group", () => {
-    expect(colorForExt("zzz")).toEqual(EXT_GROUPS.other);
-  });
-  it("returns hex stops", () => {
-    const { base, light } = colorForExt("ts");
-    expect(base).toMatch(/^#[0-9a-f]{6}$/);
-    expect(light).toMatch(/^#[0-9a-f]{6}$/);
-  });
-});
-
-describe("EXT_GROUPS (Vision file-type palette)", () => {
-  const stops = Object.entries(EXT_GROUPS).flatMap(([group, c]): [string, string][] => [
-    [`${group}.light`, c.light],
-    [`${group}.base`, c.base],
-  ]);
-  const minWorktreeChroma = Math.min(...WORKTREE_COLORS.map(chroma));
-
-  it("stays well below the chroma of every worktree colour", () => {
-    for (const [name, hex] of stops) {
-      expect(chroma(hex), name).toBeLessThanOrEqual(FILE_CHROMA_RATIO * minWorktreeChroma);
-    }
-  });
-
-  it("keeps every file-type colour perceptually far from every worktree colour", () => {
-    for (const [name, hex] of stops) {
-      for (const w of WORKTREE_COLORS) expect(deltaE(hex, w), `${name} vs ${w}`).toBeGreaterThanOrEqual(MIN_FILE_WORKTREE_DELTA_E);
-    }
-  });
-
-  it("is bright enough to read on the Vision background (some channel above 120 in every highlight, as composited)", () => {
-    // File spheres are drawn at VISION_FILE_ALPHA over the background; the
-    // e2e check counts pixels above 120, so test the composite against the
-    // darkest stop of Vision's --bg gradient (theme.css), the worst case.
-    const bg = [0x07, 0x07, 0x0a];
-    const channels = (hex: string): number[] => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
-    for (const [name, c] of Object.entries(EXT_GROUPS)) {
-      const composite = channels(c.light).map((v, i) => v * VISION_FILE_ALPHA + bg[i]! * (1 - VISION_FILE_ALPHA));
-      expect(Math.max(...composite), name).toBeGreaterThan(120);
-    }
-  });
-
-  it("keeps the groups distinguishable from each other", () => {
-    const lights = Object.values(EXT_GROUPS).map((c) => c.light);
-    for (let i = 0; i < lights.length; i++) {
-      for (let j = i + 1; j < lights.length; j++) expect(deltaE(lights[i]!, lights[j]!)).toBeGreaterThan(8);
-    }
   });
 });
 

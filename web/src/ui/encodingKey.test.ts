@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { hexToNumber, worktreeColor } from "../colors";
-import { NIGHT_IDLE } from "../render/style";
-import { KEY_OPEN_KEY, hexOf, keyEntries, loadKeyOpen, saveKeyOpen, type KeyEntry, type KeyEntryId } from "./encodingKey";
+import { TONES, glyphSize } from "../render/style";
+import { AGE_SAMPLES_MS, KEY_OPEN_KEY, SWATCH_W, hexOf, keyEntries, loadKeyOpen, saveKeyOpen, type KeyEntry, type KeyEntryId } from "./encodingKey";
 
 const MAIN = worktreeColor(0);
 
@@ -26,59 +26,77 @@ function storage(initial: Record<string, string> = {}): Storage {
 }
 
 describe("keyEntries", () => {
-  it("lists the same six states in both themes", () => {
-    const ids = ["unchanged", "edited", "added", "committed", "deleted", "merged"];
+  it("lists the same states, then the age strip, in both themes", () => {
+    const ids = ["unchanged", "edited", "added", "committed", "deleted", "merged", "age"];
     expect(keyEntries("vision").map((e) => e.id)).toEqual(ids);
     expect(keyEntries("night").map((e) => e.id)).toEqual(ids);
   });
 
-  it("draws unchanged files as file-type spheres of two sizes in Vision, idle grey discs in Night", () => {
-    const [small, big] = entry("vision", "unchanged").marks;
-    expect(small!.r).toBeLessThan(big!.r);
-    expect(small!.look.body?.kind).toBe("ext");
-    expect(big!.look.body?.kind).toBe("ext");
-    expect(small!.look.body).not.toEqual(big!.look.body); // two file types, two tints
-    for (const m of entry("night", "unchanged").marks) expect(m.look.body).toEqual({ kind: "flat", tint: NIGHT_IDLE, alpha: 1 });
-  });
-
-  it("gives uncommitted edits a halo and a dashed ring in the worktree colour", () => {
+  it("draws unchanged files as quiet neutral discs of two sizes", () => {
     for (const theme of ["vision", "night"] as const) {
-      const look = entry(theme, "edited").marks[0]!.look;
-      expect(look.halo?.color).toBe(hexToNumber(MAIN));
-      expect(look.rings.arcs).toHaveLength(1);
-      expect(look.rings.arcs[0]!.dashed).toBe(true);
+      const [small, big] = entry(theme, "unchanged").marks;
+      expect(small!.r).toBeLessThan(big!.r);
+      for (const m of [small!, big!]) {
+        expect(m.look.body!.tint).toBe(TONES[theme].idle);
+        expect(m.look).toMatchObject({ halo: null, glyph: null, rings: { arcs: [] } });
+      }
     }
   });
 
-  it("draws uncommitted adds as ghosts: no body, a dashed outline, a faint fill in Vision only", () => {
-    const vision = entry("vision", "added").marks[0]!.look;
-    expect(vision.body).toBeNull();
-    expect(vision.outline).toMatchObject({ dashed: true, color: hexToNumber(MAIN) });
-    expect(vision.outline!.fillAlpha).toBeGreaterThan(0);
-    expect(entry("night", "added").marks[0]!.look.outline!.fillAlpha).toBe(0);
+  it("fills uncommitted edits in the worktree colour with a glow, and no glyph or ring", () => {
+    for (const theme of ["vision", "night"] as const) {
+      const look = entry(theme, "edited").marks[0]!.look;
+      expect(look.body).toEqual({ tint: hexToNumber(MAIN), alpha: 1 });
+      expect(look.halo?.color).toBe(hexToNumber(MAIN));
+      expect(look.glyph).toBeNull();
+      expect(look.rings.arcs).toHaveLength(0);
+    }
   });
 
-  it("fills committed-on-branch files in the worktree colour with a solid ring", () => {
-    const vision = entry("vision", "committed").marks[0]!.look;
-    expect(vision.body).toEqual({ kind: "worktree", color: MAIN, alpha: 1 });
-    expect(vision.rings.arcs[0]!.dashed).toBe(false);
-    expect(vision.halo).toBeNull();
-    expect(entry("night", "committed").marks[0]!.look.body).toMatchObject({ kind: "flat", tint: hexToNumber(MAIN) });
+  it("marks uncommitted adds with a + big enough to show", () => {
+    const m = entry("vision", "added").marks[0]!;
+    expect(m.look.body?.tint).toBe(hexToNumber(MAIN));
+    expect(m.look.glyph?.shape).toBe("plus");
+    expect(m.glyph).toBe(glyphSize(m.r));
+    expect(m.glyph).not.toBeNull();
   });
 
-  it("shrinks deletions to a faint solid outline", () => {
+  it("fills committed-on-branch files in the worktree colour with a solid ring and no glow", () => {
+    const look = entry("vision", "committed").marks[0]!.look;
+    expect(look.body?.tint).toBe(hexToNumber(MAIN));
+    expect(look.rings.arcs).toHaveLength(1);
+    expect(look.rings.arcs[0]!.dashed).toBe(false);
+    expect(look.halo).toBeNull();
+  });
+
+  it("shrinks deletions to a hollow rim with a ×, still big enough for the glyph", () => {
     const d = entry("vision", "deleted").marks[0]!;
-    expect(d.r).toBeLessThan(entry("vision", "edited").marks[0]!.r);
     expect(d.look.body).toBeNull();
-    expect(d.look.outline).toMatchObject({ dashed: false });
-    expect(d.look.outline!.alpha).toBeLessThan(1);
+    expect(d.look.outline).not.toBeNull();
+    expect(d.look.glyph?.shape).toBe("cross");
+    expect(d.glyph).not.toBeNull();
   });
 
-  it("marks a merge as an unchanged file with the shimmer", () => {
+  it("marks a merge as a freshly committed unchanged file with the shimmer", () => {
     const m = entry("vision", "merged").marks;
     expect(m.map((x) => x.shimmer)).toEqual([true]);
-    expect(m[0]!.look.body?.kind).toBe("ext");
+    expect(m[0]!.look.body).toEqual({ tint: TONES.vision.idle, alpha: TONES.vision.idleAlpha[1] });
     expect(keyEntries("vision").flatMap((e) => e.marks).filter((x) => x.shimmer)).toHaveLength(1);
+  });
+
+  it("draws the age strip as the map's own tones, fading left to right from now to months ago", () => {
+    for (const theme of ["vision", "night"] as const) {
+      const marks = entry(theme, "age").marks;
+      expect(marks).toHaveLength(AGE_SAMPLES_MS.length);
+      const alphas = marks.map((m) => m.look.body!.alpha);
+      expect(alphas[0]).toBe(TONES[theme].idleAlpha[1]);
+      expect(alphas.at(-1)).toBe(TONES[theme].idleAlpha[0]);
+      for (let i = 1; i < alphas.length; i++) expect(alphas[i]!).toBeLessThan(alphas[i - 1]!);
+      const xs = marks.map((m) => m.cx);
+      expect(xs).toEqual([...xs].sort((a, b) => a - b));
+      expect(Math.min(...xs) - marks[0]!.r).toBeGreaterThanOrEqual(0);
+      expect(Math.max(...xs) + marks[0]!.r).toBeLessThanOrEqual(SWATCH_W);
+    }
   });
 });
 

@@ -185,16 +185,18 @@ test("loads via the tokenised URL and shows the chrome", async ({ page, request 
   await expect(page.getByTestId("live-pill")).toContainText("Live");
   const key = page.getByRole("region", { name: "Map key" });
   await expect(key).toBeVisible();
-  await expect(key.getByTestId("map-key-entry")).toHaveCount(7);
+  await expect(key.getByTestId("map-key-entry")).toHaveCount(8);
 });
 
 test("the map canvas draws the repo", async ({ page }) => {
   await openOrion(page);
-  // Night: pure black background, idle files #3a3a44, so anything > 40 is drawn content.
+  // Night: pure black background and folder outlines at most ~25 per channel;
+  // even the faintest (oldest) unchanged file is ~33, so anything > 30 is a bubble.
   await page.keyboard.press("n");
   await expect.poll(() => theme(page)).toBe("night");
-  await expectLit(page, "night", 40, 0.01);
-  // Vision: the background stays at or below 100 per channel; file bubbles are brighter.
+  await expectLit(page, "night", 30, 0.01);
+  // Vision: the background stays at or below 100 per channel; changed files,
+  // filled in their worktree colours, are brighter.
   await page.keyboard.press("n");
   await expect.poll(() => theme(page)).toBe("vision");
   await expectLit(page, "vision", 120, 0.005);

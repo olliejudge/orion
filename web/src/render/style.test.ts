@@ -1,170 +1,307 @@
 import { describe, expect, it } from "vitest";
-import { EXT_GROUPS, VISION_FILE_ALPHA, hexToNumber, lighten, worktreeColor } from "../colors";
-import { encode, encodeAll } from "../layout/encoding";
+import { WORKTREE_COLORS, hexToNumber, lighten, worktreeColor } from "../colors";
+import { encode, encodeAll, type NodeVisual } from "../layout/encoding";
 import { makeState } from "../layout/fixtures";
 import type { Circle } from "../layout/pack";
+import { chroma, contrast, over } from "../perceptual";
 import type { ChangeEntry } from "../protocol";
 import { RING_GAP_PX, RING_W_PX } from "./draw";
-import { ISOLATE_DIM, NIGHT_IDLE, TINT_RING_GAP_PX, TINT_RING_W_PX, aggregateLook, fileLook, touchSig } from "./style";
+import {
+  AGE_STOPS,
+  GLYPH_MAX_R_PX,
+  GLYPH_MIN_R_PX,
+  ISOLATE_DIM,
+  TINT_RING_GAP_PX,
+  TINT_RING_W_PX,
+  TONES,
+  ageOf,
+  aggregateLook,
+  fileLook,
+  glyphInk,
+  glyphSize,
+  recency,
+  touchSig,
+  type Theme,
+} from "./style";
 
-// One test per row of the spec §6 worktree-encoding table, built from real
-// overlay entries through encode(), so the whole chain stage × kind → pixels
+// One test per row of the spec §6 encoding table, built from real overlay
+// entries through encode(), so the whole chain stage × kind × time → pixels
 // is pinned (the Pixi drawing itself only mirrors these values).
 
-const e = (path: string, kind: ChangeEntry["kind"], stage: ChangeEntry["stage"], from?: string): ChangeEntry => ({
+const NOW = Date.UTC(2026, 8, 25, 12);
+const MIN = 60_000;
+const HOUR = 60 * MIN;
+const DAY = 24 * HOUR;
+const THEMES: Theme[] = ["vision", "night"];
+
+const e = (path: string, kind: ChangeEntry["kind"], stage: ChangeEntry["stage"], from?: string, touched?: number): ChangeEntry => ({
   path,
   kind,
   stage,
   size: 10,
   ...(from ? { from } : {}),
+  ...(touched ? { touched } : {}),
 });
 
 const W1 = hexToNumber(worktreeColor(1)); // w1 is colour index 1 (orange)
 const W1_RING = hexToNumber(lighten(worktreeColor(1), 0.25));
 const W2_RING = hexToNumber(lighten(worktreeColor(2), 0.25));
 
-function look(entries: Record<string, ChangeEntry[]>, path: string, theme: "vision" | "night" = "vision", isolated: string | null = null) {
-  const s = makeState({ "src/a.ts": 5, "src/old.ts": 5 }, entries);
-  return fileLook(encode(s, path), theme, isolated);
+function vis(entries: Record<string, ChangeEntry[]>, path: string, base: Record<string, number> = {}): NodeVisual {
+  return encode(makeState({ "src/a.ts": 5, "src/old.ts": 5 }, entries, undefined, base), path);
 }
 
-describe("fileLook (spec §6 rows, Vision)", () => {
-  it("untouched file: a translucent file-type sphere, nothing else", () => {
-    expect(look({}, "src/a.ts")).toEqual({
-      body: { kind: "ext", color: EXT_GROUPS.web, alpha: VISION_FILE_ALPHA },
+function look(entries: Record<string, ChangeEntry[]>, path: string, theme: Theme = "vision", isolated: string | null = null, base: Record<string, number> = {}) {
+  return fileLook(vis(entries, path, base), theme, isolated, NOW);
+}
+
+describe("recency (age → brightness)", () => {
+  it("hits each stop: now, an hour, a day, a week, three months", () => {
+    expect(AGE_STOPS.map(([age]) => recency(age))).toEqual([1, 0.75, 0.5, 0.25, 0]);
+    expect(recency(0)).toBe(1);
+    expect(recency(30_000)).toBe(1);
+  });
+
+  it("falls monotonically on a log scale between the stops", () => {
+    let prev = 1;
+    for (let age = MIN; age < 200 * DAY; age *= 1.3) {
+      const r = recency(age);
+      expect(r).toBeLessThanOrEqual(prev);
+      prev = r;
+    }
+    // Log-interpolated: the geometric midpoint of a span sits halfway between its stops.
+    expect(recency(Math.sqrt(HOUR * DAY))).toBeCloseTo(0.625, 6);
+  });
+
+  it("floors at 0 for anything older, unknown (Infinity) or NaN; clock skew (the future) counts as now", () => {
+    expect(recency(365 * DAY)).toBe(0);
+    expect(recency(Infinity)).toBe(0);
+    expect(recency(NaN)).toBe(0);
+    expect(recency(-5 * MIN)).toBe(1);
+  });
+});
+
+describe("ageOf", () => {
+  it("is the time since the newest touch or base commit", () => {
+    expect(ageOf(vis({}, "src/a.ts", { "src/a.ts": NOW - DAY }), NOW)).toBe(DAY);
+    expect(ageOf(vis({ w1: [e("src/a.ts", "modified", "committed", undefined, NOW - HOUR)] }, "src/a.ts", { "src/a.ts": NOW - DAY }), NOW)).toBe(HOUR);
+  });
+
+  it("treats a change with an unknown time as just now, and an unchanged file with none as oldest", () => {
+    expect(ageOf(vis({ w1: [e("src/a.ts", "modified", "uncommitted")] }, "src/a.ts", { "src/a.ts": NOW - DAY }), NOW)).toBe(0);
+    expect(ageOf(vis({}, "src/a.ts"), NOW)).toBe(Infinity);
+  });
+});
+
+describe("tones", () => {
+  it.each(THEMES)("%s: changed files are brighter than unchanged ones at any age", (theme) => {
+    const t = TONES[theme];
+    expect(t.changedAlpha[0]).toBeGreaterThan(t.idleAlpha[1] + 0.1);
+    for (const age of [0, HOUR, DAY, 30 * DAY, Infinity]) {
+      const base = { "src/a.ts": NOW - age };
+      const changed = look({ w1: [e("src/a.ts", "modified", "committed", undefined, NOW - age)] }, "src/a.ts", theme, null, base);
+      const idle = look({}, "src/a.ts", theme, null, base);
+      expect(changed.body!.alpha, `age ${age}`).toBeGreaterThan(idle.body!.alpha);
+    }
+  });
+
+  it.each(THEMES)("%s: unchanged files are a quiet neutral, brighter when recently committed", (theme) => {
+    expect(chroma(`#${TONES[theme].idle.toString(16)}`)).toBeLessThan(15); // Apple colours are 70–90
+    const fresh = look({}, "src/a.ts", theme, null, { "src/a.ts": NOW - 5 * MIN }).body!.alpha;
+    const stale = look({}, "src/a.ts", theme, null, { "src/a.ts": NOW - 60 * DAY }).body!.alpha;
+    expect(fresh).toBeGreaterThan(stale * 2);
+  });
+});
+
+describe("fileLook (spec §6 rows)", () => {
+  it("unchanged: a flat neutral disc, as bright as its last commit is recent; nothing else", () => {
+    const t = TONES.vision;
+    expect(look({}, "src/a.ts", "vision", null, { "src/a.ts": NOW })).toEqual({
+      body: { tint: t.idle, alpha: t.idleAlpha[1] },
       halo: null,
       outline: null,
+      glyph: null,
       rings: { gap: RING_GAP_PX, width: RING_W_PX, arcs: [] },
+      marks: 1,
     });
+    // No known time: the oldest tone.
+    expect(look({}, "src/a.ts").body).toEqual({ tint: t.idle, alpha: t.idleAlpha[0] });
   });
 
-  it("uncommitted modified: normal fill, a glowing halo and a dashed ring", () => {
-    const l = look({ w1: [e("src/a.ts", "modified", "uncommitted")] }, "src/a.ts");
-    expect(l.body).toEqual({ kind: "ext", color: EXT_GROUPS.web, alpha: VISION_FILE_ALPHA });
-    expect(l.halo).toEqual({ color: W1, alpha: 0.6 });
+  it("edited, uncommitted: a flat fill in the worktree colour with a live glow, no glyph or ring", () => {
+    const l = look({ w1: [e("src/a.ts", "modified", "uncommitted", undefined, NOW)] }, "src/a.ts");
+    expect(l.body).toEqual({ tint: W1, alpha: 1 });
+    expect(l.halo).toEqual({ color: W1, alpha: TONES.vision.halo });
     expect(l.outline).toBeNull();
-    expect(l.rings).toEqual({ gap: RING_GAP_PX, width: RING_W_PX, arcs: [{ worktree: "w1", color: W1_RING, alpha: 1, dashed: true }] });
-  });
-
-  it("uncommitted added: a ghost (15% worktree fill, dashed outline), no solid body", () => {
-    const l = look({ w1: [e("src/new.ts", "added", "uncommitted")] }, "src/new.ts");
-    expect(l.body).toBeNull();
-    expect(l.halo).toBeNull();
-    expect(l.outline).toEqual({ color: W1, alpha: 1, dashed: true, fill: W1, fillAlpha: 0.15 });
+    expect(l.glyph).toBeNull();
     expect(l.rings.arcs).toEqual([]);
   });
 
-  it.each([["modified"], ["added"]] as const)("committed %s: a solid sphere tinted in the worktree colour with a thin solid ring that hugs it", (kind) => {
-    const path = kind === "added" ? "src/new.ts" : "src/a.ts";
-    const l = look({ w1: [e(path, kind, "committed")] }, path);
-    expect(l.body).toEqual({ kind: "worktree", color: worktreeColor(1), alpha: 1 });
-    expect(l.halo).toBeNull();
-    expect(l.outline).toBeNull();
-    expect(l.rings).toEqual({
-      gap: TINT_RING_GAP_PX,
-      width: TINT_RING_W_PX,
-      arcs: [{ worktree: "w1", color: W1_RING, alpha: 1, dashed: false }],
-    });
-    expect(TINT_RING_GAP_PX + TINT_RING_W_PX).toBeLessThan(RING_GAP_PX);
+  it("added, uncommitted: the same fill and glow with a + glyph in a contrasting ink", () => {
+    const l = look({ w1: [e("src/new.ts", "added", "uncommitted")] }, "src/new.ts");
+    expect(l.body).toEqual({ tint: W1, alpha: 1 }); // unknown time: just now
+    expect(l.halo).not.toBeNull();
+    expect(l.glyph).toEqual({ shape: "plus", color: glyphInk(worktreeColor(1), "vision"), alpha: 1 });
+    expect(l.rings.arcs).toEqual([]);
   });
 
-  it.each([["uncommitted"], ["committed"]] as const)("deleted (%s): a faint outline and no body, halo or ring", (stage) => {
+  it.each([["modified"], ["added"]] as const)("committed %s: the fill with a thin solid ring that hugs it, no glow", (kind) => {
+    const path = kind === "added" ? "src/new.ts" : "src/a.ts";
+    const l = look({ w1: [e(path, kind, "committed")] }, path);
+    expect(l.body).toEqual({ tint: W1, alpha: 1 });
+    expect(l.halo).toBeNull();
+    expect(l.glyph).toBeNull();
+    expect(l.rings).toEqual({ gap: TINT_RING_GAP_PX, width: TINT_RING_W_PX, arcs: [{ worktree: "w1", color: W1_RING, alpha: 1, dashed: false }] });
+    expect(TINT_RING_GAP_PX + TINT_RING_W_PX).toBeLessThan(RING_GAP_PX + RING_W_PX);
+  });
+
+  it.each([["uncommitted"], ["committed"]] as const)("deleted (%s): hollow, a rim and a × in the worktree colour", (stage) => {
     const l = look({ w1: [e("src/a.ts", "deleted", stage)] }, "src/a.ts");
     expect(l.body).toBeNull();
     expect(l.halo).toBeNull();
-    expect(l.outline).toEqual({ color: W1, alpha: 0.45, dashed: false, fill: 0xffffff, fillAlpha: 0.02 });
+    expect(l.outline).toEqual({ color: W1_RING, alpha: 1 });
+    expect(l.glyph).toEqual({ shape: "cross", color: W1_RING, alpha: 1 });
     expect(l.rings.arcs).toEqual([]);
   });
 
-  it("renamed, uncommitted: the new path is live work (fill, halo, dashed ring); the old path is a faint outline", () => {
+  it("renamed, uncommitted: the new path is added (+); the old path is deleted (×)", () => {
     const entries = { w1: [e("src/moved.ts", "renamed", "uncommitted", "src/old.ts")] };
-    const to = look(entries, "src/moved.ts");
-    expect(to.body?.kind).toBe("ext");
-    expect(to.halo).not.toBeNull();
-    expect(to.rings.arcs[0]!.dashed).toBe(true);
-    expect(look(entries, "src/old.ts").outline).toMatchObject({ dashed: false, alpha: 0.45 });
+    expect(look(entries, "src/moved.ts").glyph?.shape).toBe("plus");
+    expect(look(entries, "src/old.ts")).toMatchObject({ body: null, glyph: { shape: "cross" } });
   });
 
-  it("renamed, committed: the new path is a solid tinted sphere; the old path is a faint outline", () => {
+  it("renamed, committed: the new path is committed (ringed); the old path is hollow", () => {
     const entries = { w1: [e("src/moved.ts", "renamed", "committed", "src/old.ts")] };
-    expect(look(entries, "src/moved.ts").body).toEqual({ kind: "worktree", color: worktreeColor(1), alpha: 1 });
+    expect(look(entries, "src/moved.ts")).toMatchObject({ body: { tint: W1 }, glyph: null, rings: { gap: TINT_RING_GAP_PX } });
     expect(look(entries, "src/old.ts").body).toBeNull();
   });
 
   it("touched by 2+ worktrees: a split ring, one arc per worktree in colour order, dashed or solid by stage", () => {
     const l = look({ w2: [e("src/a.ts", "modified", "uncommitted")], w1: [e("src/a.ts", "modified", "committed")] }, "src/a.ts");
-    expect(l.rings.arcs).toEqual([
-      { worktree: "w1", color: W1_RING, alpha: 1, dashed: false },
-      { worktree: "w2", color: W2_RING, alpha: 1, dashed: true },
-    ]);
-    // Live work elsewhere wins: normal fill with the live worktree's halo.
-    expect(l.body?.kind).toBe("ext");
-    expect(l.rings.gap).toBe(RING_GAP_PX);
+    expect(l.rings).toEqual({
+      gap: RING_GAP_PX,
+      width: RING_W_PX,
+      arcs: [
+        { worktree: "w1", color: W1_RING, alpha: 1, dashed: false },
+        { worktree: "w2", color: W2_RING, alpha: 1, dashed: true },
+      ],
+    });
+    // Live work wins the fill and the glow.
+    expect(l.body!.tint).toBe(hexToNumber(worktreeColor(2)));
+    expect(l.halo!.color).toBe(hexToNumber(worktreeColor(2)));
   });
 
-  it("merged into base (left the overlay): back to the plain file-type sphere", () => {
-    expect(look({}, "src/a.ts").body).toEqual({ kind: "ext", color: EXT_GROUPS.web, alpha: VISION_FILE_ALPHA });
+  it("merged into base (left the overlay): back to the unchanged disc, now freshly committed", () => {
+    expect(look({}, "src/a.ts", "vision", null, { "src/a.ts": NOW }).body).toEqual({ tint: TONES.vision.idle, alpha: TONES.vision.idleAlpha[1] });
   });
 
-  it("isolation dims other worktrees' marks and shows the file-type fill when only they touch it", () => {
-    const l = look({ w1: [e("src/a.ts", "modified", "committed")] }, "src/a.ts", "vision", "w2");
-    expect(l.body?.kind).toBe("ext");
-    expect(l.rings.arcs[0]!.alpha).toBe(ISOLATE_DIM);
+  it("fades a change's fill, glow and marks with age, but never its glyph", () => {
+    const old = look({ w1: [e("src/new.ts", "added", "uncommitted", undefined, NOW - 120 * DAY)] }, "src/new.ts");
+    const floor = TONES.vision.changedAlpha[0];
+    expect(old.body!.alpha).toBe(floor);
+    expect(old.marks).toBe(floor);
+    expect(old.halo!.alpha).toBeCloseTo(TONES.vision.halo * floor, 9);
+    expect(old.glyph!.alpha).toBe(1);
+    const hourOld = look({ w1: [e("src/a.ts", "modified", "committed", undefined, NOW - HOUR)] }, "src/a.ts");
+    expect(hourOld.body!.alpha).toBeCloseTo(floor + (1 - floor) * 0.75, 9);
+  });
+
+  it("isolation dims other worktrees' fill, glyph and rings", () => {
+    const l = look({ w1: [e("src/a.ts", "added", "uncommitted")] }, "src/a.ts", "vision", "w2");
+    expect(l.body!.alpha).toBe(ISOLATE_DIM);
+    expect(l.glyph!.alpha).toBe(ISOLATE_DIM);
+    const c = look({ w1: [e("src/a.ts", "modified", "committed")] }, "src/a.ts", "vision", "w2");
+    expect(c.rings.arcs[0]!.alpha).toBe(ISOLATE_DIM);
+  });
+
+  it("colours a file touched by several worktrees after the isolated one", () => {
+    const l = look({ w1: [e("src/a.ts", "modified", "committed")], w2: [e("src/a.ts", "modified", "committed")] }, "src/a.ts", "vision", "w2");
+    expect(l.body).toEqual({ tint: hexToNumber(worktreeColor(2)), alpha: 1 });
+  });
+
+  it("draws Night with the same system, tuned darker", () => {
+    const l = look({ w1: [e("src/new.ts", "added", "uncommitted")] }, "src/new.ts", "night");
+    expect(l).toMatchObject({ body: { tint: W1, alpha: 1 }, glyph: { shape: "plus" } });
+    expect(look({}, "src/a.ts", "night").body).toEqual({ tint: TONES.night.idle, alpha: TONES.night.idleAlpha[0] });
   });
 });
 
-describe("fileLook (Night)", () => {
-  it("draws idle files as flat #3a3a44 discs and touched ones flat in the worktree colour", () => {
-    expect(look({}, "src/a.ts", "night").body).toEqual({ kind: "flat", tint: NIGHT_IDLE, alpha: 1 });
-    expect(look({ w1: [e("src/a.ts", "modified", "uncommitted")] }, "src/a.ts", "night").body).toEqual({ kind: "flat", tint: W1, alpha: 1 });
-    expect(look({ w1: [e("src/a.ts", "modified", "committed")] }, "src/a.ts", "night").body).toEqual({ kind: "flat", tint: W1, alpha: 0.85 });
+describe("glyphs", () => {
+  it("show only from GLYPH_MIN_R_PX of screen radius, and stop growing at GLYPH_MAX_R_PX", () => {
+    expect(glyphSize(GLYPH_MIN_R_PX - 0.01)).toBeNull();
+    expect(glyphSize(1)).toBeNull();
+    expect(glyphSize(GLYPH_MIN_R_PX)).toBe(GLYPH_MIN_R_PX);
+    expect(glyphSize(12)).toBe(12);
+    expect(glyphSize(500)).toBe(GLYPH_MAX_R_PX);
   });
 
-  it("gives a ghost no fill in Night, only its dashed outline", () => {
-    expect(look({ w1: [e("src/new.ts", "added", "uncommitted")] }, "src/new.ts", "night").outline).toMatchObject({ dashed: true, fillAlpha: 0 });
+  it.each(THEMES)("%s: the ink contrasts with every worktree colour at every age (WCAG ≥ 3:1)", (theme) => {
+    const tone = TONES[theme];
+    for (const hex of [...WORKTREE_COLORS, worktreeColor(-1)]) {
+      const ink = `#${glyphInk(hex, theme).toString(16).padStart(6, "0")}`;
+      for (const a of tone.changedAlpha) {
+        expect(contrast(ink, over(hex, a, tone.bg)), `${hex} at ${a}`).toBeGreaterThanOrEqual(3);
+      }
+    }
+  });
+
+  it("uses dark ink on light colours and white on dark ones", () => {
+    expect(glyphInk("#ffd60a", "vision")).not.toBe(0xffffff); // yellow
+    expect(glyphInk("#5e5ce6", "vision")).toBe(0xffffff); // indigo
   });
 });
 
 describe("aggregateLook", () => {
   const circle: Circle = { path: "vendor", x: 0, y: 0, r: 4, depth: 1, isDir: true, aggregate: 2 };
-  const agg = (entries: Record<string, ChangeEntry[]>, theme: "vision" | "night" = "vision") => {
-    const s = makeState({ "vendor/x.js": 1, "vendor/y.js": 1 }, entries);
-    return aggregateLook(encodeAll(s, new Map([["vendor", circle]])).get("vendor")!, theme, null);
+  const agg = (entries: Record<string, ChangeEntry[]>, theme: Theme = "vision", base: Record<string, number> = {}) => {
+    const s = makeState({ "vendor/x.js": 1, "vendor/y.js": 1 }, entries, undefined, base);
+    return aggregateLook(encodeAll(s, new Map([["vendor", circle]])).get("vendor")!, theme, null, NOW);
   };
 
-  it("fills a folder whose changes are all committed solidly in the worktree colour, with a hugging ring", () => {
+  it("fills a folder whose changes are all committed in the worktree colour, with a hugging ring", () => {
     const l = agg({ w1: [e("vendor/x.js", "modified", "committed")] });
-    expect(l.fill).toEqual({ color: W1, alpha: 0.55 });
+    expect(l.fill).toEqual({ color: W1, alpha: TONES.vision.aggChangedAlpha[1] });
     expect(l.halo).toBeNull();
     expect(l.rings).toMatchObject({ gap: TINT_RING_GAP_PX, arcs: [{ worktree: "w1", dashed: false }] });
   });
 
-  it("keeps live work as a faint disc with the worktree's halo and a dashed ring", () => {
+  it("fills live work in the worktree colour too, with its glow and a dashed ring", () => {
     const l = agg({ w1: [e("vendor/x.js", "modified", "uncommitted")] });
-    expect(l.fill).toEqual({ color: 0xffffff, alpha: 0.07 });
-    expect(l.halo).toEqual({ color: W1, alpha: 0.6 });
+    expect(l.fill.color).toBe(W1);
+    expect(l.halo).toEqual({ color: W1, alpha: TONES.vision.halo });
     expect(l.rings).toMatchObject({ gap: RING_GAP_PX, arcs: [{ worktree: "w1", dashed: true }] });
   });
 
-  it("is a faint neutral disc when nothing below it is touched", () => {
-    expect(agg({}, "night")).toMatchObject({ fill: { color: 0xffffff, alpha: 0.05 }, halo: null, rings: { arcs: [] } });
+  it("is a faint neutral disc when nothing below it is touched, brighter the more recent its newest commit", () => {
+    expect(agg({}, "night")).toMatchObject({ fill: { color: 0xffffff, alpha: TONES.night.aggIdleAlpha[0] }, halo: null, rings: { arcs: [] } });
+    const hot = agg({}, "vision", { "vendor/x.js": NOW - 90 * DAY, "vendor/y.js": NOW - MIN });
+    const cold = agg({}, "vision", { "vendor/x.js": NOW - 90 * DAY, "vendor/y.js": NOW - 60 * DAY });
+    expect(hot.fill.alpha).toBe(TONES.vision.aggIdleAlpha[1]);
+    expect(cold.fill.alpha).toBeLessThan(hot.fill.alpha);
+  });
+
+  it("dims a changed folder's fill as its newest change ages", () => {
+    const fresh = agg({ w1: [e("vendor/x.js", "modified", "committed", undefined, NOW - MIN)] });
+    const old = agg({ w1: [e("vendor/x.js", "modified", "committed", undefined, NOW - 30 * DAY)] });
+    expect(old.fill.alpha).toBeLessThan(fresh.fill.alpha);
+    expect(old.fill.alpha).toBeGreaterThanOrEqual(TONES.vision.aggChangedAlpha[0]);
   });
 });
 
 describe("touchSig", () => {
-  const vis = (entries: Record<string, ChangeEntry[]>) => encode(makeState({ "src/a.ts": 5 }, entries), "src/a.ts");
+  const v = (entries: Record<string, ChangeEntry[]>) => encode(makeState({ "src/a.ts": 5 }, entries), "src/a.ts");
 
   it("is equal for equal touches and differs when any touch field changes", () => {
-    const a = vis({ w1: [e("src/a.ts", "modified", "uncommitted")] });
-    expect(touchSig(a)).toBe(touchSig(vis({ w1: [e("src/a.ts", "modified", "uncommitted")] })));
-    expect(touchSig(a)).not.toBe(touchSig(vis({ w1: [e("src/a.ts", "modified", "committed")] })));
-    expect(touchSig(a)).not.toBe(touchSig(vis({ w1: [e("src/a.ts", "deleted", "uncommitted")] })));
-    expect(touchSig(a)).not.toBe(touchSig(vis({ w2: [e("src/a.ts", "modified", "uncommitted")] })));
-    expect(touchSig(vis({}))).toBe("");
+    const a = v({ w1: [e("src/a.ts", "modified", "uncommitted")] });
+    expect(touchSig(a)).toBe(touchSig(v({ w1: [e("src/a.ts", "modified", "uncommitted")] })));
+    expect(touchSig(a)).not.toBe(touchSig(v({ w1: [e("src/a.ts", "modified", "committed")] })));
+    expect(touchSig(a)).not.toBe(touchSig(v({ w1: [e("src/a.ts", "deleted", "uncommitted")] })));
+    expect(touchSig(a)).not.toBe(touchSig(v({ w2: [e("src/a.ts", "modified", "uncommitted")] })));
+    expect(touchSig(v({}))).toBe("");
   });
 
   it("is computed once per visual (visuals are immutable, so the per-frame key allocates nothing new)", () => {
-    const a = vis({ w1: [e("src/a.ts", "modified", "uncommitted")] });
+    const a = v({ w1: [e("src/a.ts", "modified", "uncommitted")] });
     const first = touchSig(a);
     a.touches.length = 0; // never happens in practice; shows the cached value is reused
     expect(touchSig(a)).toBe(first);

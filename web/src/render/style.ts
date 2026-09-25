@@ -1,31 +1,157 @@
-import { VISION_FILE_ALPHA, colorForExt, hexToNumber, lighten, worktreeColor, type ExtColor } from "../colors";
-import type { NodeVisual, Touch } from "../layout/encoding";
+import { hexToNumber, lighten, worktreeColor } from "../colors";
+import { isLive, isNew, type NodeVisual, type Touch } from "../layout/encoding";
+import { contrast, over } from "../perceptual";
 import type { WorktreeId } from "../protocol";
 import { RING_GAP_PX, RING_W_PX } from "./draw";
 
 /**
  * What each file (or collapsed folder) looks like, as plain data: the spec §6
- * worktree-encoding table turned into fills, glows and rings. MapRenderer only
- * turns a Look into Pixi objects, so every row of the table is unit-tested
- * here without WebGL.
+ * encoding table turned into fills, marks and rings. MapRenderer only turns a
+ * Look into Pixi objects, so every row of the table is unit-tested here
+ * without WebGL.
+ *
+ * Who / what / when:
+ * - WHO is colour: a changed file is filled flat in its worktree's colour.
+ * - WHAT is a mark: "+" for new, "×" on a hollow rim for deleted, a hugging
+ *   ring for committed on a branch, a glow for live (uncommitted) work, and
+ *   nothing extra for a plain edit. Unchanged files are quiet neutral discs.
+ * - WHEN is brightness: every bubble fades with the time since it was last
+ *   touched (see recency), changed files always staying brighter than
+ *   unchanged ones.
  */
 
 export type Theme = "vision" | "night";
 
-export const NIGHT_IDLE = 0x3a3a44;
 export const ISOLATE_DIM = 0.15;
-/** A committed-on-branch ring hugs its sphere: at fit zoom most files are a few px wide, and a ring 2.5 px out would read as a hollow circle. */
-export const TINT_RING_GAP_PX = 0.5; // with TINT_RING_W_PX the ring's inner edge touches the rim
+/** A committed-on-branch ring hugs its bubble: at fit zoom most files are a few px wide, and a ring 2.5 px out would read as a hollow circle. */
+export const TINT_RING_GAP_PX = 1;
 export const TINT_RING_W_PX = 1;
-const HALO_ALPHA = { vision: 0.6, night: 0.5 };
-const DELETED_ALPHA = 0.45;
-const GHOST_FILL = 0.15;
-const AGG_TINT_FILL = { vision: 0.55, night: 0.45 };
+/** Rim of a deleted (hollow) file, on screen. */
+export const DELETED_RIM_W_PX = 1.25;
 
-export type Body =
-  | { kind: "ext"; color: ExtColor; alpha: number } // Vision: file-type sphere
-  | { kind: "worktree"; color: string; alpha: number } // Vision: sphere tinted in a worktree colour
-  | { kind: "flat"; tint: number; alpha: number }; // Night: flat disc
+// ---- when: age → brightness ---------------------------------------------
+
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+const WEEK = 7 * DAY;
+
+/**
+ * Recency (1 = just touched, 0 = old) at each age, interpolated on log(age)
+ * between stops: it drops a quarter by an hour, a day, a week, and reaches
+ * the floor after about three months.
+ */
+export const AGE_STOPS: readonly (readonly [ageMs: number, recency: number])[] = [
+  [MINUTE, 1],
+  [HOUR, 0.75],
+  [DAY, 0.5],
+  [WEEK, 0.25],
+  [90 * DAY, 0],
+];
+
+/** 1 for anything touched in the last minute (or in the future: clock skew), down to 0 at three months or more; Infinity (unknown) is 0. */
+export function recency(ageMs: number): number {
+  if (Number.isNaN(ageMs)) return 0;
+  if (ageMs <= AGE_STOPS[0]![0]) return 1;
+  for (let i = 1; i < AGE_STOPS.length; i++) {
+    const [a1, r1] = AGE_STOPS[i]!;
+    if (ageMs > a1) continue;
+    const [a0, r0] = AGE_STOPS[i - 1]!;
+    return r0 + ((r1 - r0) * Math.log(ageMs / a0)) / Math.log(a1 / a0);
+  }
+  return 0;
+}
+
+/**
+ * How long ago a visual was last touched, ms: its newest touch or base
+ * commit. A touch with an unknown time counts as just now (live work the
+ * server has not timed yet); an unchanged file with no known time is
+ * infinitely old, so it takes the faintest tone.
+ */
+export function ageOf(vis: NodeVisual, now: number): number {
+  let latest = vis.touched ?? -Infinity;
+  for (const t of vis.touches) latest = Math.max(latest, t.touched ?? now);
+  return latest === -Infinity ? Infinity : Math.max(0, now - latest);
+}
+
+/** A theme's tones. Alpha ranges are [oldest, just touched]. */
+export interface Tone {
+  /** The map's background (darkest stop of Vision's gradient; Night's black): glyph ink is chosen against it. */
+  bg: string;
+  /** Unchanged files: one neutral colour, brighter the more recently committed. */
+  idle: number;
+  idleAlpha: readonly [number, number];
+  /** Changed files' fill (and their marks): always above idleAlpha's top. */
+  changedAlpha: readonly [number, number];
+  halo: number;
+  /** A collapsed folder's disc: neutral when nothing below it is changed, else its worktree's colour. */
+  aggIdleAlpha: readonly [number, number];
+  aggChangedAlpha: readonly [number, number];
+}
+
+export const TONES: Readonly<Record<Theme, Tone>> = {
+  vision: {
+    bg: "#0c0c14",
+    idle: 0xb4b8d0,
+    idleAlpha: [0.16, 0.5],
+    changedAlpha: [0.7, 1],
+    halo: 0.55,
+    aggIdleAlpha: [0.05, 0.14],
+    aggChangedAlpha: [0.3, 0.55],
+  },
+  night: {
+    bg: "#000000",
+    idle: 0xa4a4b2,
+    idleAlpha: [0.2, 0.5],
+    changedAlpha: [0.66, 1],
+    halo: 0.45,
+    aggIdleAlpha: [0.04, 0.12],
+    aggChangedAlpha: [0.25, 0.45],
+  },
+};
+
+function at(range: readonly [number, number], r: number): number {
+  return range[0] + (range[1] - range[0]) * r;
+}
+
+// ---- what: marks -----------------------------------------------------------
+
+export type GlyphShape = "plus" | "cross";
+
+/** Glyphs show from this on-screen radius up; below it the fill alone carries the state. */
+export const GLYPH_MIN_R_PX = 5;
+/** Past this radius a glyph stops growing (an icon in the middle of a big bubble). */
+export const GLYPH_MAX_R_PX = 24;
+/** Glyph geometry as fractions of its half-size: arm length (centre to tip) and stroke width. */
+export const GLYPH_ARM = 0.52;
+export const GLYPH_STROKE = 0.24;
+
+/** A glyph's half-size for a bubble of on-screen radius R, or null when it is too small to show one. */
+export function glyphSize(R: number): number | null {
+  return R >= GLYPH_MIN_R_PX ? Math.min(R, GLYPH_MAX_R_PX) : null;
+}
+
+const INKS = ["#ffffff", "#0b0b12"] as const;
+const inkCache = new Map<string, number>();
+
+/**
+ * Ink for a glyph on a fill of `hex`: white or near-black, whichever keeps
+ * the better worst-case contrast across the fill's whole age range (the fill
+ * fades towards the background; the glyph does not).
+ */
+export function glyphInk(hex: string, theme: Theme): number {
+  const key = `${hex}|${theme}`;
+  let ink = inkCache.get(key);
+  if (ink === undefined) {
+    const tone = TONES[theme];
+    const worst = (c: string): number => Math.min(...tone.changedAlpha.map((a) => contrast(c, over(hex, a, tone.bg))));
+    ink = hexToNumber(worst(INKS[0]) >= worst(INKS[1]) ? INKS[0] : INKS[1]);
+    inkCache.set(key, ink);
+  }
+  return ink;
+}
+
+// ---- looks -------------------------------------------------------------------
 
 export interface RingArc {
   worktree: WorktreeId;
@@ -40,14 +166,24 @@ export interface Rings {
   arcs: RingArc[]; // one arc per worktree (a split ring when several)
 }
 
+export interface Glyph {
+  shape: GlyphShape;
+  color: number;
+  alpha: number;
+}
+
 export interface FileLook {
-  /** The solid body; null for ghosts and deletions, which have none. */
-  body: Body | null;
+  /** A flat disc; null for a deletion, which is hollow. */
+  body: { tint: number; alpha: number } | null;
   /** Glow in the colour of live (uncommitted) work. */
   halo: { color: number; alpha: number } | null;
-  /** Ghost: a faint worktree-coloured fill with a dashed outline. Deleted: a faint solid outline. */
-  outline: { color: number; alpha: number; dashed: boolean; fill: number; fillAlpha: number } | null;
+  /** A deletion's rim (DELETED_RIM_W_PX wide). */
+  outline: { color: number; alpha: number } | null;
+  /** The state mark in the middle; drawn only when glyphSize() allows. */
+  glyph: Glyph | null;
   rings: Rings;
+  /** Recency alpha for the outline and rings as a group (the renderer sets it on their Graphics, so ageing never redraws them). */
+  marks: number;
 }
 
 export interface AggregateLook {
@@ -78,68 +214,60 @@ export function touchAlpha(t: Touch, isolated: WorktreeId | null): number {
   return isolated === null || t.worktree === isolated ? 1 : ISOLATE_DIM;
 }
 
-function wt(t: Touch): number {
-  return hexToNumber(worktreeColor(t.colorIndex));
+const committedChange = (t: Touch): boolean => t.stage === "committed" && t.kind !== "deleted";
+
+/** The touch that gives a changed visual its colour: one behind its state, the isolated worktree's if it has one. */
+function leadTouch(vis: NodeVisual, isolated: WorktreeId | null): Touch | undefined {
+  const fits = vis.state === "added" ? isNew : vis.state === "edited" ? isLive : vis.state === "committed" ? committedChange : () => true;
+  const cands = vis.touches.filter(fits);
+  return cands.find((t) => touchAlpha(t, isolated) === 1) ?? cands[0] ?? vis.touches[0];
 }
 
-function halo(vis: NodeVisual, theme: Theme, isolated: WorktreeId | null): FileLook["halo"] {
-  const live = vis.touches.filter((t) => t.stage === "uncommitted" && t.kind !== "deleted");
+function ringColor(t: Touch): number {
+  return hexToNumber(lighten(worktreeColor(t.colorIndex), 0.25));
+}
+
+function halo(vis: NodeVisual, theme: Theme, isolated: WorktreeId | null, fade: number): FileLook["halo"] {
+  const live = vis.touches.filter(isLive);
   const glow = live.find((t) => touchAlpha(t, isolated) === 1) ?? live[0];
-  return glow ? { color: wt(glow), alpha: HALO_ALPHA[theme] * touchAlpha(glow, isolated) } : null;
+  return glow ? { color: hexToNumber(worktreeColor(glow.colorIndex)), alpha: TONES[theme].halo * touchAlpha(glow, isolated) * fade } : null;
 }
 
-function rings(vis: NodeVisual, touches: Touch[], isolated: WorktreeId | null): Rings {
+function arcs(touches: Touch[], isolated: WorktreeId | null): RingArc[] {
+  return touches.map((t) => ({ worktree: t.worktree, color: ringColor(t), alpha: touchAlpha(t, isolated), dashed: t.stage === "uncommitted" }));
+}
+
+/** Two or more worktrees: a split ring, one arc each. One worktree: a hugging solid ring once committed, else none. */
+function fileRings(vis: NodeVisual, isolated: WorktreeId | null): Rings {
+  if (vis.touches.length > 1) return { gap: RING_GAP_PX, width: RING_W_PX, arcs: arcs(vis.touches, isolated) };
+  if (vis.state === "committed") return { gap: TINT_RING_GAP_PX, width: TINT_RING_W_PX, arcs: arcs(vis.touches, isolated) };
+  return { gap: RING_GAP_PX, width: RING_W_PX, arcs: [] };
+}
+
+/** How a file looks at time `now` (unix ms). */
+export function fileLook(vis: NodeVisual, theme: Theme, isolated: WorktreeId | null, now: number): FileLook {
+  const tone = TONES[theme];
+  const r = recency(ageOf(vis, now));
+  const lead = leadTouch(vis, isolated);
+  if (vis.state === "unchanged" || !lead) {
+    return { body: { tint: tone.idle, alpha: at(tone.idleAlpha, r) }, halo: null, outline: null, glyph: null, rings: fileRings(vis, isolated), marks: 1 };
+  }
+  const fade = at(tone.changedAlpha, r);
+  const a = touchAlpha(lead, isolated);
+  if (vis.state === "deleted") {
+    // Hollow: a rim and a cross in the worktree's (ring) colour until the deletion reaches base.
+    const color = ringColor(lead);
+    return { body: null, halo: null, outline: { color, alpha: a }, glyph: { shape: "cross", color, alpha: a }, rings: fileRings(vis, isolated), marks: fade };
+  }
+  const hex = worktreeColor(lead.colorIndex);
   return {
-    gap: vis.tinted ? TINT_RING_GAP_PX : RING_GAP_PX,
-    width: vis.tinted ? TINT_RING_W_PX : RING_W_PX,
-    arcs: touches.map((t) => ({
-      worktree: t.worktree,
-      color: hexToNumber(lighten(worktreeColor(t.colorIndex), 0.25)),
-      alpha: touchAlpha(t, isolated),
-      dashed: t.stage === "uncommitted",
-    })),
+    body: { tint: hexToNumber(hex), alpha: fade * a },
+    halo: halo(vis, theme, isolated, fade),
+    outline: null,
+    glyph: vis.state === "added" ? { shape: "plus", color: glyphInk(hex, theme), alpha: a } : null,
+    rings: fileRings(vis, isolated),
+    marks: fade,
   };
-}
-
-export function fileLook(vis: NodeVisual, theme: Theme, isolated: WorktreeId | null): FileLook {
-  const lead = vis.touches[0];
-  if (vis.deleted && lead) {
-    // Deleted (either stage): a faint outline until the deletion reaches base.
-    return {
-      body: null,
-      halo: null,
-      outline: { color: wt(lead), alpha: DELETED_ALPHA * touchAlpha(lead, isolated), dashed: false, fill: 0xffffff, fillAlpha: 0.02 },
-      rings: rings(vis, [], isolated),
-    };
-  }
-  if (vis.ghost && lead) {
-    // Uncommitted added: ~15% worktree-coloured fill and a dashed outline;
-    // any other worktree touching the path still gets its ring arc.
-    const g = vis.touches.find((t) => t.stage === "uncommitted" && t.kind === "added") ?? lead;
-    const a = touchAlpha(g, isolated);
-    return {
-      body: null,
-      halo: null,
-      outline: { color: wt(g), alpha: a, dashed: true, fill: wt(g), fillAlpha: theme === "vision" ? GHOST_FILL * a : 0 },
-      rings: rings(
-        vis,
-        vis.touches.filter((t) => t.worktree !== g.worktree),
-        isolated,
-      ),
-    };
-  }
-  // The touch that colours the body: the isolated worktree's, else the first.
-  const visible = vis.touches.find((t) => touchAlpha(t, isolated) === 1);
-  let body: Body;
-  if (theme === "night") {
-    body = { kind: "flat", tint: visible ? wt(visible) : NIGHT_IDLE, alpha: visible?.stage === "committed" ? 0.85 : 1 };
-  } else if (vis.tinted && visible) {
-    // Committed on branch: a solid sphere in the worktree colour.
-    body = { kind: "worktree", color: worktreeColor(visible.colorIndex), alpha: 1 };
-  } else {
-    body = { kind: "ext", color: colorForExt(vis.ext), alpha: VISION_FILE_ALPHA };
-  }
-  return { body, halo: halo(vis, theme, isolated), outline: null, rings: rings(vis, vis.touches, isolated) };
 }
 
 /** Colour of the file count on a collapsed folder's disc (CSS colour, for canvas and SVG text). */
@@ -147,17 +275,24 @@ export function countColor(theme: Theme): string {
   return theme === "night" ? "rgba(235,235,245,0.5)" : "rgba(235,235,245,0.62)";
 }
 
-/** A collapsed folder: a faint disc carrying its descendants' touches; tinted solid when all of them are committed. */
-export function aggregateLook(vis: NodeVisual, theme: Theme, isolated: WorktreeId | null): AggregateLook {
-  const visible = vis.touches.find((t) => touchAlpha(t, isolated) === 1);
-  const fill =
-    vis.tinted && visible
-      ? { color: wt(visible), alpha: AGG_TINT_FILL[theme] }
-      : { color: 0xffffff, alpha: theme === "night" ? 0.05 : 0.07 };
+/**
+ * A collapsed folder at time `now`: a disc in the colour of the worktree
+ * changing something below it (neutral when nothing is), as bright as the
+ * most recent touch below it, with one ring arc per worktree (dashed while
+ * any of its changes are uncommitted) and the glow of live work.
+ */
+export function aggregateLook(vis: NodeVisual, theme: Theme, isolated: WorktreeId | null, now: number): AggregateLook {
+  const tone = TONES[theme];
+  const r = recency(ageOf(vis, now));
+  const lead = vis.state === "unchanged" ? undefined : leadTouch(vis, isolated);
+  const fill = lead
+    ? { color: hexToNumber(worktreeColor(lead.colorIndex)), alpha: at(tone.aggChangedAlpha, r) * touchAlpha(lead, isolated) }
+    : { color: 0xffffff, alpha: at(tone.aggIdleAlpha, r) };
+  const committed = vis.state === "committed";
   return {
     fill,
     outline: { color: 0xffffff, alpha: 0.14 },
-    halo: halo(vis, theme, isolated),
-    rings: rings(vis, vis.touches, isolated),
+    halo: halo(vis, theme, isolated, 1),
+    rings: { gap: committed ? TINT_RING_GAP_PX : RING_GAP_PX, width: committed ? TINT_RING_W_PX : RING_W_PX, arcs: arcs(vis.touches, isolated) },
   };
 }

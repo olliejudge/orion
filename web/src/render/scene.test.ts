@@ -6,7 +6,7 @@ import { DELETED_SCALE, SHIMMER_MS, Scene } from "./scene";
 
 const circle = (path: string, x: number, y: number, r: number, isDir = false): Circle => ({ path, x, y, r, depth: path.split("/").length, isDir });
 const visual = (path: string, over: Partial<NodeVisual> = {}): NodeVisual => ({
-  path, ext: "ts", touches: [], ghost: false, deleted: false, tinted: false, ...over,
+  path, touches: [], state: "unchanged", ...over,
 });
 const patch: Change = { kind: "patch", merged: [] };
 
@@ -75,7 +75,7 @@ describe("Scene", () => {
 
   it("shrinks deleted files to a smaller outline radius", () => {
     const s = new Scene();
-    s.update(...frame([circle("a.ts", 0, 0, 10)], [visual("a.ts", { deleted: true })]), patch, 0);
+    s.update(...frame([circle("a.ts", 0, 0, 10)], [visual("a.ts", { state: "deleted" })]), patch, 0);
     expect(s.get("a.ts")!.r.target).toBeCloseTo(10 * DELETED_SCALE);
   });
 
