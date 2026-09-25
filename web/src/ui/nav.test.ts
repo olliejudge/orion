@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Circle } from "../layout/pack";
 import { labelNames } from "../render/geometry";
-import { clickTarget, crumbs, doubleClickTarget, upOne } from "./nav";
+import { childLevels, clickTarget, crumbs, doubleClickTarget, stepIn, upOne } from "./nav";
 
 const c = (path: string, r: number, depth: number, isDir = true): Circle => ({ path, x: 0, y: 0, r, depth, isDir });
 
@@ -78,6 +78,40 @@ describe("clickTarget", () => {
 
   it("treats every folder as a level without labels", () => {
     expect(clickTarget("web/src/main.ts", layout, undefined, "")).toBe("web");
+  });
+});
+
+describe("childLevels", () => {
+  it("lists the direct child levels of the root, largest first, chains and aggregates included", () => {
+    expect(childLevels("", layout, labels).map((c) => c.path)).toEqual(["web/src", "docs", "vendor"]);
+  });
+
+  it("lists a level's own children, skipping deeper ones", () => {
+    expect(childLevels("web/src", layout, labels).map((c) => c.path)).toEqual(["web/src/components"]);
+  });
+
+  it("is empty for a level with no child levels", () => {
+    expect(childLevels("docs", layout, labels)).toEqual([]);
+  });
+});
+
+describe("stepIn", () => {
+  it("steps one level toward a hovered path within the current folder", () => {
+    expect(stepIn("web/src/components/Button.svelte", layout, labels, "")).toBe("web/src");
+    expect(stepIn("web/src/components", layout, labels, "web/src")).toBe("web/src/components");
+  });
+
+  it("falls back to the largest child level with no hover, or a hover outside the current folder", () => {
+    expect(stepIn(null, layout, labels, "")).toBe("web/src");
+    expect(stepIn("web/src/components", layout, labels, "docs")).toBe("docs");
+  });
+
+  it("falls back rather than stepping out when the pointer is over the current folder's own background", () => {
+    expect(stepIn("web/src", layout, labels, "web/src")).toBe("web/src/components");
+  });
+
+  it("stays put with no child level to step into", () => {
+    expect(stepIn(null, layout, labels, "docs")).toBe("docs");
   });
 });
 

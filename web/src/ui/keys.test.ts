@@ -17,14 +17,33 @@ describe("keyAction", () => {
     expect(keyAction(ev("Backspace"))).toBe("zoomOut");
   });
 
+  it("maps -, + (and =, the unshifted key) to stepping out/in a level", () => {
+    expect(keyAction(ev("-"))).toBe("zoomOut");
+    expect(keyAction(ev("_"))).toBe("zoomOut");
+    expect(keyAction(ev("+"))).toBe("zoomIn");
+    expect(keyAction(ev("="))).toBe("zoomIn");
+  });
+
+  it("maps 0 and Home to going home", () => {
+    expect(keyAction(ev("0"))).toBe("home");
+    expect(keyAction(ev("Home"))).toBe("home");
+  });
+
+  it("leaves / unbound for search", () => {
+    expect(keyAction(ev("/"))).toBeNull();
+  });
+
   it("ignores shortcuts with modifiers (Cmd-N, Ctrl-F…)", () => {
     expect(keyAction(ev("n", { metaKey: true }))).toBeNull();
     expect(keyAction(ev("f", { ctrlKey: true }))).toBeNull();
     expect(keyAction(ev("n", { altKey: true }))).toBeNull();
+    expect(keyAction(ev("+", { metaKey: true }))).toBeNull();
+    expect(keyAction(ev("0", { ctrlKey: true }))).toBeNull();
   });
 
   it("ignores auto-repeat from a held key", () => {
     expect(keyAction(ev("n", { repeat: true }))).toBeNull();
+    expect(keyAction(ev("+", { repeat: true }))).toBeNull();
   });
 
   it("ignores typing in form fields", () => {

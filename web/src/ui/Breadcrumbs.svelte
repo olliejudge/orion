@@ -62,6 +62,13 @@
   style:max-width={slot === null ? null : `${slot.maxWidth}px`}
   data-testid="breadcrumbs"
   aria-label="Map location">
+  {#if crumbs.length > 1}
+    <button type="button" class="home" title="Home (0)" aria-label="Home: zoom to fit the whole repository" onclick={() => onSelect("")}>
+      <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+        <path d="M1 3.5V1h2.5M9 3.5V1H6.5M1 6.5V9h2.5M9 6.5V9H6.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    </button>
+  {/if}
   <ol>
     {#each crumbs as c, i (c.path)}
       {#if i === 0 || i >= start}
@@ -89,6 +96,9 @@
     left: 50%;
     top: var(--gutter);
     transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 2px;
     /* Its own width, not the room left of `left`: near the right edge it would shrink. */
     width: max-content;
     max-width: min(560px, calc(100vw - 2 * var(--gutter)));
@@ -96,6 +106,25 @@
     padding: 3px 6px;
     border-radius: 999px;
     z-index: 2;
+  }
+  .home {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .home:hover,
+  .home:focus-visible {
+    background: var(--pill-bg-hover);
+    color: var(--text);
   }
   ol {
     display: flex;

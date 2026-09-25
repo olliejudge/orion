@@ -236,6 +236,24 @@ test("N toggles Night and Vision and remembers the choice", async ({ page }) => 
   await expect.poll(() => theme(page)).toBe("vision");
 });
 
+test("+ zooms in a level, 0 returns home, and the breadcrumbs (and the home button) reflect it", async ({ page }) => {
+  await openOrion(page);
+  const crumbs = page.getByTestId("breadcrumbs");
+  // The visible trail (not its hidden measuring copy): just the repo name at home.
+  const trail = crumbs.locator("ol").first().getByRole("button");
+  const home = crumbs.getByRole("button", { name: /Home/ });
+  await expect(trail).toHaveCount(1);
+  await expect(home).toHaveCount(0);
+
+  await page.keyboard.press("+");
+  await expect(trail).not.toHaveCount(1);
+  await expect(home).toBeVisible();
+
+  await page.keyboard.press("0");
+  await expect(trail).toHaveCount(1);
+  await expect(home).toHaveCount(0);
+});
+
 // The Vision shot becomes the README image, so it runs on its own fresh demo
 // repo and orion (nothing another test did can show up in it) and makes a few
 // realistic agent edits so the activity stream has something to show.

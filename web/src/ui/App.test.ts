@@ -135,7 +135,7 @@ describe("App", () => {
     expect(h.zoomTo).toEqual([""]);
   });
 
-  it("shows where the map is zoomed as breadcrumbs, and Backspace steps out one level", async () => {
+  it("shows where the map is zoomed as breadcrumbs; Backspace/- step out, +/= step in, 0/Home go home", async () => {
     render(App);
     await waitFor(() => expect(h.store).not.toBeNull());
     h.store!.apply({
@@ -150,12 +150,29 @@ describe("App", () => {
     await userEvent.click(await screen.findByRole("button", { name: /z\.ts/ }));
     expect(h.zoomTo.at(-1)).toBe("src/lib/deep");
     // src holds only lib, so the chain is one level.
-    await waitFor(() => expect([...crumbs.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["sample-app", "src/lib", "deep"]));
+    await waitFor(() => expect([...crumbs.querySelectorAll("ol button")].map((b) => b.textContent)).toEqual(["sample-app", "src/lib", "deep"]));
 
     await userEvent.keyboard("{Backspace}");
     expect(h.zoomTo.at(-1)).toBe("src/lib");
     await userEvent.click(within(crumbs).getByRole("button", { name: "sample-app" }));
     expect(h.zoomTo.at(-1)).toBe("");
+
+    // 0/Home go home from any depth.
+    await userEvent.click(await screen.findByRole("button", { name: /z\.ts/ }));
+    expect(h.zoomTo.at(-1)).toBe("src/lib/deep");
+    await userEvent.keyboard("0");
+    expect(h.zoomTo.at(-1)).toBe("");
+    await userEvent.click(await screen.findByRole("button", { name: /z\.ts/ }));
+    await userEvent.keyboard("{Home}");
+    expect(h.zoomTo.at(-1)).toBe("");
+
+    // +/= step in one level (the map's own hover is untracked in this
+    // harness, so this exercises the "largest child" fallback): src holds
+    // only lib, so the one child level of the root is src/lib.
+    await userEvent.keyboard("+");
+    expect(h.zoomTo.at(-1)).toBe("src/lib");
+    await userEvent.keyboard("=");
+    expect(h.zoomTo.at(-1)).toBe("src/lib/deep");
   });
 
   it("explains a renderer that cannot start instead of showing a blank page", async () => {

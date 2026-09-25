@@ -22,6 +22,7 @@ function setup(cam: Camera = { cx: 500, cy: 400, k: 4 }) {
     size: () => ({ width: 1000, height: 800 }),
     root: () => root,
     free: () => ({ x0: 0, y0: 0, x1: 1000, y1: 800 }),
+    layout: () => new Map<string, Circle>([["", root]]),
     view: (target, _path, snap) => void views.push({ target, snap }),
     click: (ev) => void clicks.push(ev),
     doubleClick: () => void doubles++,

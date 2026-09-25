@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Circle } from "../layout/pack";
-import { MIN_ZOOM, clampPan, focusFolder, follow, panBy, wheelFactor, zoomAround } from "./camera";
+import { MIN_ZOOM, clampPan, focusFolder, follow, panBy, scrollZoomCap, wheelFactor, zoomAround } from "./camera";
 import { MAX_ZOOM, screenToWorld, worldToScreen, type Camera, type Rect } from "./geometry";
 
 const W = 1000;
@@ -41,11 +41,72 @@ describe("zoomAround", () => {
     expect(zoomAround(cur, cur, 10, 500, 400, W, H, root, FREE).target.k).toBe(MAX_ZOOM);
   });
 
+  it("clamps at the content-aware cap under the pointer, tighter than MAX_ZOOM, with no jitter (repeated ticks stay capped)", () => {
+    const layout = new Map<string, Circle>([
+      ["", root],
+      ["web", { path: "web", x: 500, y: 400, r: 10, depth: 1, isDir: true }],
+    ]);
+    const cur: Camera = { cx: 500, cy: 400, k: 1 };
+    // fitCamera's own margin: 0.9 * the free area's short side (800), over 2*r (20).
+    const cap = (800 * 0.9) / 20;
+    expect(cap).toBeLessThan(MAX_ZOOM);
+    const first = zoomAround(cur, cur, 100, 500, 400, W, H, root, FREE, layout);
+    expect(first.target.k).toBeCloseTo(cap);
+    const second = zoomAround(first.target, first.target, 100, 500, 400, W, H, root, FREE, layout);
+    expect(second.target.k).toBeCloseTo(cap);
+  });
+
+  it("ignores the cap (falls back to MAX_ZOOM) with no layout, or nothing but the root under the pointer", () => {
+    const cur: Camera = { cx: 500, cy: 400, k: MAX_ZOOM / 2 };
+    expect(zoomAround(cur, cur, 10, 500, 400, W, H, root, FREE, new Map([["", root]])).target.k).toBe(MAX_ZOOM);
+  });
+
+  it("a zoom-in never zooms out: holds the current scale when the pointer already sits past the cap (moved off a small circle onto a bigger one, or a gap)", () => {
+    const layout = new Map<string, Circle>([
+      ["", root],
+      ["web", { path: "web", x: 500, y: 400, r: 10, depth: 1, isDir: true }],
+    ]);
+    const cap = (800 * 0.9) / 20; // 36, see above
+    const cur: Camera = { cx: 500, cy: 400, k: cap * 2 }; // already well past the cap for what's now under the pointer
+    const { target } = zoomAround(cur, cur, 1.5, 500, 400, W, H, root, FREE, layout);
+    expect(target.k).toBeCloseTo(cur.k);
+  });
+
+  it("still zooms out normally starting from above the cap", () => {
+    const layout = new Map<string, Circle>([
+      ["", root],
+      ["web", { path: "web", x: 500, y: 400, r: 10, depth: 1, isDir: true }],
+    ]);
+    const cap = (800 * 0.9) / 20;
+    const cur: Camera = { cx: 500, cy: 400, k: cap * 2 };
+    const { target } = zoomAround(cur, cur, 0.1, 500, 400, W, H, root, FREE, layout);
+    expect(target.k).toBeCloseTo(cur.k * 0.1);
+    expect(target.k).toBeLessThan(cap);
+  });
+
   it("zooming out past the whole repo returns to the home camera", () => {
     const cur: Camera = { cx: 600, cy: 300, k: 1.2 };
     const { target } = zoomAround(cur, cur, 0.5, 100, 100, W, H, root, FREE);
     expect(target).toEqual(HOME);
     expect(MIN_ZOOM).toBe(1);
+  });
+});
+
+describe("scrollZoomCap", () => {
+  const layout = new Map<string, Circle>([
+    ["", root],
+    ["web", { path: "web", x: 500, y: 400, r: 10, depth: 1, isDir: true }],
+  ]);
+
+  it("is the fit-scale of the deepest circle under the pointer", () => {
+    const cur: Camera = { cx: 500, cy: 400, k: 1 };
+    expect(scrollZoomCap(cur, 500, 400, W, H, FREE, layout)).toBeCloseTo((800 * 0.9) / 20);
+  });
+
+  it("falls back to MAX_ZOOM off the map, or with nothing but the root under the pointer", () => {
+    const cur: Camera = { cx: 500, cy: 400, k: 1 };
+    expect(scrollZoomCap(cur, 0, 0, W, H, FREE, layout)).toBe(MAX_ZOOM); // off the root entirely
+    expect(scrollZoomCap(cur, 500, 400, W, H, FREE, new Map([["", root]]))).toBe(MAX_ZOOM); // only the root
   });
 });
 

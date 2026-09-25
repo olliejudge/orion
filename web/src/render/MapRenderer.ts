@@ -173,6 +173,7 @@ export class MapRenderer {
       size: () => this.#size(),
       root: () => this.#layout.get(""),
       free: () => this.#freeRect(),
+      layout: () => this.#layout,
       view: (target, path, snap) => this.#setView(target, path, snap),
       click: (ev) => this.#onClick(ev),
       doubleClick: () => this.#onDblClick(),

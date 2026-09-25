@@ -12,6 +12,8 @@ export interface NavHost {
   size(): { width: number; height: number };
   root(): Circle | undefined;
   free(): Rect;
+  /** The current layout, so scroll zoom can cap itself to what's under the pointer. */
+  layout(): Map<string, Circle>;
   /** Move the camera to `target` (along `path` if given); `snap` jumps there (drags follow the pointer 1:1). */
   view(target: Camera, path: CameraPath | null, snap: boolean): void;
   /** A real click: not the end of a drag, nor a double click's second click. */
@@ -83,7 +85,7 @@ export class MapNavigator {
     const r = this.#el.getBoundingClientRect();
     const { width, height } = this.#host.size();
     const h = this.#host;
-    const { target, path } = zoomAround(h.camera(), h.aimed(), factor, ev.clientX - r.left, ev.clientY - r.top, width, height, h.root(), h.free());
+    const { target, path } = zoomAround(h.camera(), h.aimed(), factor, ev.clientX - r.left, ev.clientY - r.top, width, height, h.root(), h.free(), h.layout());
     h.view(target, path, false);
   };
 
