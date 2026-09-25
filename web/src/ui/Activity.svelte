@@ -9,10 +9,12 @@
     now: number;
     onHover: (path: string | null) => void;
     onSelect: (path: string) => void;
+    /** Hidden directories: activity under them doesn't show as a row. */
+    excluded?: ReadonlySet<string>;
   }
-  let { repo, now, onHover, onSelect }: Props = $props();
+  let { repo, now, onHover, onSelect, excluded }: Props = $props();
 
-  const rows = $derived(activityRows(repo.activity));
+  const rows = $derived(activityRows(repo.activity, 80, excluded));
   const VERB: Record<string, string> = { added: "new", modified: "edited", deleted: "deleted", renamed: "moved" };
 
   function color(row: ActivityRow): string {

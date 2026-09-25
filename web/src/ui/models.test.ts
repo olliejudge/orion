@@ -13,6 +13,7 @@ import {
   mapInsets,
   rowFade,
   shownFolder,
+  stackFootprint,
   tooltipInfo,
   tooltipPosition,
 } from "./models";
@@ -46,6 +47,25 @@ describe("legendModel", () => {
       [wt("w0", 0, "main"), wt("w9", -1, "new/x")],
     );
     expect(legendModel(s, NOW).active.map((w) => w.id)).toEqual(["w0", "w9"]);
+  });
+
+  it("ignores changes and recent activity under an excluded directory", () => {
+    const s = makeState(
+      {},
+      {
+        w0: [
+          { path: "src/a.ts", kind: "modified", stage: "uncommitted", size: 1 },
+          { path: "docs/b.md", kind: "modified", stage: "uncommitted", size: 1 },
+        ],
+        w1: [{ path: "docs/c.md", kind: "added", stage: "uncommitted", size: 1 }],
+      },
+      [wt("w0", 0, "main"), wt("w1", 1, "feat/a")],
+    );
+    s.activity = [{ ts: NOW, worktree: "w1", kind: "added", path: "docs/c.md" }];
+    const excluded = new Set(["docs"]);
+    const m = legendModel(s, NOW, excluded);
+    expect(m.active.map((w) => [w.id, w.changed])).toEqual([["w0", 1]]);
+    expect(m.idle.map((w) => w.id)).toEqual(["w1"]);
   });
 });
 
@@ -97,6 +117,16 @@ describe("activityRows", () => {
     expect(rows).toHaveLength(80);
     expect(rows[0]!.path).toBe("f199.ts");
     expect(rows[79]!.path).toBe("f120.ts");
+  });
+
+  it("drops rows whose path is under an excluded directory", () => {
+    const rows = activityRows([a(1000, { path: "docs/a.md" }), a(2000, { path: "src/b.ts" })], 80, new Set(["docs"]));
+    expect(rows.map((r) => r.path)).toEqual(["src/b.ts"]);
+  });
+
+  it("keeps path-less rows (commit, merge) even with an exclusion set", () => {
+    const rows = activityRows([a(1000, { kind: "commit", path: undefined, sha: "abc", files: 1 })], 80, new Set(["docs"]));
+    expect(rows).toHaveLength(1);
   });
 
   it("fades rows with age (Night mode), never below 0.15", () => {
@@ -186,6 +216,22 @@ describe("shownFolder", () => {
     expect(shownFolder("src/lib/deep/er/a.ts", layout)).toBe("src/lib");
     expect(shownFolder("docs/guide.md", layout)).toBe("");
     expect(shownFolder("README.md", layout)).toBe("");
+  });
+});
+
+describe("stackFootprint", () => {
+  it("sums the heights and takes the wider width, plus the gap, when both are measured", () => {
+    expect(stackFootprint({ width: 196, height: 100 }, { width: 240, height: 50 }, 8)).toEqual({ width: 240, height: 158 });
+  });
+
+  it("returns the one measured panel when the other is not", () => {
+    const a = { width: 196, height: 100 };
+    expect(stackFootprint(a, { width: 0, height: 0 })).toEqual(a);
+    expect(stackFootprint({ width: 0, height: 0 }, a)).toEqual(a);
+  });
+
+  it("is empty when neither is measured", () => {
+    expect(stackFootprint({ width: 0, height: 0 }, { width: 0, height: 0 })).toEqual({ width: 0, height: 0 });
   });
 });
 
