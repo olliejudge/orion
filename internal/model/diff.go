@@ -81,7 +81,7 @@ func (s *Store) Snapshot() Snapshot {
 	defer s.mu.Unlock()
 	tree := make([]File, 0, len(s.state.Tree))
 	for _, path := range slices.Sorted(maps.Keys(s.state.Tree)) {
-		tree = append(tree, File{Path: path, Size: s.state.Tree[path]})
+		tree = append(tree, s.state.Tree[path])
 	}
 	overlays := map[WorktreeID][]ChangeEntry{}
 	for id, m := range s.state.Overlays {
@@ -133,7 +133,7 @@ func normalize(st State) State {
 		return cmp.Compare(a.Path, b.Path)
 	})
 	if st.Tree == nil {
-		st.Tree = map[string]int64{}
+		st.Tree = map[string]File{}
 	}
 	if st.Overlays == nil {
 		st.Overlays = map[WorktreeID]map[string]ChangeEntry{}
@@ -150,9 +150,9 @@ func sameWorktrees(a, b []Worktree) bool {
 
 func diffBase(prev, next State) *BasePatch {
 	bp := &BasePatch{Sha: next.Repo.BaseSha, Upsert: []File{}, Remove: []string{}}
-	for path, size := range next.Tree {
-		if old, ok := prev.Tree[path]; !ok || old != size {
-			bp.Upsert = append(bp.Upsert, File{Path: path, Size: size})
+	for path, f := range next.Tree {
+		if old, ok := prev.Tree[path]; !ok || old != f {
+			bp.Upsert = append(bp.Upsert, f)
 		}
 	}
 	for path := range prev.Tree {

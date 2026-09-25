@@ -38,7 +38,13 @@ func entries(es ...ChangeEntry) map[string]ChangeEntry {
 	return m
 }
 
-func st(baseSha string, tree map[string]int64, wts []Worktree, ov overlays) State {
+// st builds a State for tests. sizes is a convenience shorthand for a base
+// tree with no known touched times; use stFiles for tests that need them.
+func st(baseSha string, sizes map[string]int64, wts []Worktree, ov overlays) State {
+	tree := map[string]File{}
+	for p, sz := range sizes {
+		tree[p] = File{Path: p, Size: sz}
+	}
 	return State{Repo: RepoInfo{Name: "repo", Base: "main", BaseSha: baseSha}, Worktrees: wts, Tree: tree, Overlays: ov}
 }
 
@@ -64,7 +70,7 @@ func TestNewStoreSnapshot(t *testing.T) {
 	if want := []string{"/repo:0", "/idle:-1", "/repo/.claude/worktrees/a:1"}; !reflect.DeepEqual(gotPaths, want) {
 		t.Fatalf("worktrees = %v, want %v (main first, then by path; colours)", gotPaths, want)
 	}
-	if want := []File{{"a.go", 1}, {"m/k.go", 2}, {"z.go", 3}}; !reflect.DeepEqual(snap.Tree, want) {
+	if want := []File{{Path: "a.go", Size: 1}, {Path: "m/k.go", Size: 2}, {Path: "z.go", Size: 3}}; !reflect.DeepEqual(snap.Tree, want) {
 		t.Fatalf("tree = %v, want %v", snap.Tree, want)
 	}
 	if len(snap.Overlays) != 1 {
@@ -103,7 +109,7 @@ func TestApplyBaseDiff(t *testing.T) {
 	if !changed || p.Base == nil {
 		t.Fatalf("want a base patch, got %+v", p)
 	}
-	want := &BasePatch{Sha: "b2", Upsert: []File{{"b.go", 5}, {"d.go", 4}}, Remove: []string{"c.go"}}
+	want := &BasePatch{Sha: "b2", Upsert: []File{{Path: "b.go", Size: 5}, {Path: "d.go", Size: 4}}, Remove: []string{"c.go"}}
 	if !reflect.DeepEqual(p.Base, want) {
 		t.Fatalf("base = %+v, want %+v", p.Base, want)
 	}
@@ -150,6 +156,25 @@ func TestApplyOverlayDiff(t *testing.T) {
 	b, _ := json.Marshal(p)
 	if !strings.Contains(string(b), `"upsert":[]`) {
 		t.Fatalf("empty upsert must marshal as [], got %s", b)
+	}
+}
+
+// A Touched-only change (e.g. a file saved again with the same size) must
+// still produce an overlay patch, so the client's shading stays current.
+func TestApplyOverlayDiffTouchedOnly(t *testing.T) {
+	wts := []Worktree{mainWT}
+	before := ChangeEntry{Path: "a.go", Kind: Modified, Stage: Uncommitted, Size: 5, Touched: 1000}
+	after := before
+	after.Touched = 2000
+	s := NewStore(st("b1", nil, wts, overlays{mainID: entries(before)}), t0)
+
+	p, changed := s.Apply(st("b1", nil, wts, overlays{mainID: entries(after)}), at(1))
+	if !changed {
+		t.Fatal("a touched-only change produced no patch")
+	}
+	want := map[WorktreeID]OverlayPatch{mainID: {Upsert: []ChangeEntry{after}, Remove: []string{}}}
+	if !reflect.DeepEqual(p.Overlays, want) {
+		t.Fatalf("overlays = %+v, want %+v", p.Overlays, want)
 	}
 }
 
@@ -331,6 +356,38 @@ func TestModifiedCoalescing(t *testing.T) {
 	// Deletions are never coalesced away.
 	if got := kinds(step(7, unc("a.go", Deleted, 0), unc("b.go", Added, 2))); got != "deleted:a.go" {
 		t.Fatalf("t=7: %q", got)
+	}
+}
+
+// A Touched-only bump (an mtime tick with no size change) reads as an edit
+// for activity purposes and is coalesced exactly like any other edit, even
+// though it still lands in the overlay patch (TestApplyOverlayDiffTouchedOnly).
+func TestTouchedOnlyCoalescing(t *testing.T) {
+	wts := []Worktree{mainWT}
+	s := NewStore(st("b1", nil, wts, nil), t0)
+	step := func(sec float64, e ChangeEntry) []Activity {
+		p, _ := s.Apply(st("b1", nil, wts, overlays{mainID: entries(e)}), at(sec))
+		return p.Activity
+	}
+	kinds := func(as []Activity) string {
+		var out []string
+		for _, a := range as {
+			out = append(out, a.Kind+":"+a.Path)
+		}
+		return strings.Join(out, ",")
+	}
+
+	a := ChangeEntry{Path: "a.go", Kind: Modified, Stage: Uncommitted, Size: 1, Touched: 100}
+	if got := kinds(step(1, a)); got != "modified:a.go" {
+		t.Fatalf("t=1: %q", got)
+	}
+	a.Touched = 200
+	if got := kinds(step(3, a)); got != "" {
+		t.Fatalf("t=3, touched bump within 5s: %q, want suppressed", got)
+	}
+	a.Touched = 300
+	if got := kinds(step(6.5, a)); got != "modified:a.go" {
+		t.Fatalf("t=6.5, touched bump after 5s: %q", got)
 	}
 }
 

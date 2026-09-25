@@ -55,13 +55,32 @@ What success looks like:
 
   ```
   ChangeEntry {
-    path:   string          // repo-relative path, slash-separated
-    kind:   "added" | "modified" | "deleted" | "renamed"
-    from?:  string          // previous path, when kind == "renamed"
-    stage:  "uncommitted" | "committed"   // committed = on this worktree's branch, not yet in base
-    size:   number          // bytes (working-tree stat for uncommitted, blob size for committed); 0 for deleted
+    path:    string          // repo-relative path, slash-separated
+    kind:    "added" | "modified" | "deleted" | "renamed"
+    from?:   string          // previous path, when kind == "renamed"
+    stage:   "uncommitted" | "committed"   // committed = on this worktree's branch, not yet in base
+    size:    number          // bytes (working-tree stat for uncommitted, blob size for committed); 0 for deleted
+    touched?: number         // unix ms, 0/absent = unknown; see below
   }
   ```
+
+  `touched` (and the base tree's own `touched`, below) drive the client's
+  recency shading. It is derived per stage:
+
+  - **Uncommitted, not deleted:** the working-tree file's own mtime (`os.Stat`).
+  - **Uncommitted, deleted:** when the server first observed the deletion.
+    This has no git history to read a time from, so it is a wall-clock
+    timestamp kept stable across recomputes (carried forward by worktree +
+    path) rather than refreshed on every tick.
+  - **Committed:** the committer time of the latest commit on the worktree's
+    branch (since its merge-base with base) that touched the path.
+  - **Renamed:** the same rule (uncommitted or committed) applied to the new path.
+
+  The base tree's own `File.touched` is the committer time of the latest
+  commit on the base branch that touched that path (one `git log
+  --name-only` pass over the base branch's history, cached by base HEAD sha
+  and updated incrementally as HEAD advances — see `internal/gitx.LogTouched`
+  and `Engine.computeBaseTouched`).
 
   How an overlay is computed for worktree `W`:
   1. **Committed on branch:** `git diff --name-status -M -z <merge-base(base, W.HEAD)> W.HEAD`. Every entry gets `stage: committed`. It is empty when `W.HEAD` is already in base.
@@ -129,16 +148,17 @@ type Snapshot = {
   type: "snapshot"; seq: number;
   repo: { name: string; base: string; baseSha: string };
   worktrees: Worktree[];
-  tree: { path: string; size: number }[];           // base tree
+  tree: File[];                                      // base tree
   overlays: Record<WorktreeId, ChangeEntry[]>;
   activity: Activity[];                             // most recent ≤ 200
 };
+type File = { path: string; size: number; touched?: number };  // touched: unix ms, 0/absent = unknown
 type Worktree = { id: string; path: string; label: string; branch?: string; head: string;
                   isMain: boolean; locked: boolean; colorIndex: number };
 type Patch = {
   type: "patch"; seq: number;
   worktrees?: Worktree[];                            // full list, present only when it changed
-  base?: { sha: string; upsert: { path: string; size: number }[]; remove: string[] };
+  base?: { sha: string; upsert: File[]; remove: string[] };
   overlays?: Record<WorktreeId, { upsert: ChangeEntry[]; remove: string[] }>;
   activity?: Activity[];
 };

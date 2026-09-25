@@ -328,3 +328,110 @@ func TestFireFilesSeesHeadMovedByStatus(t *testing.T) {
 	}
 	noPatch(t, ch)
 }
+
+// An uncommitted, non-deleted entry's Touched is the working-tree file's own
+// mtime.
+func TestUncommittedTouchedIsMtime(t *testing.T) {
+	r := initRepo(t, map[string]string{"README.md": "# demo\n"})
+	e, ch := openEngine(t, r.Path())
+	id := wtID(r.Path())
+
+	r.Write("b.txt", "b\n")
+	e.fire(context.Background(), string(id), ReasonFiles)
+	c, ok := findUpsert(nextPatch(t, ch), id, "b.txt")
+	if !ok {
+		t.Fatalf("b.txt not found in patch")
+	}
+	fi, err := os.Stat(filepath.Join(r.Path(), "b.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := fi.ModTime().UnixMilli(); c.Touched != want {
+		t.Fatalf("b.txt touched = %d, want mtime %d", c.Touched, want)
+	}
+}
+
+// An uncommitted deletion's Touched is when it was first observed, and must
+// not move on a later, unrelated recompute.
+func TestUncommittedDeletionTouchedIsStable(t *testing.T) {
+	r := initRepo(t, map[string]string{"a.txt": "a\n"})
+	e, ch := openEngine(t, r.Path())
+	id := wtID(r.Path())
+
+	r.Remove("a.txt")
+	e.fire(context.Background(), string(id), ReasonFiles)
+	first, ok := findUpsert(nextPatch(t, ch), id, "a.txt")
+	if !ok || first.Kind != model.Deleted || first.Touched == 0 {
+		t.Fatalf("a.txt = %+v (found %v), want a deleted entry with a non-zero Touched", first, ok)
+	}
+
+	// A later, unrelated recompute must see the same Touched for the deletion,
+	// whether or not it is even upserted again.
+	r.Write("other.txt", "o\n")
+	e.fire(context.Background(), string(id), ReasonFiles)
+	nextPatch(t, ch) // for other.txt; a.txt's deletion is unchanged so may not repeat here
+	e.fire(context.Background(), string(id), ReasonFiles)
+	noPatch(t, ch)
+
+	got, ok := snapEntry(e, id, "a.txt")
+	if !ok || got.Touched != first.Touched {
+		t.Fatalf("a.txt = %+v (found %v), want Touched still %d", got, ok, first.Touched)
+	}
+}
+
+// touchedRangeOnlyGit returns a git wrapper that fails any `log --name-only`
+// call whose arguments do not include an "old..new" revision range. A test
+// that swaps it in after the base touched-time cache is warm proves the
+// cache only ever walks incrementally afterwards, never the whole history
+// again.
+func touchedRangeOnlyGit(t *testing.T) string {
+	t.Helper()
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(t.TempDir(), "git")
+	script := "#!/bin/sh\n" +
+		"is_log=0; has_range=0\n" +
+		"for a in \"$@\"; do\n" +
+		"  case \"$a\" in\n" +
+		"    --name-only) is_log=1 ;;\n" +
+		"    *..*) has_range=1 ;;\n" +
+		"  esac\n" +
+		"done\n" +
+		"if [ \"$is_log\" = 1 ] && [ \"$has_range\" = 0 ]; then\n" +
+		"  echo 'orion test: full-history walk attempted' >&2\n" +
+		"  exit 2\n" +
+		"fi\n" +
+		"exec '" + real + "' \"$@\"\n"
+	if err := os.WriteFile(p, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// After the base touched-time cache has been computed once, a base branch
+// advance must only walk the new commits, never redo the whole history.
+func TestBaseTouchedCacheWalksIncrementally(t *testing.T) {
+	r := initRepo(t, map[string]string{"a.txt": "a\n"})
+	e, ch := openEngine(t, r.Path())
+
+	e.r = gitx.Runner{Git: touchedRangeOnlyGit(t)}
+	r.Write("b.txt", "b\n")
+	r.Add("b.txt")
+	sha := r.Commit("add b")
+	e.fire(context.Background(), keyRefs, ReasonRefs)
+	p := nextPatch(t, ch)
+	if p.Base == nil {
+		t.Fatalf("patch = %+v, want a base patch", p)
+	}
+	var got model.File
+	for _, f := range p.Base.Upsert {
+		if f.Path == "b.txt" {
+			got = f
+		}
+	}
+	if want := commitTimeMs(t, r, sha); got.Touched != want {
+		t.Fatalf("b.txt touched = %d, want %d (an incremental walk still found it)", got.Touched, want)
+	}
+}

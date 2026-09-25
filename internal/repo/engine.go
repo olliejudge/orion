@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"maps"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -30,8 +31,14 @@ type Engine struct {
 	work    sync.Mutex // serialises recomputes; guards the fields below
 	baseRef string
 	baseSha string
-	tree    map[string]int64
+	tree    map[string]model.File
 	wts     map[model.WorktreeID]*wtState
+	// touchedSha/touched cache the committer time of the latest commit
+	// touching each base-tree path, as of touchedSha ("" = no cache yet). When
+	// baseSha advances, computeBaseTouched walks only touchedSha..baseSha
+	// instead of the whole history.
+	touchedSha string
+	touched    map[string]int64
 	// routingIncomplete is set while a linked worktree's admin dir is unknown.
 	routingIncomplete bool
 	// watchRoots is set by Run: it receives the roots (outside the main
@@ -81,6 +88,11 @@ func Open(ctx context.Context, path, baseOverride string, r gitx.Runner) (*Engin
 	tree, err := baseTree(ctx, r, e.mainRoot, sha)
 	if err != nil {
 		return nil, err
+	}
+	if times, err := e.computeBaseTouched(ctx, sha, treeWant(tree)); err != nil {
+		e.logf(ctx, "base file times: %v", err)
+	} else {
+		applyTouched(tree, times)
 	}
 	e.baseRef, e.baseSha, e.tree = ref, sha, tree
 	e.work.Lock()
@@ -230,13 +242,53 @@ func (e *Engine) refresh(ctx context.Context, ws *wtState) bool {
 // publishing, or the committed files would briefly vanish. On error the last
 // good overlay is kept and its stamp cleared, so any later refresh retries.
 func (e *Engine) refreshStatus(ctx context.Context, ws *wtState) (bool, error) {
-	m, head, err := uncommittedOverlay(ctx, e.r, ws.g.Path)
+	m, head, err := uncommittedOverlay(ctx, e.r, ws.g.Path, ws.uncommitted, time.Now())
 	if err != nil {
 		ws.statusFor = stamp{}
 		return false, err
 	}
 	ws.uncommitted, ws.statusFor = m, stamp{ok: true, head: head}
 	return head != ws.g.Head, nil
+}
+
+// computeBaseTouched returns the committer time (unix seconds) of the latest
+// commit touching each path in want, as of sha, using and refreshing e's
+// cache. A repeat call with the same sha reuses the cache outright; when the
+// cache's sha is an ancestor of sha (the normal case: base only advances), it
+// walks just the new commits and merges them in, instead of the whole
+// history. Otherwise (first call, or base moved to unrelated history) it
+// walks from scratch, bounded to want. e.work must be held.
+func (e *Engine) computeBaseTouched(ctx context.Context, sha string, want map[string]bool) (map[string]int64, error) {
+	if sha == "" {
+		e.touchedSha, e.touched = "", nil
+		return nil, nil
+	}
+	if sha == e.touchedSha {
+		return e.touched, nil
+	}
+	if e.touchedSha != "" {
+		mb, err := gitx.MergeBase(ctx, e.r, e.mainRoot, e.touchedSha, sha)
+		if err != nil {
+			return nil, err
+		}
+		if mb == e.touchedSha {
+			delta, err := gitx.LogTouched(ctx, e.r, e.mainRoot, e.touchedSha+".."+sha, nil)
+			if err != nil {
+				return nil, err
+			}
+			merged := make(map[string]int64, len(e.touched)+len(delta))
+			maps.Copy(merged, e.touched)
+			maps.Copy(merged, delta)
+			e.touched, e.touchedSha = merged, sha
+			return e.touched, nil
+		}
+	}
+	times, err := gitx.LogTouched(ctx, e.r, e.mainRoot, sha, want)
+	if err != nil {
+		return nil, err
+	}
+	e.touched, e.touchedSha = times, sha
+	return e.touched, nil
 }
 
 // logf logs a recompute problem, unless ctx is done (then the failure is
