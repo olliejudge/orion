@@ -19,14 +19,23 @@ import { motionPolicy, watchReducedMotion, type Motion } from "./motion";
 import { focusFolder, follow, type CameraPath } from "./camera";
 import { MapNavigator } from "./navigate";
 import { Scene, type SceneNode } from "./scene";
-import { labelSpan, placeLabels, type LabelCandidate, type LabelSpot, LABEL_LINE_PX } from "./labels";
-import { HALO_RING_FRAC, TextureBank, labelWidth, renderArcLabel } from "./sprites";
+import {
+  LABEL_LINE_PX,
+  labelMinR,
+  labelSpan,
+  labelTier,
+  nextLevels,
+  placeLabels,
+  straightWidth,
+  type LabelCandidate,
+  type LabelSpot,
+} from "./labels";
+import { HALO_RING_FRAC, TextureBank, labelWidth, renderArcLabel, renderStraightLabel } from "./sprites";
 import { SETTLE_EPS, SPRING_OMEGA, isSettled, makeSpring, retarget, snapSpring, stepSpring, type Spring } from "./springs";
 import { aggregateLook, fileLook, touchSig, type AggregateLook, type FileLook, type Rings, type Theme } from "./style";
 
 export type { Theme } from "./style";
 
-const LABEL_MIN_R = 48; // on-screen px before a folder gets its name
 const LABEL_FADE_MS = 200; // labels fade in over time once placed at rest
 const LABEL_GAP_PAD_PX = 4; // outline clearance either side of a rim label
 const HALO_PX = 5; // halo peak this far outside the bubble, on screen
@@ -49,7 +58,7 @@ interface View {
   gKey: string;
   label: Sprite | null;
   labelKey: string;
-  labelR: number; // on-screen text radius the label was rendered for
+  labelR: number; // on-screen text radius (arc) or folder radius (straight) the label was rendered for
   labelShownAt: number | null; // when the label last appeared (for its fade-in)
 }
 
@@ -108,6 +117,8 @@ export class MapRenderer {
   #labelWidths = new Map<string, number>();
   #spots = new Map<string, LabelSpot>();
   #labelsFading = false;
+  // The next level below the folder in view (nextLevels), recomputed when the names or the view change.
+  #next: { labels: Map<string, string>; focus: string; set: Set<string> } | null = null;
 
   #theme: Theme = "vision";
   #isolated: WorktreeId | null = null;
@@ -435,7 +446,10 @@ export class MapRenderer {
       camBusy,
       spots: this.#spots,
     };
-    if (!camBusy) f.spots = this.#spots = this.#placeLabels(f);
+    if (!camBusy) {
+      this.#placeLabels(f);
+      f.spots = this.#spots;
+    }
     this.#labelsFading = false;
     for (const n of this.#scene.nodes.values()) this.#draw(n, f);
     for (const [path, v] of this.#views) {
@@ -470,7 +484,19 @@ export class MapRenderer {
     }
     root.addChild(g);
     (n.isDir ? this.#dirLayer : this.#fileLayer).addChild(root);
-    v = { kind, root, body, halo, flash: null, g, gKey: "", label: null, labelKey: "", labelR: 0, labelShownAt: null };
+    v = {
+      kind,
+      root,
+      body,
+      halo,
+      flash: null,
+      g,
+      gKey: "",
+      label: null,
+      labelKey: "",
+      labelR: 0,
+      labelShownAt: null,
+    };
     this.#views.set(n.path, v);
     return v;
   }
@@ -618,25 +644,39 @@ export class MapRenderer {
     return w;
   }
 
-  /** At rest: where each visible folder's name goes, with collisions pushed inward or hidden. */
-  #placeLabels(f: FrameCtx): Map<string, LabelSpot> {
+  /** The next level below the folder in view: the folders a click lands in (see nextLevels). */
+  #nextLevels(): Set<string> {
+    const c = this.#next;
+    if (c && c.labels === this.#labels && c.focus === this.#zoomPath) return c.set;
+    const set = nextLevels(this.#labels, this.#zoomPath);
+    this.#next = { labels: this.#labels, focus: this.#zoomPath, set };
+    return set;
+  }
+
+  /**
+   * At rest: where each visible folder's name goes, with collisions pushed
+   * inward, set straight or hidden.
+   */
+  #placeLabels(f: FrameCtx): void {
+    const next = this.#nextLevels();
     const cands: LabelCandidate[] = [];
     for (const n of this.#scene.nodes.values()) {
       if (!n.isDir || n.aggregate !== undefined || n.leaving) continue;
-      const name = this.#labels.get(n.path);
-      if (name === undefined) continue;
       // Wait until the folder stops growing/shrinking so labels never balloon.
       if (Math.abs(n.r.value - n.r.target) > 0.05 * Math.max(n.r.target, 1e-6)) continue;
       const R = n.r.value * f.k;
-      if (R < LABEL_MIN_R) continue;
+      const name = this.#labels.get(n.path);
+      if (name === undefined) continue;
+      const tier = labelTier(n.path, this.#zoomPath, next);
+      if (R < labelMinR(tier)) continue;
       const pos = this.#scene.drawPosition(n);
       const x = pos.x * f.k + f.ox;
       const y = pos.y * f.k + f.oy;
       const rim = rimView(x, y, R + LABEL_LINE_PX, f.rect);
       if (rim.kind === "hidden" || rim.kind === "covers") continue;
-      cands.push({ path: n.path, x, y, r: R, width: this.#labelWidth(name) });
+      cands.push({ path: n.path, x, y, r: R, width: this.#labelWidth(name), tier });
     }
-    return placeLabels(cands);
+    this.#spots = placeLabels(cands);
   }
 
   #hideLabel(v: View): void {
@@ -648,32 +688,36 @@ export class MapRenderer {
   #drawLabel(v: View, n: SceneNode, R: number, sx: number, sy: number, f: FrameCtx): number {
     const name = this.#labels.get(n.path);
     const spot = f.spots.get(n.path);
-    if (name === undefined || spot === undefined || n.leaving || R < LABEL_MIN_R) {
+    if (name === undefined || spot === undefined || n.leaving || R < labelMinR(spot.tier)) {
       this.#hideLabel(v);
       return 0;
     }
-    const textR = R - spot.inset * LABEL_LINE_PX;
+    const straight = spot.kind === "straight";
+    // What the label is laid out for: its text radius on the rim, or the folder's radius across its middle.
+    const size = straight ? R : R - spot.inset * LABEL_LINE_PX;
     const dpr = this.#app?.renderer.resolution ?? 1;
-    const key = `${name}|${Math.round(textR / 12)}|${this.#theme}`;
+    const key = `${name}|${spot.kind}|${Math.round(size / 12)}|${this.#theme}`;
     if (key !== v.labelKey && (!f.camBusy || !v.label)) {
       const color = this.#theme === "night" ? "rgba(235,235,245,0.55)" : "rgba(235,235,245,0.78)";
-      const lbl = renderArcLabel(name, textR, color, dpr);
+      const arc = straight ? null : renderArcLabel(name, size, color, dpr);
+      const tex = straight ? (renderStraightLabel(name, straightWidth(size), color, dpr)?.texture ?? null) : (arc?.texture ?? null);
       if (v.label) {
         v.label.texture.destroy(true);
         v.label.destroy();
         v.label = null;
       }
       v.labelKey = key;
-      if (lbl) {
-        const s = new Sprite(lbl.texture);
-        s.anchor.set(lbl.originX / lbl.texture.width, lbl.originY / lbl.texture.height);
+      if (tex) {
+        const s = new Sprite(tex);
+        if (arc) s.anchor.set(arc.originX / tex.width, arc.originY / tex.height);
+        else s.anchor.set(0.5);
         this.#labelLayer.addChild(s);
         v.label = s;
-        v.labelR = textR;
+        v.labelR = size;
       }
     }
     // Mid-zoom a cached label would balloon or shrink; hide it until it is re-rendered at rest.
-    const ratio = textR / v.labelR;
+    const ratio = size / v.labelR;
     if (!v.label || (f.camBusy && (ratio > 1.15 || ratio < 0.87))) {
       this.#hideLabel(v);
       return 0;
@@ -685,7 +729,7 @@ export class MapRenderer {
     v.label.position.set(sx, sy);
     v.label.scale.set(ratio / dpr);
     v.label.alpha = fade * n.alpha.value;
-    return spot.inset === 0 ? labelSpan(this.#labelWidth(name), textR) / 2 + LABEL_GAP_PAD_PX / textR : 0;
+    return !straight && spot.inset === 0 ? labelSpan(this.#labelWidth(name), size) / 2 + LABEL_GAP_PAD_PX / size : 0;
   }
 
   #drawHighlight(f: FrameCtx): void {
