@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -27,6 +28,16 @@ import (
 // baseContext is the parent of run's signal context; tests replace it with a
 // cancellable one to stand in for Ctrl-C.
 var baseContext = context.Background
+
+// tokenPath is where the auth token is kept, so orion's URL stays the same
+// across runs. Tests point it at a temp dir.
+var tokenPath = func() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "orion", "token"), nil
+}
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -93,7 +104,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	srv, err := server.Start(ctx, eng, server.Options{Port: *port, Dev: *dev, Assets: webassets.FS()})
+	srv, err := server.Start(ctx, eng, server.Options{
+		Port: *port, Dev: *dev, Assets: webassets.FS(), Token: loadToken(stderr),
+	})
 	if err != nil {
 		if ctx.Err() != nil {
 			return 0
@@ -142,6 +155,20 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	return 0
+}
+
+// loadToken returns the stored token, or "" (a random token for this run
+// only) with a warning if it cannot be read or created.
+func loadToken(stderr io.Writer) string {
+	path, err := tokenPath()
+	if err == nil {
+		var tok string
+		if tok, err = server.LoadToken(path); err == nil {
+			return tok
+		}
+	}
+	fmt.Fprintln(stderr, "orion: using a one-off URL, as the saved token is unavailable:", firstLine(err))
+	return ""
 }
 
 func firstLine(err error) string {

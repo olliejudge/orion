@@ -1,14 +1,11 @@
 // Package server serves the embedded UI and streams model patches over a
-// WebSocket, guarded by a per-run token and Host/Origin checks.
+// WebSocket, guarded by a token and Host/Origin checks.
 package server
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/subtle"
-	"encoding/hex"
 	"errors"
-	"fmt"
 	"io/fs"
 	"net"
 	"net/http"
@@ -27,6 +24,11 @@ import (
 // overwriting the first one's cookie.
 const cookiePrefix = "orion_t_"
 
+// cookieMaxAge keeps the auth cookie across browser restarts (Chrome caps
+// cookie lifetimes at 400 days), so a bookmarked http://127.0.0.1:PORT/
+// keeps working while the token is stable.
+const cookieMaxAge = 400 * 24 * 60 * 60
+
 // VitePort is the Vite dev server's port. With Options.Dev the browser page
 // comes from there and Vite proxies /ws to us, so its origin is allowed too.
 const VitePort = 5173
@@ -44,10 +46,12 @@ type Source interface {
 // Options configures Start. Port 0 picks any free port. Dev serves only /ws
 // (Vite serves the UI on VitePort and proxies /ws). Assets is the built UI;
 // when it has no index.html, its fallback.html (or a built-in page) is served.
+// Token is the auth token (see LoadToken); empty means a random one per run.
 type Options struct {
 	Port   int
 	Dev    bool
 	Assets fs.FS
+	Token  string
 }
 
 // Server is a running orion HTTP server.
@@ -77,17 +81,19 @@ func Start(ctx context.Context, src Source, opt Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	tok := make([]byte, 32)
-	if _, err := rand.Read(tok); err != nil {
-		_ = ln.Close()
-		return nil, fmt.Errorf("generate token: %w", err)
+	tok := opt.Token
+	if tok == "" {
+		if tok, err = newToken(); err != nil {
+			_ = ln.Close()
+			return nil, err
+		}
 	}
 	s := &Server{
 		ctx:   ctx,
 		src:   src,
 		opt:   opt,
 		port:  strconv.Itoa(ln.Addr().(*net.TCPAddr).Port),
-		token: hex.EncodeToString(tok),
+		token: tok,
 		done:  make(chan struct{}),
 	}
 	s.cookie = cookiePrefix + s.port
@@ -151,7 +157,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/" && s.validToken(r.URL.Query().Get("t")) {
 		http.SetCookie(w, &http.Cookie{
-			Name: s.cookie, Value: s.token, Path: "/",
+			Name: s.cookie, Value: s.token, Path: "/", MaxAge: cookieMaxAge,
 			HttpOnly: true, SameSite: http.SameSiteStrictMode,
 		})
 		http.Redirect(w, r, "/", http.StatusFound)

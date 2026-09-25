@@ -205,7 +205,7 @@ Vite, TypeScript, **Svelte 5** for panels and chrome, **PixiJS v8** (WebGL) for 
 
 - `orion [path] [--port N] [--no-open] [--base BRANCH] [--version]`.
 - Binds `127.0.0.1` only. The default port is 7070; if it is taken, the next free port is used.
-- A random 32-byte token is generated per run. The first request must carry `?t=<token>`; the server then sets an HttpOnly cookie, and every HTTP and WebSocket request must present the cookie or query token. The `Host` header must be `127.0.0.1:<port>` or `localhost:<port>`, and the WebSocket `Origin` must match. These checks prevent other sites or DNS-rebinding attacks from reading repo data.
+- A random 32-byte token is generated on first run and kept (mode 0600) in `<user config dir>/orion/token`, so the URL is stable across runs; if that file is unavailable, a one-off token is used for the run. The first request must carry `?t=<token>`; the server then sets an HttpOnly cookie, and every HTTP and WebSocket request must present the cookie or query token. The `Host` header must be `127.0.0.1:<port>` or `localhost:<port>`, and the WebSocket `Origin` must match. These checks prevent other sites or DNS-rebinding attacks from reading repo data.
 - Ctrl-C shuts down gracefully: watchers stop, clients get a close frame, and the process exits with code 0.
 
 ## 8. Error handling

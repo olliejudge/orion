@@ -28,7 +28,10 @@ func TestMain(m *testing.M) {
 	if os.Getenv(runMainEnv) == "1" {
 		main() // os.Args[1:] are orion's arguments
 	}
-	os.Exit(m.Run())
+	cleanup := useTempTokenDir()
+	code := m.Run()
+	cleanup()
+	os.Exit(code)
 }
 
 // TestMainExitsZeroOnSIGINTWithBrowserTab runs orion as a real process with
@@ -47,7 +50,11 @@ func TestMainExitsZeroOnSIGINTWithBrowserTab(t *testing.T) {
 	}
 
 	cmd := exec.Command(os.Args[0], "--port", "0", r.Path())
-	cmd.Env = append(os.Environ(), runMainEnv+"=1", "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// A temp HOME keeps the subprocess's saved token (os.UserConfigDir) out
+	// of the user's real config dir.
+	home := t.TempDir()
+	cmd.Env = append(os.Environ(), runMainEnv+"=1", "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"HOME="+home, "XDG_CONFIG_HOME="+filepath.Join(home, ".config"))
 	out, errOut := &syncBuffer{}, &syncBuffer{}
 	cmd.Stdout, cmd.Stderr = out, errOut
 	if err := cmd.Start(); err != nil {
