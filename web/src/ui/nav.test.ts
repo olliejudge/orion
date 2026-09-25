@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Circle } from "../layout/pack";
 import { labelNames } from "../render/geometry";
-import { childLevels, clickTarget, crumbs, doubleClickTarget, stepIn, upOne } from "./nav";
+import { childLevels, clickTarget, crumbs, doubleClickTarget, navigateTarget, stepIn, upOne } from "./nav";
 
 const c = (path: string, r: number, depth: number, isDir = true): Circle => ({ path, x: 0, y: 0, r, depth, isDir });
 
@@ -127,5 +127,26 @@ describe("doubleClickTarget", () => {
 
   it("returns to the root outside the repo", () => {
     expect(doubleClickTarget(null, layout, labels, "web/src/components")).toBe("");
+  });
+});
+
+describe("navigateTarget", () => {
+  it("lands on a folder that's on the map", () => {
+    expect(navigateTarget("web/src/components", layout)).toBe("web/src/components");
+    expect(navigateTarget("docs", layout)).toBe("docs");
+  });
+
+  it("lands on a file's own folder", () => {
+    expect(navigateTarget("web/src/main.ts", layout)).toBe("web/src");
+    expect(navigateTarget("docs/guide.md", layout)).toBe("docs");
+  });
+
+  it("falls back to the nearest existing ancestor for a path that's collapsed or gone", () => {
+    expect(navigateTarget("vendor/sub/deep/f.js", layout)).toBe("vendor");
+    expect(navigateTarget("gone/away", layout)).toBe("");
+  });
+
+  it("lands on the root for a path with no shown ancestor but the root", () => {
+    expect(navigateTarget("", layout)).toBe("");
   });
 });

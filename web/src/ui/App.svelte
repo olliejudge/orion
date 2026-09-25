@@ -21,6 +21,7 @@
   import Legend from "./Legend.svelte";
   import LivePill from "./LivePill.svelte";
   import MapKey from "./MapKey.svelte";
+  import { decodeLocation, HashSync } from "./location";
   import {
     crumbsSlot,
     dirFilterTreeMaxHeight,
@@ -33,7 +34,8 @@
     type HoverTarget,
     type TooltipInfo,
   } from "./models";
-  import { clickTarget, crumbs, doubleClickTarget, stepIn, upOne } from "./nav";
+  import { clickTarget, crumbs, doubleClickTarget, navigateTarget, stepIn, upOne } from "./nav";
+  import { setNavigateHandler } from "./navigate";
   import { applyTheme, loadTheme, saveTheme, type Theme } from "./theme";
   import Tooltip from "./Tooltip.svelte";
 
@@ -88,6 +90,8 @@
   let scale = 1;
   let hovered: string | null = null; // the activity row's path under the pointer
   let mapHover: HoverTarget | null = null; // the map's path under the pointer (drives the tooltip)
+  let locationSync: HashSync | null = null; // keeps the URL hash following zoomPath (see location.ts)
+  let restoredHash = false; // the hash is read back at most once, on the first layout (see relayout)
   // Relayouts (patches, resizes, theme and linger changes) run at most once per frame.
   const queue = new FrameCoalescer((c) => {
     try {
@@ -157,8 +161,40 @@
     pillX = (f.free.x0 + f.free.x1) / 2;
     renderer.setFreeArea(f.free);
     renderer.update(f.layout, f.visuals, change);
+    if (!restoredHash) {
+      restoredHash = true;
+      restoreFromHash();
+    }
     highlight(hovered); // what stands in for the hovered path may have changed
     tip = hoverTip(s, layout, mapHover, zoomPath, excluded); // the file under a still pointer may have changed
+  }
+
+  /** Reads the URL hash back once the first layout exists; falls back to the nearest existing ancestor if the path is gone (see location.ts). */
+  function restoreFromHash(): void {
+    const decoded = decodeLocation(location.hash);
+    if (decoded === null) return; // no location in the URL: stay home
+    const target = decoded === "" ? "" : (nearestShown(decoded, revealAndLayout(decoded)) ?? "");
+    zoom(target);
+    if (target === decoded) locationSync?.sync(target);
+    else locationSync?.replaceNow(target);
+  }
+
+  /**
+   * If `path` sits behind a folder the Folders filter hides, un-hides it and
+   * returns a layout that already reflects that, so a stored location or
+   * navigateTo lands exactly there instead of silently landing on the
+   * nearest ancestor the filter still shows (`excluded` itself only takes
+   * effect on the next relayout, which is too late for the zoom this same
+   * turn is about to make). Otherwise returns the current layout unchanged.
+   */
+  function revealAndLayout(path: string): Map<string, Circle> {
+    if (path === "" || !isExcluded(path, excluded)) return layout;
+    setExcluded(new Set([...excluded].filter((dir) => dir !== path && !path.startsWith(`${dir}/`))));
+    const s = store.state;
+    const w = mapEl?.clientWidth ?? 0;
+    const h = mapEl?.clientHeight ?? 0;
+    if (!s || w <= 0 || h <= 0) return layout;
+    return computeFrame(s, w, h, scale, mapInsets(theme, w, h, legendBox, bottomLeftBox), linger.paths(), excluded).layout;
   }
 
   // A file inside a collapsed folder is highlighted as the folder's aggregate.
@@ -203,6 +239,12 @@
     renderer?.zoomTo(path);
   }
 
+  /** A discrete navigation (click, double-click, a breadcrumb, Esc, an Activity row, navigateTo): zooms and pushes a history entry. */
+  function goTo(path: string): void {
+    zoom(path);
+    locationSync?.push(path);
+  }
+
   function toggleFullscreen(): void {
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
     else void document.documentElement.requestFullscreen?.().catch(() => {});
@@ -214,13 +256,15 @@
     else if (action === "zoomOut") {
       // Esc backs out one step: first the isolation, then the zoom.
       if (isolated !== null) isolated = null;
-      else zoom(upOne(zoomPath, layout, labels));
+      else goTo(upOne(zoomPath, layout, labels));
     }
     else if (action === "fullscreen") toggleFullscreen();
     // + / = steps in toward the folder under the pointer, or the largest
     // child of the folder in view when the pointer isn't over the map.
-    else if (action === "zoomIn") zoom(stepIn(mapHover?.path ?? null, layout, labels, zoomPath));
-    else if (action === "home") zoom("");
+    else if (action === "zoomIn") goTo(stepIn(mapHover?.path ?? null, layout, labels, zoomPath));
+    else if (action === "home") goTo("");
+    else if (action === "back") history.back();
+    else if (action === "forward") history.forward();
   }
 
   onMount(() => {
@@ -230,6 +274,21 @@
     const tick = setInterval(() => (now = Date.now()), 5000);
     const onResize = (): void => queue.request(NO_CHANGE);
     let stop = (): void => {};
+    locationSync = new HashSync(decodeLocation(location.hash) ?? "");
+    // The browser changed the URL itself (Back/Forward, or a hand-edited
+    // hash): zoom to match without pushing a new entry (see location.ts).
+    const onLocationChange = (): void => {
+      const decoded = decodeLocation(location.hash);
+      const target = decoded === null || decoded === "" ? "" : (nearestShown(decoded, revealAndLayout(decoded)) ?? "");
+      zoom(target);
+      locationSync?.sync(target);
+    };
+    window.addEventListener("popstate", onLocationChange);
+    window.addEventListener("hashchange", onLocationChange);
+    // A reload right after a scroll-zoom shouldn't lose the last debounced move.
+    const onUnload = (): void => locationSync?.flush();
+    window.addEventListener("pagehide", onUnload);
+    const offNavigate = setNavigateHandler((path) => goTo(navigateTarget(path, revealAndLayout(path))));
     // The repo this page has shown since it loaded, so a reconnect that
     // lands on a different repo (orion restarted serving a different repo
     // on this port) can be told apart from one that lands back on the same
@@ -273,10 +332,14 @@
         });
         r.onClick((path) => {
           beforeClick = zoomPath;
-          zoom(clickTarget(path, layout, labels, zoomPath));
+          goTo(clickTarget(path, layout, labels, zoomPath));
         });
-        r.onDoubleClick((path) => zoom(doubleClickTarget(path, layout, labels, beforeClick)));
-        r.onFocus((path) => (zoomPath = path));
+        r.onDoubleClick((path) => goTo(doubleClickTarget(path, layout, labels, beforeClick)));
+        // Free camera moves (wheel zoom, drag) update the hash in place, debounced (see location.ts).
+        r.onFocus((path) => {
+          zoomPath = path;
+          locationSync?.replace(path);
+        });
         r.onHover((path, at) => {
           mapHover = path === null ? null : { path, at };
           tip = hoverTip(repo, layout, mapHover, zoomPath, excluded);
@@ -300,6 +363,10 @@
       if (lingerTimer !== null) clearTimeout(lingerTimer);
       queue.cancel();
       window.removeEventListener("resize", onResize);
+      window.removeEventListener("popstate", onLocationChange);
+      window.removeEventListener("hashchange", onLocationChange);
+      window.removeEventListener("pagehide", onUnload);
+      offNavigate();
       off();
       stop();
       r.destroy();
@@ -328,7 +395,7 @@
     onIsolate={(id) => (isolated = id)}
     onFootprint={(b) => (legendBox = b)}
     reserveBottom={Math.max(64, bottomLeftBox.height + 32)} />
-  <Activity {repo} {now} {excluded} onHover={highlight} onSelect={(p) => zoom(shownFolder(p, layout))} />
+  <Activity {repo} {now} {excluded} onHover={highlight} onSelect={(p) => goTo(shownFolder(p, layout))} />
 {/if}
 {#if repo && !noWebGL}
   <DirFilter
@@ -348,7 +415,7 @@
     crumbs={crumbs(zoomPath, layout, labels, repo.repo.name)}
     slot={crumbsAt}
     onMeasure={(b) => (crumbsBox = b)}
-    onSelect={zoom} />
+    onSelect={goTo} />
 {/if}
 <Tooltip info={tip?.info ?? null} x={tip?.x ?? 0} y={tip?.y ?? 0} />
 

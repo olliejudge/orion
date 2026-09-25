@@ -3,6 +3,7 @@
 // whose only child is a folder, see labelNames) count as one level, so every
 // click, breadcrumb and step out moves by exactly one visible name.
 import type { Circle } from "../layout/pack";
+import { nearestShown } from "../layout/shown";
 import { parentDir } from "../render/geometry";
 
 export interface Crumb {
@@ -110,4 +111,23 @@ export function stepIn(hover: string | null, layout: Map<string, Circle>, labels
   if (hover !== null && hover !== current && isWithin(hover, current) && layout.has(hover)) return clickTarget(hover, layout, labels, current);
   const kids = childLevels(current, layout, labels);
   return kids.length > 0 ? kids[0]!.path : current;
+}
+
+/**
+ * Where the public `navigateTo(path)` hook zooms (see ui/navigate.ts), and
+ * where a stored location (a URL hash, on load or `popstate`) resolves to:
+ * `path` itself when it is a folder on the map, its folder when it is a file
+ * on the map, or the nearest existing ancestor otherwise (a collapsed
+ * folder's aggregate, or the root) — the same "land on what's there" rule a
+ * click follows. This is layout-only: it doesn't know a path can be missing
+ * because the Folders filter hides it rather than because it's gone. A
+ * caller that also tracks hidden folders (App.svelte's `revealAndLayout`)
+ * un-hides `path` first and passes in a `layout` that already reflects that,
+ * so this still lands exactly on it instead of silently landing on the
+ * nearest folder the filter still shows.
+ */
+export function navigateTarget(path: string, layout: Map<string, Circle>): string {
+  const c = layout.get(path);
+  const goal = c && !c.isDir ? parentDir(path) : path;
+  return nearestShown(goal, layout) ?? "";
 }
