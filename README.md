@@ -4,7 +4,7 @@ A live, beautiful map of your git repository. Watch files appear, change, move a
 
 ![Orion in the Vision theme, mapping the synthetic "nebula" demo repo: nested folder circles with glowing clusters of changed files in eight worktree colours, a legend of worktree pills with change counts at the top left, the map key at the bottom left, and the activity stream on the right](docs/images/orion-demo.png)
 
-Orion draws the repo as nested bubbles: folders are circles, files are bubbles sized by bytes. Each worktree gets a colour, and whatever it touches glows in that colour. Uncommitted work shows as a faint ghost until it is committed, stays tinted while it lives only on its branch, and shimmers back to normal once it is merged. It's a single binary that serves the map to your browser; nothing leaves your machine.
+Orion draws the repo as nested bubbles: folders are circles, files are bubbles sized by bytes. Each worktree gets a colour, and whatever it touches fills with that colour; a small mark says what happened to it, and brightness says how recently. New files get a +, deleted ones a ×, committed work a ring while it lives only on its branch, and everything shimmers back to grey once it is merged. It's a single binary that serves the map to your browser; nothing leaves your machine.
 
 ![Animation of Orion following seven simulated agents in the synthetic "nebula" demo repo: bubbles appear and glow in each worktree's colour, the change counts tick up, and commit rows, merge commits included, scroll into the activity stream](docs/images/orion-live.gif)
 
@@ -14,19 +14,20 @@ The page has its own collapsible key in the bottom-left corner. It shows these m
 
 - **Circles are folders**, nested as they are on disk, with the folder's name set along the top of its circle.
 - **Bubbles are files.** A bubble's area grows with the file's size in bytes.
-- **Colour is the worktree.** Idle files keep a colour by file type (Vision) or a quiet graphite (Night). Whatever a worktree touches takes on that worktree's colour.
+- **Colour is the worktree.** Unchanged files are quiet grey discs. Whatever a worktree touches is filled with that worktree's colour.
+- **Brightness is recency.** Bubbles are brightest when just touched and fade over an hour, a day and a week, to faint after a few months. Unchanged files fade by their last commit, so busy parts of the repo stand out from cold ones; changed files always stay brighter than unchanged ones. Hover a file for the exact time.
 
 Every change is shown relative to the **base branch**, and goes through three stages:
 
 | On the map | Meaning |
 |---|---|
-| Ghost bubble: faint fill in the worktree's colour, dashed outline | A new file that isn't committed yet |
-| Normal bubble with a glowing halo and a dashed ring | An existing file with uncommitted edits |
-| Solid bubble tinted in the worktree's colour, thin solid ring | Committed on that worktree's branch, but not yet in the base branch |
-| Bubble shrunk to a faint outline | Deleted (it stays until the deletion reaches the base branch) |
+| Filled in the worktree's colour, with a soft glow | An existing file with uncommitted edits |
+| Filled in the worktree's colour with a **+** | A new file that isn't committed yet |
+| Filled in the worktree's colour, thin solid ring | Committed on that worktree's branch, but not yet in the base branch |
+| Hollow, smaller, with a **×** | Deleted (it stays until the deletion reaches the base branch) |
 | Bubble gliding to a new place | Renamed or moved |
 | Ring split into coloured arcs | Touched by more than one worktree |
-| A brief shimmer, then back to its file-type colour | Merged into the base branch |
+| A brief shimmer, then back to grey | Merged into the base branch |
 
 The main worktree is always blue ("you"). Other worktrees get colours in the order they first become active. With the default base (`origin`'s default branch), unpushed commits on `main` count as "on a branch" until they are pushed, because they haven't landed yet.
 
