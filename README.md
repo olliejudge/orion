@@ -48,7 +48,7 @@ macOS and Linux, with `git` 2.30 or newer:
 brew install olliejudge/tap/orion
 ```
 
-You can also download a tarball for your platform from the [releases page](https://github.com/olliejudge/orion/releases), unpack it and put `orion` on your `PATH`. On macOS, if Gatekeeper blocks a build that isn't notarized, clear the download quarantine first: `xattr -d com.apple.quarantine ./orion`. Notarized releases don't need this.
+You can also download a tarball for your platform from the [releases page](https://github.com/olliejudge/orion/releases), unpack it and put `orion` on your `PATH`. Releases from v0.1.0 on are signed and notarized, so macOS runs them without a Gatekeeper prompt. If you build from source or grab a snapshot build (e.g. from a fork), clear the download quarantine first: `xattr -d com.apple.quarantine ./orion`.
 
 To build it yourself, see [Building from source](#building-from-source).
 
