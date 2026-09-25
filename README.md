@@ -2,9 +2,43 @@
 
 A live, beautiful map of your git repository. Watch files appear, change, move and get committed in real time, across every worktree, as you and your coding agents work.
 
-![Orion showing the synthetic "nebula" demo repo with three agent worktrees](docs/images/orion-demo.png)
+![Orion in the Vision theme, mapping the synthetic "nebula" demo repo: nested folder circles with glowing clusters of changed files in eight worktree colours, a legend of worktree pills with change counts at the top left, the map key at the bottom left, and the activity stream on the right](docs/images/orion-demo.png)
 
-Orion draws the repo as nested bubbles: folders are circles, files are bubbles sized by bytes. Each worktree gets a colour, and whatever it touches glows in that colour. Uncommitted work shows as a faint ghost until it is committed, stays tinted while it lives only on its branch, and shimmers back to normal once it is merged.
+Orion draws the repo as nested bubbles: folders are circles, files are bubbles sized by bytes. Each worktree gets a colour, and whatever it touches glows in that colour. Uncommitted work shows as a faint ghost until it is committed, stays tinted while it lives only on its branch, and shimmers back to normal once it is merged. It's a single binary that serves the map to your browser; nothing leaves your machine.
+
+![Animation of Orion following seven simulated agents in the synthetic "nebula" demo repo: bubbles appear and glow in each worktree's colour, the change counts tick up, and commit rows, merge commits included, scroll into the activity stream](docs/images/orion-live.gif)
+
+## Reading the map
+
+The page has its own collapsible key in the bottom-left corner. It shows these marks, drawn the way the map draws them, and remembers whether you left it open. Here is the same thing in words:
+
+- **Circles are folders**, nested as they are on disk, with the folder's name set along the top of its circle.
+- **Bubbles are files.** A bubble's area grows with the file's size in bytes.
+- **Colour is the worktree.** Idle files keep a colour by file type (Vision) or a quiet graphite (Night). Whatever a worktree touches takes on that worktree's colour.
+
+Every change is shown relative to the **base branch**, and goes through three stages:
+
+| On the map | Meaning |
+|---|---|
+| Ghost bubble: faint fill in the worktree's colour, dashed outline | A new file that isn't committed yet |
+| Normal bubble with a glowing halo and a dashed ring | An existing file with uncommitted edits |
+| Solid bubble tinted in the worktree's colour, thin solid ring | Committed on that worktree's branch, but not yet in the base branch |
+| Bubble shrunk to a faint outline | Deleted (it stays until the deletion reaches the base branch) |
+| Bubble gliding to a new place | Renamed or moved |
+| Ring split into coloured arcs | Touched by more than one worktree |
+| A brief shimmer, then back to its file-type colour | Merged into the base branch |
+
+The main worktree is always blue ("you"). Other worktrees get colours in the order they first become active. With the default base (`origin`'s default branch), unpushed commits on `main` count as "on a branch" until they are pushed, because they haven't landed yet.
+
+Around the map:
+
+- **Legend** (top left): the repo, the branch it is compared with, and a pill for each active worktree with its count of changed files. Idle worktrees fold into "+N idle".
+- **Activity stream** (right): the latest changes, commits ("Committed 4 files") and merges ("Merged 12 files into main"), newest first.
+- **Key** (bottom left): what each kind of mark means. Click "Key" to fold it away or open it again.
+- **Tooltip**: hover any bubble for its full path, its size, and which worktrees are touching it and at what stage.
+- **Status pill** (bottom): "Live" while connected. If Orion stops, the pill says so, and the page picks up again when Orion restarts.
+
+With `prefers-reduced-motion` set, bubbles and the camera jump instead of animating, and a merge gets a brief static highlight instead of the shimmer.
 
 ## Install
 
@@ -15,6 +49,8 @@ brew install olliejudge/tap/orion
 ```
 
 You can also download a tarball for your platform from the [releases page](https://github.com/olliejudge/orion/releases), unpack it and put `orion` on your `PATH`. On macOS, if Gatekeeper blocks a build that isn't notarized, clear the download quarantine first: `xattr -d com.apple.quarantine ./orion`. Notarized releases don't need this.
+
+To build it yourself, see [Building from source](#building-from-source).
 
 ## Usage
 
@@ -40,35 +76,26 @@ orion [path] [--port N] [--no-open] [--base BRANCH] [--dev] [--version]
 
 `orion -h` prints the usage.
 
-In the browser:
+## Getting around
 
-- Click a folder to zoom in. Press Esc or click the background to zoom out.
-- Click a worktree in the legend to isolate it. Click it again, or press Esc, to show everything.
-- Hover a row in the activity stream to find that file on the map. Click the row to zoom to it.
-- Press `N` to switch between the Vision and Night themes. Press `F` for full screen.
+<img src="docs/images/orion-zoom.png" alt="Orion zoomed into the internal folder of the synthetic &quot;nebula&quot; demo repo: breadcrumbs reading nebula / internal at the top, curved folder labels, ghost and glowing bubbles, and a tooltip on a file an agent worktree has moved away" width="600">
 
-## What you're looking at
+- **Zoom** with the mouse wheel, two-finger scroll or a trackpad pinch; the map zooms around the pointer. **Drag** to pan.
+- **Click** a folder to zoom in one level towards it, or **double-click** to go straight there. Clicking the folder you're in steps out one level, and clicking outside the repo goes back to the whole repo.
+- **Breadcrumbs** at the top show where you are; click one to jump back to it.
+- **Esc** or **Backspace** steps out one level (if a worktree is isolated, the first press clears that).
+- Click a worktree in the **legend** to isolate it; the others dim. Click it again, or press Esc, to show everything.
+- Hover a row in the **activity stream** to find that file on the map. Click the row to zoom to it.
+- Press **N** to switch between the Vision and Night themes, and **F** for full screen.
 
-Every change is shown relative to the **base branch**, and goes through three stages:
+## Themes
 
-| On the map | Meaning |
-|---|---|
-| Ghost bubble: faint fill in the worktree's colour, dashed outline | A new file that isn't committed yet |
-| Normal bubble with a glowing halo and a dashed ring | An existing file with uncommitted edits |
-| Solid bubble tinted in the worktree's colour, thin solid ring | Committed on that worktree's branch, but not yet in the base branch |
-| Bubble shrunk to a faint outline | Deleted (it stays until the deletion reaches the base branch) |
-| Bubble gliding to a new place | Renamed or moved |
-| Ring split into coloured arcs | Touched by more than one worktree |
-| A brief shimmer, then back to its file-type colour | Merged into the base branch |
+Orion has two themes and remembers your choice:
 
-The main worktree is always blue ("you"). Other worktrees get colours in the order they first become active. With the default base (`origin`'s default branch), unpushed commits on `main` count as "on a branch" until they are pushed, because they haven't landed yet.
+- **Vision** (the default, above): frosted-glass panels, and files shaded in colours by file type.
+- **Night** (below): a black background with idle files in graphite, so only worktree activity is in colour. The legend fades until you point at it, the key stays dim until you do, and the activity stream moves to the bottom right, its rows fading with age.
 
-The legend (top left) lists active worktrees with a count of changed files. The activity stream (right) lists the latest changes, commits and merges, newest first. Hover any bubble for its full path, size, and which worktrees are touching it.
-
-There are two themes, and Orion remembers your choice:
-
-- **Vision** (the default): frosted-glass panels, and files shaded in colours by file type.
-- **Night**: a black background with idle files in graphite, so only worktree activity is in colour. The legend fades until you point at it, and the activity stream moves to the bottom right, its rows fading with age.
+![Orion in the Night theme on the synthetic "nebula" demo repo: graphite bubbles on black, with each agent worktree's files glowing in its own colour, the legend revealed on hover, the map key at the bottom left and the activity stream fading at the bottom right](docs/images/orion-night.png)
 
 ## Privacy and security
 
@@ -86,6 +113,8 @@ orion <the path it printed>      # in another terminal
 ```
 
 Options: `--dir DIR`, `--agents N` (1–8), `--seed N`, `--speed X`, and `--once` (with `--steps N`, default 40) to set up, run a fixed number of steps and exit. The demo only ever deletes a directory it created itself.
+
+The images in this README come from `go run ./scripts/demo --agents 7 --seed 7 --speed 3`, a minute or two in.
 
 ## Building from source
 
