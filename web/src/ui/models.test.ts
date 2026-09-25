@@ -2,7 +2,20 @@ import { describe, expect, it } from "vitest";
 import { makeState, wt } from "../layout/fixtures";
 import type { Circle } from "../layout/pack";
 import type { Activity } from "../protocol";
-import { ACTIVE_WINDOW_MS, activityRows, hoverTip, legendModel, mapInsets, rowFade, shownFolder, tooltipInfo, tooltipPosition } from "./models";
+import {
+  ACTIVE_WINDOW_MS,
+  activityRows,
+  crumbsSize,
+  crumbsSlot,
+  crumbsStart,
+  hoverTip,
+  legendModel,
+  mapInsets,
+  rowFade,
+  shownFolder,
+  tooltipInfo,
+  tooltipPosition,
+} from "./models";
 
 const NOW = 10_000_000;
 
@@ -262,5 +275,86 @@ describe("tooltipPosition", () => {
 
   it("stays inside the viewport on both axes even when it cannot flip", () => {
     expect(tooltipPosition(150, 60, 280, 300, 300, 320)).toEqual({ left: 8, top: 8 });
+  });
+});
+
+describe("crumbsSlot", () => {
+  const legend = { width: 340, height: 300 };
+  const short = { full: 170, min: 170 };
+  const long = { full: 420, min: 200 };
+  // The band's left edge: right of the legend (gutter + width + gap).
+  const lo = 16 + 340 + 8;
+
+  it("centres over the map's free area when that clears the legend", () => {
+    expect(crumbsSlot("vision", 1500, legend, 750, short)).toEqual({ x: 750, top: 16, maxWidth: 560 });
+  });
+
+  it("centres on the viewport before the map has a free area", () => {
+    expect(crumbsSlot("night", 1500, legend, null, short).x).toBe(750);
+  });
+
+  it("slides right, clear of the legend, when centring would overlap it", () => {
+    const s = crumbsSlot("vision", 1024, legend, 400, short);
+    expect(s.top).toBe(16);
+    expect(s.x - short.full / 2).toBe(lo);
+    expect(s.maxWidth).toBe(1024 - 16 - 288 - 8 - lo);
+  });
+
+  it("slides left, clear of Vision's activity panel", () => {
+    const s = crumbsSlot("vision", 1280, undefined, 1000, short);
+    expect(s.x + short.full / 2).toBe(1280 - 16 - 288 - 8);
+  });
+
+  it("uses the full width in Night and on narrow screens, where the activity is at the bottom", () => {
+    expect(crumbsSlot("night", 1024, legend, 980, short).x + short.full / 2).toBe(1024 - 16);
+    expect(crumbsSlot("vision", 700, legend, 350, short)).toEqual({ x: lo + short.full / 2, top: 16, maxWidth: 700 - 16 - lo });
+  });
+
+  it("gives a trail too long for the band the whole band, centred, to collapse into", () => {
+    const band = 1024 - 16 - 288 - 8 - lo;
+    expect(crumbsSlot("vision", 1024, legend, 460, long)).toEqual({ x: lo + band / 2, top: 16, maxWidth: band });
+  });
+
+  it("keeps a label too long to collapse in the band (it ellipsizes there) rather than over the map", () => {
+    const band = 1024 - 16 - 288 - 8 - lo;
+    expect(crumbsSlot("vision", 1024, legend, 460, { full: 420, min: 420 })).toEqual({ x: lo + band / 2, top: 16, maxWidth: band });
+  });
+
+  it("drops below the legend when the band is narrower than the collapsed trail and a phone-width pill", () => {
+    expect(crumbsSlot("vision", 560, legend, 280, long)).toEqual({ x: 280, top: 16 + 300 + 8, maxWidth: 560 - 32 });
+    expect(crumbsSlot("vision", 360, { width: 328, height: 300 }, 180, short).top).toBe(16 + 300 + 8);
+  });
+
+  it("ignores a legend that has not been measured", () => {
+    expect(crumbsSlot("vision", 1024, { width: 0, height: 0 }, 300, short)).toEqual(crumbsSlot("vision", 1024, undefined, 300, short));
+  });
+});
+
+describe("crumbsStart / crumbsSize", () => {
+  // The repo name, then four levels; each width includes its separator.
+  const widths = [60, 50, 70, 80, 90];
+  const ellipsis = 25;
+  const chrome = 14;
+
+  it("shows the whole trail when it fits", () => {
+    expect(crumbsStart(widths, ellipsis, chrome, 364)).toBe(1);
+    expect(crumbsStart(widths, ellipsis, chrome, 1000)).toBe(1);
+  });
+
+  it("collapses the fewest middle crumbs, from the repo name down, into one ellipsis", () => {
+    expect(crumbsStart(widths, ellipsis, chrome, 363)).toBe(2); // 14 + 60 + 25 + 70 + 80 + 90 = 339
+    expect(crumbsStart(widths, ellipsis, chrome, 338)).toBe(3); // 14 + 60 + 25 + 80 + 90 = 269
+    expect(crumbsStart(widths, ellipsis, chrome, 268)).toBe(4);
+  });
+
+  it("always keeps the repo name and the current folder", () => {
+    expect(crumbsStart(widths, ellipsis, chrome, 10)).toBe(4);
+    expect(crumbsStart([60, 90], ellipsis, chrome, 10)).toBe(1);
+    expect(crumbsStart([60], ellipsis, chrome, 10)).toBe(1);
+  });
+
+  it("measures the pill whole and fully collapsed", () => {
+    expect(crumbsSize(widths, ellipsis, chrome)).toEqual({ full: 14 + 350, min: 14 + 60 + 25 + 90 });
+    expect(crumbsSize([60, 90], ellipsis, chrome)).toEqual({ full: 164, min: 164 });
   });
 });

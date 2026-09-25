@@ -252,6 +252,75 @@ export function mapInsets(theme: Theme, width: number, height: number, legend?: 
   return best.insets;
 }
 
+const CRUMBS_MAX_W = 560; // Breadcrumbs.svelte's max-width
+const CRUMBS_MIN_W = 200; // narrowest the pill gets beside the legend before it moves below it
+const PANEL_GAP = 8; // min gap between the breadcrumbs and a panel
+
+/** The breadcrumbs pill's width, CSS px: the whole trail, and with its middle collapsed to "…". */
+export interface CrumbsSize {
+  full: number;
+  min: number;
+}
+
+/** Where the breadcrumbs pill goes: its centre x and top, and the width it may take (CSS px). */
+export interface CrumbsSlot {
+  x: number;
+  top: number;
+  maxWidth: number;
+}
+
+/**
+ * The breadcrumbs sit at the top, centred over the map's free area
+ * (`centerX`; null centres on the viewport), in the band between the legend
+ * (top-left) and, on wide Vision layouts, the activity panel (top-right).
+ * They slide sideways to stay in that band, and take at most its width (the
+ * trail collapses to fit, then its longest labels ellipsize). Only when the
+ * band is narrower than the collapsed trail and CRUMBS_MIN_W (a phone-width
+ * window) do they drop below the legend instead.
+ */
+export function crumbsSlot(theme: Theme, width: number, legend: Footprint | undefined, centerX: number | null, size: CrumbsSize): CrumbsSlot {
+  const cap = Math.max(0, Math.min(CRUMBS_MAX_W, width - 2 * GUTTER));
+  const right = theme === "vision" && width > NARROW_W ? width - GUTTER - ACTIVITY_W - PANEL_GAP : width - GUTTER;
+  const want = centerX ?? width / 2;
+  const place = (left: number, top: number): CrumbsSlot => {
+    const maxWidth = Math.max(0, Math.min(cap, right - left));
+    const half = Math.min(size.full, maxWidth) / 2;
+    return { x: Math.max(left + half, Math.min(want, right - half)), top, maxWidth };
+  };
+  if (legend === undefined || legend.width <= 0 || legend.height <= 0) return place(GUTTER, GUTTER);
+  const beside = place(GUTTER + legend.width + PANEL_GAP, GUTTER);
+  if (beside.maxWidth > 0 && beside.maxWidth >= Math.min(size.min, CRUMBS_MIN_W)) return beside;
+  return place(GUTTER, GUTTER + legend.height + PANEL_GAP);
+}
+
+/**
+ * How much of a breadcrumb trail fits in `maxWidth`: the index of the first
+ * crumb shown after the repo name. Crumbs 1…start-1 collapse into one "…"
+ * (never the repo name or the current folder), shortest collapse first.
+ * `widths` are each crumb's natural width with its separator, `ellipsis` the
+ * "…" crumb's, and `chrome` the pill's own padding and border.
+ */
+export function crumbsStart(widths: number[], ellipsis: number, chrome: number, maxWidth: number): number {
+  const n = widths.length;
+  if (n <= 2) return 1;
+  let tail = 0; // widths[start..n-1]
+  for (let i = 1; i < n; i++) tail += widths[i]!;
+  if (chrome + widths[0]! + tail <= maxWidth) return 1;
+  for (let start = 2; start < n; start++) {
+    tail -= widths[start - 1]!;
+    if (chrome + widths[0]! + ellipsis + tail <= maxWidth) return start;
+  }
+  return n - 1;
+}
+
+/** The pill's width for the whole trail, and for its most collapsed form (see crumbsStart). */
+export function crumbsSize(widths: number[], ellipsis: number, chrome: number): CrumbsSize {
+  const n = widths.length;
+  const sum = widths.reduce((a, b) => a + b, 0);
+  const min = n <= 2 ? sum : widths[0]! + ellipsis + widths[n - 1]!;
+  return { full: chrome + sum, min: chrome + min };
+}
+
 const TIP_OFFSET = 14;
 const TIP_MARGIN = 8;
 
