@@ -7,8 +7,6 @@ import { MAX_ZOOM, fitCamera, pick, screenToWorld, zoomPath, type Camera, type R
 export const MIN_ZOOM = 1;
 /** A folder is the view's focus once its circle spans this much of the free area's short side. */
 export const FOCUS_FILL = 0.7;
-/** Up to this scale the view is still home: the focus is the repo root, whatever fills the view. */
-export const HOME_ZOOM = 1.05;
 
 const WHEEL_PER_PX = 0.002; // mouse wheel / two-finger scroll: ~18% per 100 px notch
 const PINCH_PER_PX = 0.01; // trackpad pinch arrives as ctrl+wheel with small deltas
@@ -107,12 +105,15 @@ export function zoomAround(
 /**
  * The folder the view is on after free navigation: the deepest folder whose
  * circle contains the free area's centre and spans at least FOCUS_FILL of its
- * short side; the root ("") when none does, or when the view is (about) home:
- * a folder that dominates the repo would otherwise be the focus at the home
- * camera, and stepping out of it would change nothing on screen.
+ * short side; the root ("") when none does, or at the home camera (where
+ * scrolling fully out lands): a folder that dominates the repo would
+ * otherwise be the focus there, and stepping out of it would change nothing
+ * on screen. Only the home camera itself counts, not a scale threshold: a
+ * folder nearly as big as the repo is fitted at about the home scale (or
+ * below), and a pan from there must keep it in focus.
  */
 export function focusFolder(layout: Map<string, Circle>, cam: Camera, width: number, height: number, free: Rect): string {
-  if (cam.k <= HOME_ZOOM) return "";
+  if (isHome(cam, width, height)) return "";
   const p = screenToWorld(cam, width, height, (free.x0 + free.x1) / 2, (free.y0 + free.y1) / 2);
   const need = (FOCUS_FILL * Math.min(free.x1 - free.x0, free.y1 - free.y0)) / 2 / cam.k;
   let best: Circle | null = null;
@@ -124,6 +125,12 @@ export function focusFolder(layout: Map<string, Circle>, cam: Camera, width: num
     if (best === null || c.depth > best.depth) best = c;
   }
   return best ? best.path : "";
+}
+
+/** Whether `cam` is the home camera (to float error: well under a pixel). */
+export function isHome(cam: Camera, width: number, height: number): boolean {
+  const home = homeCamera(width, height);
+  return Math.abs(cam.k / home.k - 1) < 1e-6 && Math.abs(cam.cx - home.cx) < 1e-3 && Math.abs(cam.cy - home.cy) < 1e-3;
 }
 
 /**
