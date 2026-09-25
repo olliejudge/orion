@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { backoffMs, connect, STOPPED_AFTER_FAILURES, statusAfterClose, wsUrlFromLocation } from "./connection";
-import type { Patch, Snapshot } from "./protocol";
+import { backoffMs, connect, repoIdentity, STOPPED_AFTER_FAILURES, statusAfterClose, wsUrlFromLocation } from "./connection";
+import type { Patch, Snapshot, Worktree } from "./protocol";
 import { RepoStore } from "./store";
 
 class FakeSocket {
@@ -64,6 +64,43 @@ describe("wsUrlFromLocation", () => {
 
   it("forwards the ?t= token so a cookie-less first load still authenticates", () => {
     expect(wsUrlFromLocation(new URL("http://127.0.0.1:7070/?t=abc%2F1"))).toBe("ws://127.0.0.1:7070/ws?t=abc%2F1");
+  });
+});
+
+const worktree = (over: Partial<Worktree>): Worktree => ({
+  id: "w",
+  path: "/repo",
+  label: "repo",
+  head: "h",
+  isMain: false,
+  locked: false,
+  colorIndex: 0,
+  ...over,
+});
+
+describe("repoIdentity", () => {
+  it("uses the main worktree's path", () => {
+    const s: Pick<Snapshot, "repo" | "worktrees"> = {
+      repo: { name: "sample-app", base: "main", baseSha: "b" },
+      worktrees: [worktree({ id: "a", path: "/other", isMain: false }), worktree({ id: "b", path: "/repo/main", isMain: true })],
+    };
+    expect(repoIdentity(s)).toBe("/repo/main");
+  });
+
+  it("falls back to repo.name when no worktree is main", () => {
+    const s: Pick<Snapshot, "repo" | "worktrees"> = {
+      repo: { name: "sample-app", base: "main", baseSha: "b" },
+      worktrees: [worktree({ id: "a", path: "/other", isMain: false })],
+    };
+    expect(repoIdentity(s)).toBe("sample-app");
+  });
+
+  it("falls back to repo.name with no worktrees at all", () => {
+    const s: Pick<Snapshot, "repo" | "worktrees"> = {
+      repo: { name: "sample-app", base: "main", baseSha: "b" },
+      worktrees: [],
+    };
+    expect(repoIdentity(s)).toBe("sample-app");
   });
 });
 
@@ -187,6 +224,41 @@ describe("connect", () => {
     vi.advanceTimersByTime(500);
     last().open();
     expect(onReconnect).not.toHaveBeenCalled();
+  });
+
+  it("calls onSnapshot for every snapshot message, including the first", () => {
+    const store = new RepoStore();
+    const snapshots: Snapshot[] = [];
+    connect(store, { url: "ws://x/ws", onSnapshot: (s) => snapshots.push(s) });
+    last().open();
+    last().message(snap);
+    last().message({ ...snap, seq: 5 });
+    expect(snapshots).toEqual([snap, { ...snap, seq: 5 }]);
+  });
+
+  it("does not call onSnapshot for patch messages", () => {
+    const store = new RepoStore();
+    const onSnapshot = vi.fn();
+    connect(store, { url: "ws://x/ws", onSnapshot });
+    last().open();
+    last().message(snap);
+    last().message(patch(2));
+    expect(onSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls onSnapshot before applying the message to the store", () => {
+    const store = new RepoStore();
+    let seqWhenCalled: number | undefined;
+    connect(store, {
+      url: "ws://x/ws",
+      onSnapshot: () => {
+        seqWhenCalled = store.state?.seq;
+      },
+    });
+    last().open();
+    last().message(snap);
+    expect(seqWhenCalled).toBeUndefined(); // store not yet updated when onSnapshot ran
+    expect(store.state?.seq).toBe(1);
   });
 
   it("stops reconnecting and closes the socket when disposed", () => {
