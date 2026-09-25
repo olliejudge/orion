@@ -423,13 +423,14 @@ test("Back into a folder hidden since you navigated there lands on the visible a
   const checkbox = panel.getByLabel(path1, { exact: true });
   await checkbox.click();
   await expect(checkbox).not.toBeChecked();
+  await page.waitForTimeout(1_500); // let the layout repack without path1's subtree before Back relies on it
 
   // Back once retraces the second + step, landing on path2's now-stale
   // entry: it must resolve to the nearest folder the filter still shows
   // (the root, since path1's whole subtree is hidden), not reveal path1.
   await page.goBack();
   await expect.poll(() => focusedPath(page)).toBe("");
-  expect(new URL(page.url()).hash).toBe("#/");
+  await expect.poll(() => new URL(page.url()).hash).toBe("#/");
   await expect(checkbox, "the filter itself is unchanged").not.toBeChecked();
 });
 
