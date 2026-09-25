@@ -1,7 +1,7 @@
 // Free camera navigation (wheel/pinch zoom about the pointer, drag to pan).
 // Pure functions of the camera, so the maths is unit-tested without Pixi.
 import type { Circle } from "../layout/pack";
-import { MAX_ZOOM, screenToWorld, zoomPath, type Camera, type Rect } from "./geometry";
+import { MAX_ZOOM, fitCamera, pick, screenToWorld, zoomPath, type Camera, type Rect } from "./geometry";
 
 /** The root is laid out to fill the free area at the identity camera (see fitCamera), so k = 1 is "whole repo". */
 export const MIN_ZOOM = 1;
@@ -49,12 +49,28 @@ export function panBy(start: Camera, dx: number, dy: number, root: Circle | unde
 }
 
 /**
+ * The cap on scroll zoom at the screen point (sx, sy): the scale at which the
+ * deepest circle under the pointer (world coords, via `cur`) would fit the
+ * free area (the same margin `fitCamera` uses elsewhere), so a wheel can
+ * never zoom past its content into empty space. Falls back to the global
+ * MAX_ZOOM when nothing (or only the root) is under the pointer.
+ */
+export function scrollZoomCap(cur: Camera, sx: number, sy: number, width: number, height: number, free: Rect, layout: Map<string, Circle>): number {
+  const w = screenToWorld(cur, width, height, sx, sy);
+  const path = pick(layout, w.x, w.y);
+  const c = path === null ? undefined : layout.get(path);
+  return c && c.depth > 0 ? fitCamera(c, width, height, free).k : MAX_ZOOM;
+}
+
+/**
  * Zoom by `factor` about the screen point (sx, sy). The scale accumulates on
  * `aimed` (the camera's current target) so quick wheel ticks add up, while the
  * anchor is the world point under the pointer in `cur` (what is on screen now).
  * Returns the target camera and the centre as a function of scale along the
  * way, which keeps that point under the pointer throughout (null: spring the
- * centre directly). Zooming out past the whole repo returns home.
+ * centre directly). Zooming in is capped at scrollZoomCap (content-aware, a
+ * backstop under the hard MAX_ZOOM); zooming out past the whole repo returns
+ * home.
  */
 export function zoomAround(
   cur: Camera,
@@ -66,8 +82,10 @@ export function zoomAround(
   height: number,
   root: Circle | undefined,
   free: Rect,
+  layout: Map<string, Circle> = new Map(),
 ): { target: Camera; path: CameraPath | null } {
-  const k = Math.min(MAX_ZOOM, aimed.k * factor);
+  const cap = Math.min(MAX_ZOOM, scrollZoomCap(cur, sx, sy, width, height, free, layout));
+  const k = Math.min(cap, aimed.k * factor);
   if (k <= MIN_ZOOM) {
     const home = homeCamera(width, height);
     return { target: home, path: zoomPath(cur, home) };
