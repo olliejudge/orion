@@ -69,8 +69,10 @@ export function scrollZoomCap(cur: Camera, sx: number, sy: number, width: number
  * Returns the target camera and the centre as a function of scale along the
  * way, which keeps that point under the pointer throughout (null: spring the
  * centre directly). Zooming in is capped at scrollZoomCap (content-aware, a
- * backstop under the hard MAX_ZOOM); zooming out past the whole repo returns
- * home.
+ * backstop under the hard MAX_ZOOM): a zoom-in gesture never zooms out, so if
+ * the pointer has moved somewhere already past the new cap (e.g. off a small
+ * file onto a bigger folder or a gap), it just holds at the current scale
+ * instead of snapping out. Zooming out past the whole repo returns home.
  */
 export function zoomAround(
   cur: Camera,
@@ -85,7 +87,7 @@ export function zoomAround(
   layout: Map<string, Circle> = new Map(),
 ): { target: Camera; path: CameraPath | null } {
   const cap = Math.min(MAX_ZOOM, scrollZoomCap(cur, sx, sy, width, height, free, layout));
-  const k = Math.min(cap, aimed.k * factor);
+  const k = factor > 1 ? Math.min(Math.max(cap, aimed.k), aimed.k * factor) : Math.min(cap, aimed.k * factor);
   if (k <= MIN_ZOOM) {
     const home = homeCamera(width, height);
     return { target: home, path: zoomPath(cur, home) };

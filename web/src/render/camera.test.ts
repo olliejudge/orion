@@ -61,6 +61,29 @@ describe("zoomAround", () => {
     expect(zoomAround(cur, cur, 10, 500, 400, W, H, root, FREE, new Map([["", root]])).target.k).toBe(MAX_ZOOM);
   });
 
+  it("a zoom-in never zooms out: holds the current scale when the pointer already sits past the cap (moved off a small circle onto a bigger one, or a gap)", () => {
+    const layout = new Map<string, Circle>([
+      ["", root],
+      ["web", { path: "web", x: 500, y: 400, r: 10, depth: 1, isDir: true }],
+    ]);
+    const cap = (800 * 0.9) / 20; // 36, see above
+    const cur: Camera = { cx: 500, cy: 400, k: cap * 2 }; // already well past the cap for what's now under the pointer
+    const { target } = zoomAround(cur, cur, 1.5, 500, 400, W, H, root, FREE, layout);
+    expect(target.k).toBeCloseTo(cur.k);
+  });
+
+  it("still zooms out normally starting from above the cap", () => {
+    const layout = new Map<string, Circle>([
+      ["", root],
+      ["web", { path: "web", x: 500, y: 400, r: 10, depth: 1, isDir: true }],
+    ]);
+    const cap = (800 * 0.9) / 20;
+    const cur: Camera = { cx: 500, cy: 400, k: cap * 2 };
+    const { target } = zoomAround(cur, cur, 0.1, 500, 400, W, H, root, FREE, layout);
+    expect(target.k).toBeCloseTo(cur.k * 0.1);
+    expect(target.k).toBeLessThan(cap);
+  });
+
   it("zooming out past the whole repo returns to the home camera", () => {
     const cur: Camera = { cx: 600, cy: 300, k: 1.2 };
     const { target } = zoomAround(cur, cur, 0.5, 100, 100, W, H, root, FREE);
