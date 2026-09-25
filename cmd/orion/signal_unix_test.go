@@ -20,20 +20,6 @@ import (
 	"github.com/olliejudge/orion/internal/model"
 )
 
-// runMainEnv makes the test binary act as orion itself (see TestMain), so a
-// test can run the real CLI as a child process and send it real signals.
-const runMainEnv = "ORION_TEST_RUN_MAIN"
-
-func TestMain(m *testing.M) {
-	if os.Getenv(runMainEnv) == "1" {
-		main() // os.Args[1:] are orion's arguments
-	}
-	cleanup := useTempTokenDir()
-	code := m.Run()
-	cleanup()
-	os.Exit(code)
-}
-
 // TestMainExitsZeroOnSIGINTWithBrowserTab runs orion as a real process with
 // default flags (so it spawns the platform's browser opener, here a stub on
 // PATH), connects a WebSocket client like the opened tab, then sends the

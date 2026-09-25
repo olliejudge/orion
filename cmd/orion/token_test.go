@@ -10,17 +10,26 @@ import (
 	"time"
 )
 
-// useTempTokenDir points tokenPath at a fresh temp dir, keeping every
-// in-process test's token out of the user's real config dir. TestMain calls
-// it; the returned func removes the dir.
-func useTempTokenDir() func() {
+// runMainEnv makes the test binary act as orion itself (see TestMain), so a
+// test can run the real CLI as a child process and send it real signals.
+const runMainEnv = "ORION_TEST_RUN_MAIN"
+
+// TestMain runs orion itself under runMainEnv; otherwise it points tokenPath
+// at a temp dir, keeping every in-process test's token out of the user's
+// real config dir. (Child processes get a temp HOME instead.)
+func TestMain(m *testing.M) {
+	if os.Getenv(runMainEnv) == "1" {
+		main() // os.Args[1:] are orion's arguments
+	}
 	dir, err := os.MkdirTemp("", "orion-token-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 	tokenPath = func() (string, error) { return filepath.Join(dir, "token"), nil }
-	return func() { _ = os.RemoveAll(dir) }
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
 }
 
 func TestURLIsStableAcrossRuns(t *testing.T) {

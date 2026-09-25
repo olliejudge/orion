@@ -23,7 +23,7 @@ cd your-repo
 orion
 ```
 
-Orion prints a URL like `http://127.0.0.1:7070/?t=…`, opens it in your browser and keeps the map live until you press Ctrl-C. The URL stays the same from run to run, so you can bookmark it (or just `http://127.0.0.1:7070/` once it has loaded once). An open tab reconnects by itself when Orion restarts, and reloads if Orion was upgraded.
+Orion prints a URL like `http://127.0.0.1:7070/?t=…`, opens it in your browser and keeps the map live until you press Ctrl-C. The URL stays the same from run to run, so you can bookmark it (or, once it has loaded, just `http://127.0.0.1:7070/`, as long as Orion gets the same port). An open tab reconnects by itself when Orion restarts, and reloads if Orion was upgraded.
 
 ```
 orion [path] [--port N] [--no-open] [--base BRANCH] [--dev] [--version]
@@ -73,7 +73,7 @@ There are two themes, and Orion remembers your choice:
 ## Privacy and security
 
 - Orion runs entirely on your machine. It makes no network requests of its own and has no telemetry.
-- The server binds to `127.0.0.1` only. The first run generates a random token and saves it, readable only by you, as `orion/token` in your user config directory (`~/Library/Application Support` on macOS, `~/.config` on Linux). The token is part of the URL Orion prints; the browser swaps it for a cookie (`orion_t_<port>`) on first load. Requests without the token are refused, and so are requests with a foreign `Host` or `Origin`, so other websites can't read your repo through it. Delete the file to rotate the token; if Orion can't read or write it, it uses a one-off token for that run.
+- The server binds to `127.0.0.1` only. The first run generates a random token and saves it, readable only by you, as `orion/token` in your user config directory (`~/Library/Application Support` on macOS, `~/.config` on Linux). The token is part of the URL Orion prints; the browser swaps it for a cookie (`orion_t_<port>`) on first load. Requests without the token are refused, and so are requests with a foreign `Host` or `Origin`, so other websites can't read your repo through it. The token is reused by every Orion you run, so treat the URL like a password: anyone who has it can read your repos' file names while Orion is running. Delete the file to rotate the token (Orion also replaces it if its permissions let others read it); if Orion can't read or write it, it uses a one-off token for that run.
 - It reads git metadata and file sizes. It never reads file contents.
 
 ## Try it on a demo repo

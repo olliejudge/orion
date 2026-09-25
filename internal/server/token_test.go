@@ -88,6 +88,9 @@ func TestLoadTokenConcurrentFirstRunsAgree(t *testing.T) {
 }
 
 func TestLoadTokenUnwritableDirErrors(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0o500); err != nil {
 		t.Fatal(err)
@@ -103,5 +106,39 @@ func TestStartUsesGivenToken(t *testing.T) {
 	h := startServer(t, Options{Token: want})
 	if h.token != want {
 		t.Fatalf("URL token = %q, want %q", h.token, want)
+	}
+}
+
+func TestLoadTokenReplacesTokenOthersCanRead(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "orion")
+	if err := os.Mkdir(dir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o777); err != nil { // beat the umask
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "token")
+	old := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	if err := os.WriteFile(path, []byte(old+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tok, err := LoadToken(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok == old {
+		t.Fatal("a token others could read was reused; want a fresh one")
+	}
+	for p, want := range map[string]os.FileMode{path: 0o600, dir: 0o700} {
+		fi, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fi.Mode().Perm() != want {
+			t.Errorf("%s mode = %v, want %v", p, fi.Mode().Perm(), want)
+		}
 	}
 }
