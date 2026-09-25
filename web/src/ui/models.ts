@@ -183,12 +183,18 @@ const NARROW_W = 720; // Activity.svelte's max-width breakpoint
 const SHEET_BOTTOM = 64;
 const SHEET_VH = 0.32;
 
-const LEGEND_CLEAR = 8; // min gap between the root circle and the legend panel
+const LEGEND_CLEAR = 8; // min gap between the root circle and a corner panel
 
-/** On-screen size of the legend panel (top-left, at the gutter), CSS px. */
+/** On-screen size of a corner panel (the legend or the map key, at the gutter), CSS px. */
 export interface Footprint {
   width: number;
   height: number;
+}
+
+/** A panel in a left corner: the legend at the top, the map key at the bottom. */
+interface CornerPanel {
+  edge: "top" | "bottom";
+  box: Footprint;
 }
 
 /**
@@ -196,29 +202,54 @@ export interface Footprint {
  * map centres in the space beside it (or above it, where it becomes a bottom
  * sheet on narrow screens). Night's stream floats over the map: full-bleed.
  *
- * On wide Vision layouts the legend's footprint counts too: if the root
- * circle would pass under the legend, the map moves right of it or below it,
- * whichever leaves the larger circle.
+ * On wide Vision layouts the footprints of the legend (top-left) and the map
+ * key (bottom-left) count too: if the root circle would pass under either,
+ * the map moves right of that panel or away from its edge (below the legend,
+ * above the key), whichever clears every panel with the largest circle.
  */
-export function mapInsets(theme: Theme, width: number, height: number, legend?: Footprint): Insets {
+export function mapInsets(theme: Theme, width: number, height: number, legend?: Footprint, key?: Footprint): Insets {
   const pad: Insets = { top: MAP_PAD, right: MAP_PAD, bottom: MAP_PAD, left: MAP_PAD };
   if (theme === "night") return pad;
   if (width <= NARROW_W) return { ...pad, bottom: SHEET_BOTTOM + height * SHEET_VH + GUTTER };
   const wide: Insets = { ...pad, right: ACTIVITY_W + 2 * GUTTER };
-  if (!legend || legend.width <= 0 || legend.height <= 0) return wide;
-  const right = GUTTER + legend.width; // the legend's far corner
-  const bottom = GUTTER + legend.height;
+  const measured = (b?: Footprint): b is Footprint => b !== undefined && b.width > 0 && b.height > 0;
+  const panels: CornerPanel[] = [];
+  if (measured(legend)) panels.push({ edge: "top", box: legend });
+  if (measured(key)) panels.push({ edge: "bottom", box: key });
+
   const circle = (insets: Insets): { cx: number; cy: number; r: number } => {
     const f = freeArea(width, height, insets);
     return { cx: (f.x0 + f.x1) / 2, cy: (f.y0 + f.y1) / 2, r: Math.min(f.x1 - f.x0, f.y1 - f.y0) / 2 };
   };
-  const c = circle(wide);
-  const dx = Math.max(0, c.cx - right);
-  const dy = Math.max(0, c.cy - bottom);
-  if (Math.hypot(dx, dy) >= c.r + LEGEND_CLEAR) return wide;
-  const beside: Insets = { ...wide, left: Math.max(wide.left, right + GUTTER) };
-  const below: Insets = { ...wide, top: Math.max(wide.top, bottom + GUTTER) };
-  return circle(below).r > circle(beside).r ? below : beside;
+  const clears = (insets: Insets): boolean => {
+    const c = circle(insets);
+    return panels.every(({ edge, box }) => {
+      const dx = Math.max(0, c.cx - (GUTTER + box.width)); // from the panel's inner corner
+      const dy = edge === "top" ? Math.max(0, c.cy - (GUTTER + box.height)) : Math.max(0, height - GUTTER - box.height - c.cy);
+      return Math.hypot(dx, dy) >= c.r + LEGEND_CLEAR;
+    });
+  };
+  if (clears(wide)) return wide;
+
+  // Every way of stepping around each panel (or leaving it), fewest moves and
+  // "beside" first, so ties keep the earlier (the map's usual) placement.
+  type Option = { insets: Insets; movedAll: boolean };
+  let options: Option[] = [{ insets: wide, movedAll: true }];
+  for (const { edge, box } of panels) {
+    const clear = GUTTER + box.height + GUTTER; // inset that keeps the map off the panel's edge
+    options = options.flatMap(({ insets, movedAll }) => [
+      { insets, movedAll: false },
+      { insets: { ...insets, left: Math.max(insets.left, GUTTER + box.width + GUTTER) }, movedAll },
+      { insets: { ...insets, [edge]: Math.max(insets[edge], clear) }, movedAll },
+    ]);
+  }
+  // At small sizes even a moved map can still touch a panel; then the largest
+  // circle that steps around every panel wins, as if each had cleared.
+  const clearing = options.filter((o) => clears(o.insets));
+  const pool = clearing.length > 0 ? clearing : options.filter((o) => o.movedAll);
+  let best = pool[0]!;
+  for (const o of pool) if (circle(o.insets).r > circle(best.insets).r) best = o;
+  return best.insets;
 }
 
 const TIP_OFFSET = 14;

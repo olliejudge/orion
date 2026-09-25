@@ -171,6 +171,20 @@ describe("App", () => {
     expect(await screen.findAllByTestId("worktree-pill")).toHaveLength(2);
   });
 
+  it("shows a key to the map's marks", async () => {
+    await ready();
+    expect(screen.getByRole("region", { name: "Map key" })).toBeInTheDocument();
+  });
+
+  it("has no map key when the renderer cannot start", async () => {
+    h.initFails = true;
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    render(App);
+    await screen.findByRole("alert");
+    expect(screen.queryByRole("region", { name: "Map key" })).toBeNull();
+    err.mockRestore();
+  });
+
   it("labels the map for assistive tech", async () => {
     await ready();
     expect(screen.getByRole("img", { name: "Repository map" })).toBe(screen.getByTestId("map"));
