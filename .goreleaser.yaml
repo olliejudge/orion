@@ -56,10 +56,16 @@ notarize:
         issuer_id: "{{ .Env.MACOS_NOTARY_ISSUER_ID }}"
         key_id: "{{ .Env.MACOS_NOTARY_KEY_ID }}"
         key: "{{ .Env.MACOS_NOTARY_KEY }}" # base64 of the .p8
-        wait: true
-        # quill signs its App Store Connect API token for timeout + 2m, and
-        # Apple rejects tokens that live longer than 20m.
-        timeout: 15m
+        # Don't block the release on Apple's review. A brand-new developer
+        # team's first notarization goes through a long in-depth review that
+        # can run well past an hour, and quill signs its App Store Connect API
+        # token for timeout + 2m; Apple rejects tokens living longer than 20m,
+        # so the wait can't be raised enough to cover it anyway. With wait
+        # false, GoReleaser submits and moves on: the binary is already
+        # signed, notarization finishes later on Apple's side, and Gatekeeper
+        # fetches the result online on first run (see docs/RELEASING.md).
+        # `timeout` only applies when wait is true, so it's omitted here.
+        wait: false
 
 archives:
   - id: orion

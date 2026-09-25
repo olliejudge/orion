@@ -94,41 +94,50 @@ Set all five or none. For a stable tag, the workflow's **Check release secrets**
 
 ## What happens during a release
 
-For each darwin binary, GoReleaser (using [quill](https://github.com/goreleaser/quill)) signs with the hardened runtime and an Apple timestamp. It then submits the binary to the notary service and waits up to 15 minutes for the result. These are the log lines to look for in the `goreleaser` step:
+For each darwin binary, GoReleaser (using [quill](https://github.com/goreleaser/quill)) signs with the hardened runtime and an Apple timestamp. It then submits the binary to the notary service and moves on without waiting for the result (`wait: false` in `.goreleaser.yaml`): a new developer team's first notarization goes through a long in-depth review that can run well past an hour, far beyond what a wait could cover anyway, since quill signs its App Store Connect API token for `timeout + 2m` and Apple rejects tokens living longer than 20m. The release publishes with the signed binary; notarization finishes later on Apple's side, and Gatekeeper's online check picks up the result the first time a downloaded binary runs. These are the log lines to look for in the `goreleaser` step:
 
 - `sign & notarize macOS binaries … reason=disabled`: `MACOS_SIGN_P12` isn't set, so nothing was signed.
 - `will not try to notarize`: signed, but one of the three notary secrets is missing. Only a prerelease tag can get this far with a partial setup.
-- `notarized`: done.
-- `notarize timeout`: Apple hadn't finished within 15 minutes. The release carries on with the signed binary, and Apple usually finishes later. Check with `notarytool history` (below).
-- `invalid` or `rejected`: the release fails. Fetch Apple's log with `notarytool log` (below).
+- `sending notarize request` then `notarize still pending`: signed and handed to Apple's notary service; with `wait: false` GoReleaser doesn't poll for the outcome. Check afterwards with `notarytool history` (below).
 
 Signed binaries carry a timestamp from Apple's server, so, unlike unsigned ones, their archives and `checksums.txt` differ between two builds of the same commit.
 
 ## Checking a release
 
-Download a darwin tarball from the release through a browser, so that it gets quarantined the way a user's download would, then unpack it:
+Because the release doesn't wait on Apple, confirm notarization finished before telling anyone the release is fully signed and notarized. `xcrun notarytool` ships with Xcode or the Command Line Tools:
+
+```sh
+# Most recent submissions, newest first. Find the darwin_arm64 and darwin_amd64
+# ones from around the release time; each shows a submission ID and a status.
+xcrun notarytool history --key AuthKey_XXXXXXXXXX.p8 --key-id XXXXXXXXXX --issuer <issuer-id>
+
+# Poll one submission by ID until Status is "Accepted" (or "Invalid").
+xcrun notarytool info <submission-id> --key AuthKey_XXXXXXXXXX.p8 --key-id XXXXXXXXXX --issuer <issuer-id>
+
+# If it's "Invalid", fetch Apple's log for the reason.
+xcrun notarytool log <submission-id> --key AuthKey_XXXXXXXXXX.p8 --key-id XXXXXXXXXX --issuer <issuer-id>
+```
+
+For a brand-new developer team, the first submission's review can take well over an hour; later ones are typically much faster.
+
+Then download a darwin tarball from the release through a browser, so that it gets quarantined the way a user's download would, and unpack it:
 
 ```sh
 tar -xzf orion_X.Y.Z_darwin_arm64.tar.gz
 
 # Signature: expect "Authority=Developer ID Application: …", then the Developer
 # ID Certification Authority and Apple Root CA, a Timestamp= line, and
-# flags=0x10000(runtime) for the hardened runtime.
+# flags=0x10000(runtime) for the hardened runtime. This only confirms signing,
+# not notarization — check that with notarytool above.
 codesign -dv --verbose=4 orion
 codesign --verify --strict --verbose=2 orion
 
-# Gatekeeper: expect "accepted" and "source=Notarized Developer ID".
+# Gatekeeper: once notarytool reports the submission as accepted, expect
+# "accepted" and "source=Notarized Developer ID" here.
 spctl -a -vvv -t install orion
 
 # It should now run with no Gatekeeper prompt, quarantined or not.
 ./orion --version
-```
-
-To look at the notary service directly (`xcrun notarytool` ships with Xcode or the Command Line Tools):
-
-```sh
-xcrun notarytool history --key AuthKey_XXXXXXXXXX.p8 --key-id XXXXXXXXXX --issuer <issuer-id>
-xcrun notarytool log <submission-id> --key AuthKey_XXXXXXXXXX.p8 --key-id XXXXXXXXXX --issuer <issuer-id>
 ```
 
 Stapling doesn't apply here. `xcrun stapler staple` only works on `.app`, `.pkg` and `.dmg` files, not on a bare binary. The notarization ticket stays on Apple's servers, and Gatekeeper fetches it online the first time a quarantined `orion` runs. The first run of a freshly downloaded binary therefore needs network access to pass Gatekeeper.
