@@ -75,6 +75,11 @@ func (e *Engine) recomputeRefs(ctx context.Context, full bool) error {
 		if err != nil {
 			return errors.Join(err, e.syncWorktrees(ctx, false))
 		}
+		if times, terr := e.computeBaseTouched(ctx, sha, treeWant(tree)); terr != nil {
+			e.logf(ctx, "base file times: %v", terr)
+		} else {
+			applyTouched(tree, times)
+		}
 		e.tree = tree
 	}
 	e.baseRef, e.baseSha = ref, sha

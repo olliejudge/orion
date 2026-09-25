@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/olliejudge/orion/internal/gitx"
 	"github.com/olliejudge/orion/internal/model"
@@ -55,9 +56,11 @@ func label(g gitx.Worktree) string {
 	}
 }
 
-// baseTree lists the files of sha. An empty sha (no commits) is an empty tree.
-func baseTree(ctx context.Context, r gitx.Runner, dir, sha string) (map[string]int64, error) {
-	tree := map[string]int64{}
+// baseTree lists the files of sha (Touched left unset: the caller fills it in
+// from the engine's touched-time cache). An empty sha (no commits) is an
+// empty tree.
+func baseTree(ctx context.Context, r gitx.Runner, dir, sha string) (map[string]model.File, error) {
+	tree := map[string]model.File{}
 	if sha == "" {
 		return tree, nil
 	}
@@ -66,9 +69,30 @@ func baseTree(ctx context.Context, r gitx.Runner, dir, sha string) (map[string]i
 		return nil, err
 	}
 	for _, f := range files {
-		tree[f.Path] = f.Size
+		tree[f.Path] = model.File{Path: f.Path, Size: f.Size}
 	}
 	return tree, nil
+}
+
+// treeWant is the set of paths in tree, for bounding a LogTouched walk.
+func treeWant(tree map[string]model.File) map[string]bool {
+	want := make(map[string]bool, len(tree))
+	for p := range tree {
+		want[p] = true
+	}
+	return want
+}
+
+// applyTouched fills in the Touched field (unix ms) of every entry in tree
+// whose path has a time in times (unix seconds); paths absent from times keep
+// Touched 0 ("unknown").
+func applyTouched(tree map[string]model.File, times map[string]int64) {
+	for p, f := range tree {
+		if t, ok := times[p]; ok {
+			f.Touched = t * 1000
+			tree[p] = f
+		}
+	}
 }
 
 // committedOverlay is what head has on top of merge-base(baseSha, head).
@@ -102,10 +126,21 @@ func committedOverlay(ctx context.Context, r gitx.Runner, dir, baseSha, head str
 	for _, f := range files {
 		sizes[f.Path] = f.Size
 	}
+	want := make(map[string]bool, len(changes))
+	for _, c := range changes {
+		want[c.Path] = true
+	}
+	times, err := gitx.LogTouched(ctx, r, dir, mb+".."+head, want)
+	if err != nil {
+		return nil, err
+	}
 	for _, c := range changes {
 		e := model.ChangeEntry{Path: c.Path, Kind: model.Kind(c.Kind), From: c.From, Stage: model.Committed}
 		if c.Kind != gitx.Deleted {
 			e.Size = sizes[c.Path]
+		}
+		if t, ok := times[c.Path]; ok {
+			e.Touched = t * 1000
 		}
 		out[c.Path] = e
 	}
@@ -114,8 +149,12 @@ func committedOverlay(ctx context.Context, r gitx.Runner, dir, baseSha, head str
 
 // uncommittedOverlay is `git status` for the worktree at root, with plain
 // moves paired into renames and sizes taken from the working tree, plus the
-// HEAD that status compared against.
-func uncommittedOverlay(ctx context.Context, r gitx.Runner, root string) (map[string]model.ChangeEntry, string, error) {
+// HEAD that status compared against. Touched is the file's mtime, except for
+// a deleted path, which has no mtime: its Touched is carried forward from
+// prev (the worktree's previous uncommitted overlay) if prev already flagged
+// it deleted, so the "first observed" time stays stable across recomputes;
+// otherwise it is now, the moment the deletion is first seen.
+func uncommittedOverlay(ctx context.Context, r gitx.Runner, root string, prev map[string]model.ChangeEntry, now time.Time) (map[string]model.ChangeEntry, string, error) {
 	changes, head, err := gitx.StatusWithHead(ctx, r, root)
 	if err != nil {
 		return nil, "", err
@@ -126,7 +165,12 @@ func uncommittedOverlay(ctx context.Context, r gitx.Runner, root string) (map[st
 		if c.Kind != gitx.Deleted {
 			if fi, err := os.Stat(filepath.Join(root, filepath.FromSlash(c.Path))); err == nil {
 				e.Size = fi.Size()
+				e.Touched = fi.ModTime().UnixMilli()
 			}
+		} else if p, ok := prev[c.Path]; ok && p.Stage == model.Uncommitted && p.Kind == model.Deleted && p.Touched != 0 {
+			e.Touched = p.Touched
+		} else {
+			e.Touched = now.UnixMilli()
 		}
 		out[c.Path] = e
 	}
@@ -160,7 +204,7 @@ func (ws *wtState) model(id model.WorktreeID) model.Worktree {
 }
 
 // buildState assembles a fresh model.State from the engine caches.
-func buildState(info model.RepoInfo, tree map[string]int64, wts map[model.WorktreeID]*wtState) model.State {
+func buildState(info model.RepoInfo, tree map[string]model.File, wts map[model.WorktreeID]*wtState) model.State {
 	st := model.State{Repo: info, Tree: tree, Overlays: map[model.WorktreeID]map[string]model.ChangeEntry{}}
 	for id, ws := range wts {
 		st.Worktrees = append(st.Worktrees, ws.model(id))

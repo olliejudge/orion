@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/olliejudge/orion/internal/gitx"
@@ -37,6 +38,17 @@ func initRepo(t *testing.T, files map[string]string) *testrepo.Repo {
 
 func wtID(p string) model.WorktreeID { return model.IDFor(canon(p)) }
 
+// commitTimeMs returns sha's committer time in unix ms, straight from git.
+func commitTimeMs(t *testing.T, r *testrepo.Repo, sha string) int64 {
+	t.Helper()
+	out := r.Git("log", "-1", "--format=%ct", sha)
+	n, err := strconv.ParseInt(out, 10, 64)
+	if err != nil {
+		t.Fatalf("parse committer time %q: %v", out, err)
+	}
+	return n * 1000
+}
+
 func openState(t *testing.T, path, base string) model.State {
 	t.Helper()
 	e, err := Open(context.Background(), path, base, gitx.Runner{})
@@ -53,14 +65,17 @@ func TestOpenBuildsBaseTreeAndOverlays(t *testing.T) {
 	wt.Write("README.md", "# demo v2\n")
 	wt.Remove("old.txt")
 	wt.Add("lib.go", "README.md", "old.txt")
-	wt.Commit("feature work")
+	featureSha := wt.Commit("feature work")
 	wt.Write("README.md", "# demo v3, uncommitted\n") // uncommitted overrides committed
 	wt.Write("new.txt", "brand new\n")
 
 	st := openState(t, r.Path(), "")
 
-	if len(st.Tree) != 2 || st.Tree["README.md"] != 7 || st.Tree["old.txt"] != 4 {
+	if len(st.Tree) != 2 || st.Tree["README.md"].Size != 7 || st.Tree["old.txt"].Size != 4 {
 		t.Fatalf("Tree = %v", st.Tree)
+	}
+	if st.Tree["README.md"].Touched == 0 || st.Tree["old.txt"].Touched == 0 {
+		t.Fatalf("Tree = %+v, want non-zero Touched on every base file", st.Tree)
 	}
 	id := wtID(wt.Path())
 	want := map[string]model.ChangeEntry{
@@ -74,9 +89,22 @@ func TestOpenBuildsBaseTreeAndOverlays(t *testing.T) {
 		t.Fatalf("overlay = %+v, want %+v", got, want)
 	}
 	for p, w := range want {
-		if got[p] != w {
+		g := got[p]
+		touched := g.Touched
+		g.Touched = 0
+		if g != w {
 			t.Errorf("overlay[%q] = %+v, want %+v", p, got[p], w)
 		}
+		if touched == 0 {
+			t.Errorf("overlay[%q].Touched = 0, want non-zero", p)
+		}
+	}
+	// The committed entries' Touched is the feature commit's committer time;
+	// the uncommitted ones' is the working-tree mtime, which is not that sha's.
+	featureMs := commitTimeMs(t, wt, featureSha)
+	if got["lib.go"].Touched != featureMs || got["old.txt"].Touched != featureMs {
+		t.Errorf("committed Touched = %d/%d, want the feature commit's time %d",
+			got["lib.go"].Touched, got["old.txt"].Touched, featureMs)
 	}
 	if len(st.Overlays[wtID(r.Path())]) != 0 {
 		t.Errorf("main overlay = %v, want empty", st.Overlays[wtID(r.Path())])
@@ -92,6 +120,31 @@ func TestOpenBuildsBaseTreeAndOverlays(t *testing.T) {
 	}
 }
 
+// A base file's Touched is the latest commit that touched it, not simply the
+// tip's commit time: a.txt is touched again after b.txt, so a.txt ends up
+// newer even though b.txt's own commit is more recent than a.txt's first one.
+func TestOpenBaseFileTouchedIsLatestCommit(t *testing.T) {
+	r := testrepo.New(t)
+	r.Write("a.txt", "v1")
+	r.Add()
+	r.Commit("c1")
+	r.Write("b.txt", "v1")
+	r.Add()
+	c2 := r.Commit("c2")
+	r.Write("a.txt", "v2")
+	r.Add()
+	c3 := r.Commit("c3")
+
+	st := openState(t, r.Path(), "")
+	wantA, wantB := commitTimeMs(t, r, c3), commitTimeMs(t, r, c2)
+	if st.Tree["a.txt"].Touched != wantA {
+		t.Errorf("a.txt touched = %d, want %d (c3)", st.Tree["a.txt"].Touched, wantA)
+	}
+	if st.Tree["b.txt"].Touched != wantB {
+		t.Errorf("b.txt touched = %d, want %d (c2)", st.Tree["b.txt"].Touched, wantB)
+	}
+}
+
 func TestOpenEmptyRepo(t *testing.T) {
 	r := testrepo.New(t)
 	r.Write("a.txt", "abc")
@@ -100,8 +153,10 @@ func TestOpenEmptyRepo(t *testing.T) {
 		t.Fatalf("Tree = %v, BaseSha = %q; want empty", st.Tree, st.Repo.BaseSha)
 	}
 	e := st.Overlays[wtID(r.Path())]["a.txt"]
-	if e != (model.ChangeEntry{Path: "a.txt", Kind: model.Added, Stage: model.Uncommitted, Size: 3}) {
-		t.Fatalf("a.txt entry = %+v", e)
+	touched := e.Touched
+	e.Touched = 0
+	if e != (model.ChangeEntry{Path: "a.txt", Kind: model.Added, Stage: model.Uncommitted, Size: 3}) || touched == 0 {
+		t.Fatalf("a.txt entry = %+v (touched %d)", e, touched)
 	}
 }
 
@@ -164,8 +219,9 @@ func TestEngineDropsSlowSubscriber(t *testing.T) {
 	defer unsub()
 	for i := 0; i < subBuffer+10; i++ {
 		st := e.state()
-		tree := map[string]int64{"a.txt": 1}
-		tree[fmt.Sprintf("gen/%d", i)] = int64(i)
+		tree := map[string]model.File{"a.txt": {Path: "a.txt", Size: 1}}
+		p := fmt.Sprintf("gen/%d", i)
+		tree[p] = model.File{Path: p, Size: int64(i)}
 		st.Tree = tree
 		e.publish(st)
 	}
@@ -206,6 +262,6 @@ func TestEngineUnsubscribeTwice(t *testing.T) {
 		t.Fatal("channel still open after unsubscribe")
 	}
 	st := e.state()
-	st.Tree = map[string]int64{"a.txt": 1, "b.txt": 2}
+	st.Tree = map[string]model.File{"a.txt": {Path: "a.txt", Size: 1}, "b.txt": {Path: "b.txt", Size: 2}}
 	e.publish(st) // must not send on the closed channel
 }
