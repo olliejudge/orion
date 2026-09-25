@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Circle } from "../layout/pack";
-import { MIN_ZOOM, clampPan, focusFolder, follow, panBy, scrollZoomCap, wheelFactor, zoomAround } from "./camera";
-import { MAX_ZOOM, screenToWorld, worldToScreen, type Camera, type Rect } from "./geometry";
+import { MIN_ZOOM, clampPan, focusFolder, follow, isHome, panBy, scrollZoomCap, wheelFactor, zoomAround } from "./camera";
+import { MAX_ZOOM, fitCamera, screenToWorld, worldToScreen, type Camera, type Rect } from "./geometry";
 
 const W = 1000;
 const H = 800;
@@ -176,6 +176,35 @@ describe("focusFolder", () => {
 
   it("is the root at the home camera", () => {
     expect(focusFolder(layout, HOME, W, H, FREE)).toBe("");
+  });
+
+  it("is the root at the home camera even when a folder dominates the repo", () => {
+    // big spans 2*300 = 600 px of the 800 px short side (75%) at k = 1.
+    const dominated = new Map<string, Circle>([
+      ["", c("", 500, 400, 360, 0)],
+      ["big", c("big", 480, 400, 300, 1)],
+    ]);
+    expect(focusFolder(dominated, HOME, W, H, FREE)).toBe("");
+    // Scrolling fully out lands exactly on the home camera.
+    const cur: Camera = { cx: 480, cy: 400, k: 1.3 };
+    const out = zoomAround(cur, cur, 0.5, 500, 400, W, H, dominated.get(""), FREE, dominated);
+    expect(focusFolder(dominated, out.target, W, H, FREE)).toBe("");
+    expect(focusFolder(dominated, { ...HOME, k: 1.2 }, W, H, FREE)).toBe("big");
+  });
+
+  it("keeps a near-full-size folder in focus when it is fitted at about the home scale, and when panned", () => {
+    // A folder nearly as big as the repo: its fit camera's scale is under 1.05 (here under 1).
+    const nearFull = new Map<string, Circle>([
+      ["", c("", 500, 400, 397, 0)],
+      ["app", c("app", 500, 400, 390, 1)],
+      ["app/src", c("app/src", 500, 400, 100, 2)],
+    ]);
+    const fitted = fitCamera(nearFull.get("app")!, W, H, FREE);
+    expect(fitted.k).toBeLessThan(1.05);
+    expect(focusFolder(nearFull, fitted, W, H, FREE)).toBe("app");
+    expect(focusFolder(nearFull, { ...fitted, cx: fitted.cx + 20 }, W, H, FREE)).toBe("app");
+    expect(isHome(fitted, W, H)).toBe(false);
+    expect(isHome(HOME, W, H)).toBe(true);
   });
 
   it("is the deepest folder under the view centre that fills most of the view", () => {

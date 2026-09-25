@@ -32,6 +32,7 @@ function bankTexture(canvas: HTMLCanvasElement): Texture {
  */
 export class TextureBank {
   #spheres = new Map<string, Texture>();
+  #counts = new Map<string, Texture>();
   readonly disc: Texture;
   readonly halo: Texture;
 
@@ -65,9 +66,39 @@ export class TextureBank {
     return this.sphere({ light: lighten(hex, 0.45), base: hex });
   }
 
+  /**
+   * A collapsed folder's file count, centred in the texture and rendered at
+   * `dpr` (draw it at scale 1/dpr). Shared by every disc showing the same
+   * number at the same size, so a frame only swaps textures when a disc's
+   * font size changes.
+   */
+  count(n: number, fontPx: number, color: string, dpr: number): Texture {
+    const key = `${n}|${fontPx}|${color}|${dpr}`;
+    let t = this.#counts.get(key);
+    if (!t) {
+      const text = String(n);
+      const font = labelFont(fontPx);
+      probe ??= makeCanvas(1, 1).ctx;
+      probe.font = font;
+      const pad = 2;
+      const { canvas, ctx } = makeCanvas((probe.measureText(text).width + 2 * pad) * dpr, (fontPx + 2 * pad) * dpr);
+      ctx.scale(dpr, dpr);
+      ctx.font = font;
+      ctx.fillStyle = color;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(text, canvas.width / dpr / 2, canvas.height / dpr / 2);
+      t = Texture.from(canvas, true);
+      this.#counts.set(key, t);
+    }
+    return t;
+  }
+
   destroy(): void {
     for (const t of this.#spheres.values()) t.destroy(true);
     this.#spheres.clear();
+    for (const t of this.#counts.values()) t.destroy(true);
+    this.#counts.clear();
     this.disc.destroy(true);
     this.halo.destroy(true);
   }
@@ -105,7 +136,8 @@ export interface ArcLabel {
   originY: number;
 }
 
-const LABEL_FONT = `500 ${LABEL_FONT_PX}px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif`;
+const labelFont = (px: number): string => `500 ${px}px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif`;
+const LABEL_FONT = labelFont(LABEL_FONT_PX);
 let probe: CanvasRenderingContext2D | null = null;
 
 function glyphWidths(chars: string[]): { widths: number[]; ellipsis: number } {
@@ -168,4 +200,55 @@ export function renderArcLabel(text: string, textR: number, color: string, dpr: 
     ctx.restore();
   });
   return { texture: Texture.from(canvas, true), originX: -minX * dpr, originY: -minY * dpr };
+}
+
+export interface StraightLabel {
+  /** Rendered at dpr; its centre is the text's centre. */
+  texture: Texture;
+  /** Width of the text as drawn (after any truncation), CSS px. */
+  width: number;
+}
+
+/**
+ * A folder name set straight across the middle of a folder too small for it
+ * on the rim, truncated with an ellipsis to `maxWidth` CSS px. Glyphs are
+ * spaced as on the arc (renderArcLabel), and a tight dark shadow keeps the
+ * name legible over the files it crosses.
+ */
+export function renderStraightLabel(text: string, maxWidth: number, color: string, dpr: number): StraightLabel | null {
+  const chars = [...text];
+  const { widths, ellipsis } = glyphWidths(chars);
+  let keep = chars.length;
+  let used = widths.reduce((a, b) => a + b, 0);
+  if (used > maxWidth) {
+    keep = 0;
+    used = ellipsis;
+    while (keep < chars.length && used + widths[keep]! <= maxWidth) used += widths[keep++]!;
+    if (keep === 0) return null;
+  }
+  const glyphs = keep < chars.length ? [...chars.slice(0, keep), "…"] : chars;
+  const gw = keep < chars.length ? [...widths.slice(0, keep), ellipsis] : widths;
+
+  const pad = LABEL_FONT_PX / 2 + 2;
+  const { canvas, ctx } = makeCanvas((used + 2 * pad) * dpr, (LABEL_FONT_PX + 2 * pad) * dpr);
+  ctx.scale(dpr, dpr);
+  ctx.font = LABEL_FONT;
+  ctx.fillStyle = color;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const y = LABEL_FONT_PX / 2 + pad;
+  // Two passes: a wide soft shadow, then a tight dark one, so the name reads over bright file bubbles.
+  for (const [shadow, blur] of [
+    ["rgba(0,0,0,0.5)", 4],
+    ["rgba(0,0,0,0.8)", 1.5],
+  ] as const) {
+    ctx.shadowColor = shadow;
+    ctx.shadowBlur = blur * dpr;
+    let x = pad;
+    glyphs.forEach((ch, i) => {
+      ctx.fillText(ch, x + gw[i]! / 2, y);
+      x += gw[i]!;
+    });
+  }
+  return { texture: Texture.from(canvas, true), width: used };
 }

@@ -132,7 +132,7 @@ test("loads via the tokenised URL and shows the chrome", async ({ page, request 
   await expect(page.getByTestId("live-pill")).toContainText("Live");
   const key = page.getByRole("region", { name: "Map key" });
   await expect(key).toBeVisible();
-  await expect(key.getByTestId("map-key-entry")).toHaveCount(6);
+  await expect(key.getByTestId("map-key-entry")).toHaveCount(7);
 });
 
 test("the map canvas draws the repo", async ({ page }) => {
@@ -225,6 +225,24 @@ test("the open folder filter never overlaps the legend, at a normal or a short v
   }
 });
 
+test("hovering a folder names it, with its file count", async ({ page }) => {
+  await openOrion(page);
+  const box = await page.getByTestId("map").boundingBox();
+  expect(box).not.toBeNull();
+  const tip = page.getByTestId("tooltip");
+  // Sweep the map until the pointer rests on a folder (files show a size instead).
+  let found = false;
+  for (let gy = 1; gy < 16 && !found; gy++) {
+    for (let gx = 1; gx < 24 && !found; gx++) {
+      await page.mouse.move(box!.x + (box!.width * gx) / 24, box!.y + (box!.height * gy) / 16);
+      const text = (await tip.isVisible()) ? await tip.innerText({ timeout: 1_000 }).catch(() => "") : "";
+      found = /\d+ files?$/m.test(text);
+    }
+  }
+  expect(found, "some folder on the map shows a tooltip").toBe(true);
+  await expect(tip.locator(".name")).toHaveText(/\/$/);
+});
+
 test("N toggles Night and Vision and remembers the choice", async ({ page }) => {
   await openOrion(page);
   expect(await theme(page)).toBe("vision");
@@ -244,6 +262,9 @@ test("+ zooms in a level, 0 returns home, and the breadcrumbs (and the home butt
   const home = crumbs.getByRole("button", { name: /Home/ });
   await expect(trail).toHaveCount(1);
   await expect(home).toHaveCount(0);
+  // The legend fills in from the snapshot a frame before the map is laid out,
+  // and + has nothing to step into until it is: wait for the map to draw.
+  await expectLit(page, "before +", 120, 0.005);
 
   await page.keyboard.press("+");
   await expect(trail).not.toHaveCount(1);

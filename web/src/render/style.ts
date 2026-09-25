@@ -142,6 +142,11 @@ export function fileLook(vis: NodeVisual, theme: Theme, isolated: WorktreeId | n
   return { body, halo: halo(vis, theme, isolated), outline: null, rings: rings(vis, vis.touches, isolated) };
 }
 
+/** Colour of the file count on a collapsed folder's disc (CSS colour, for canvas and SVG text). */
+export function countColor(theme: Theme): string {
+  return theme === "night" ? "rgba(235,235,245,0.5)" : "rgba(235,235,245,0.62)";
+}
+
 /** A collapsed folder: a faint disc carrying its descendants' touches; tinted solid when all of them are committed. */
 export function aggregateLook(vis: NodeVisual, theme: Theme, isolated: WorktreeId | null): AggregateLook {
   const visible = vis.touches.find((t) => touchAlpha(t, isolated) === 1);

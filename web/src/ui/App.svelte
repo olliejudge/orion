@@ -158,7 +158,7 @@
     renderer.setFreeArea(f.free);
     renderer.update(f.layout, f.visuals, change);
     highlight(hovered); // what stands in for the hovered path may have changed
-    tip = hoverTip(s, layout, mapHover); // the file under a still pointer may have changed
+    tip = hoverTip(s, layout, mapHover, zoomPath, excluded); // the file under a still pointer may have changed
   }
 
   // A file inside a collapsed folder is highlighted as the folder's aggregate.
@@ -279,7 +279,7 @@
         r.onFocus((path) => (zoomPath = path));
         r.onHover((path, at) => {
           mapHover = path === null ? null : { path, at };
-          tip = hoverTip(repo, layout, mapHover);
+          tip = hoverTip(repo, layout, mapHover, zoomPath, excluded);
         });
         queue.request({ kind: "snapshot", merged: [] });
         start();

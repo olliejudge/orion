@@ -1,13 +1,14 @@
 // View models for the chrome. Pure functions of RepoState so they are unit-tested
 // without rendering, and the Svelte components stay thin.
 import { worktreeColor } from "../colors";
-import { encode, encodeAll } from "../layout/encoding";
+import { encode } from "../layout/encoding";
 import { isExcluded } from "../layout/exclude";
 import { freeArea, type Insets } from "../layout/frame";
 import type { Circle } from "../layout/pack";
 import type { Activity, WorktreeId } from "../protocol";
 import { parentDir } from "../render/geometry";
 import type { RepoState } from "../store";
+import { folderStats } from "./folderStats";
 import { humanSize, splitPath } from "./format";
 import type { Theme } from "./theme";
 
@@ -124,24 +125,26 @@ export interface TooltipInfo {
 
 const VERB: Record<string, string> = { added: "New", modified: "Edited", deleted: "Deleted", renamed: "Moved" };
 
-/** Hover card for files and collapsed folders; null for plain folders (their names are on the map). */
-export function tooltipInfo(state: RepoState, c: Circle): TooltipInfo | null {
-  if (c.isDir && c.aggregate === undefined) return null;
-  const visual = c.isDir ? encodeAll(state, new Map([[c.path, c]])).get(c.path)! : encode(state, c.path);
+const stageText = (stage: string): string => (stage === "committed" ? "committed on branch" : "uncommitted");
+const plural = (n: number, one: string): string => `${n} ${n === 1 ? one : `${one}s`}`;
+
+/**
+ * Hover card for files and folders (collapsed or not): most folders are too
+ * small on screen for a name, so the card names them, with their file count
+ * and each worktree's changed files below them (both leaving out `excluded`
+ * folders, as the map does). Null for the repo root.
+ */
+export function tooltipInfo(state: RepoState, c: Circle, excluded?: ReadonlySet<string>): TooltipInfo | null {
+  if (c.isDir) return c.depth === 0 ? null : folderInfo(state, c.path, excluded);
+  const visual = encode(state, c.path);
   const touches = visual.touches.map((t) => {
     const w = state.worktrees.get(t.worktree);
     const entry = state.overlays.get(t.worktree)?.get(c.path);
     let verb = VERB[t.kind] ?? t.kind;
-    if (c.isDir) verb = "Changes";
-    else if (t.kind === "renamed" && entry?.from) verb = `Moved from ${entry.from}`;
+    if (t.kind === "renamed" && entry?.from) verb = `Moved from ${entry.from}`;
     else if (!entry && t.kind === "deleted") verb = "Moved away";
-    const stage = t.stage === "committed" ? "committed on branch" : "uncommitted";
-    return { color: worktreeColor(t.colorIndex), label: w?.label ?? t.worktree, text: `${verb}, ${stage}` };
+    return { color: worktreeColor(t.colorIndex), label: w?.label ?? t.worktree, text: `${verb}, ${stageText(t.stage)}` };
   });
-  if (c.isDir) {
-    const n = c.aggregate ?? 0;
-    return { dir: splitPath(c.path).dir, name: `${splitPath(c.path).name}/`, detail: `${n} ${n === 1 ? "file" : "files"}`, touches };
-  }
   let size = state.tree.get(c.path) ?? 0;
   for (const m of state.overlays.values()) {
     const e = m.get(c.path);
@@ -149,6 +152,22 @@ export function tooltipInfo(state: RepoState, c: Circle): TooltipInfo | null {
   }
   const { dir, name } = splitPath(c.path);
   return { dir, name, detail: humanSize(size), touches };
+}
+
+function folderInfo(state: RepoState, path: string, excluded?: ReadonlySet<string>): TooltipInfo {
+  const stats = folderStats(state, path, excluded);
+  const rank = (id: WorktreeId): number => {
+    const i = state.worktrees.get(id)?.colorIndex ?? -1;
+    return i < 0 ? Number.MAX_SAFE_INTEGER : i;
+  };
+  const ids = [...stats.changed.keys()].sort((a, b) => rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0));
+  const touches = ids.map((id) => {
+    const w = state.worktrees.get(id);
+    const { count, stage } = stats.changed.get(id)!;
+    return { color: worktreeColor(w?.colorIndex ?? -1), label: w?.label ?? id, text: `${count} changed, ${stageText(stage)}` };
+  });
+  const { dir, name } = splitPath(path);
+  return { dir, name: `${name}/`, detail: plural(stats.files, "file"), touches };
 }
 
 export interface HoverTarget {
@@ -159,15 +178,18 @@ export interface HoverTarget {
 /**
  * The tooltip for what's under the pointer, recomputed from the latest state
  * and layout (a patch can change the file under a still pointer). Null when
- * nothing is hovered or the hovered path has left the map.
+ * nothing is hovered, the hovered path has left the map, or it is `current`
+ * (the folder in view: its background is everywhere, and the breadcrumbs name it).
  */
 export function hoverTip(
   state: RepoState | null,
   layout: Map<string, Circle>,
   hover: HoverTarget | null,
+  current?: string,
+  excluded?: ReadonlySet<string>,
 ): { info: TooltipInfo; x: number; y: number } | null {
-  const c = hover === null ? undefined : layout.get(hover.path);
-  const info = c && state ? tooltipInfo(state, c) : null;
+  const c = hover === null || hover.path === current ? undefined : layout.get(hover.path);
+  const info = c && state ? tooltipInfo(state, c, excluded) : null;
   return info && hover ? { info, x: hover.at.x, y: hover.at.y } : null;
 }
 
