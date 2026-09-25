@@ -159,6 +159,28 @@ describe("tooltipInfo", () => {
     });
   });
 
+  it("says when each change was touched, and when an unchanged file was last committed", () => {
+    const HOUR = 3_600_000;
+    const s = makeState(
+      { "src/a.ts": 1200, "src/b.ts": 2000, "src/c.ts": 10 },
+      {
+        w1: [{ path: "src/a.ts", kind: "modified", stage: "committed", size: 1500, touched: NOW - 2 * 24 * HOUR }],
+        w2: [
+          { path: "src/a.ts", kind: "modified", stage: "uncommitted", size: 900, touched: NOW - 4 * 60_000 },
+          { path: "src/n.ts", kind: "added", stage: "uncommitted", size: 9 }, // no time yet
+        ],
+      },
+      undefined,
+      { "src/a.ts": NOW - 90 * 24 * HOUR, "src/b.ts": NOW - 90 * 24 * HOUR },
+    );
+    const a = tooltipInfo(s, circle("src/a.ts", false), undefined, NOW)!;
+    expect(a.detail).toBe("1.5 KB · last commit 3 months ago");
+    expect(a.touches.map((t) => t.text)).toEqual(["Edited, committed on branch · 2 days ago", "Edited, uncommitted · 4 min ago"]);
+    expect(tooltipInfo(s, circle("src/b.ts", false), undefined, NOW)!.detail).toBe("2.0 KB · last commit 3 months ago");
+    expect(tooltipInfo(s, circle("src/c.ts", false), undefined, NOW)!.detail).toBe("10 bytes"); // unknown: nothing said
+    expect(tooltipInfo(s, circle("src/n.ts", false), undefined, NOW)!.touches[0]!.text).toBe("New, uncommitted");
+  });
+
   it("describes new, deleted and moved files", () => {
     const s = makeState(
       { "old.ts": 5, "gone.ts": 5 },

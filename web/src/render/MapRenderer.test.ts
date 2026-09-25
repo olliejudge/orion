@@ -14,7 +14,7 @@ describe("MapRenderer (without WebGL)", () => {
     ["src/a.ts", circle("src/a.ts", 400, 400, 10, 2, false)],
   ]);
   const visuals = new Map<string, NodeVisual>(
-    [...layout.keys()].map((p) => [p, { path: p, ext: "ts", touches: [], ghost: false, deleted: false, tinted: false }]),
+    [...layout.keys()].map((p) => [p, { path: p, touches: [], state: "unchanged" }]),
   );
 
   function host(): HTMLElement {

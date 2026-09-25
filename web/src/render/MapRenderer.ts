@@ -36,7 +36,18 @@ import {
 } from "./labels";
 import { HALO_RING_FRAC, TextureBank, labelWidth, renderArcLabel, renderStraightLabel } from "./sprites";
 import { SETTLE_EPS, SPRING_OMEGA, isSettled, makeSpring, retarget, snapSpring, stepSpring, type Spring } from "./springs";
-import { aggregateLook, countColor, fileLook, touchSig, type AggregateLook, type FileLook, type Rings, type Theme } from "./style";
+import {
+  DELETED_RIM_W_PX,
+  aggregateLook,
+  countColor,
+  fileLook,
+  glyphSize,
+  touchSig,
+  type AggregateLook,
+  type FileLook,
+  type Rings,
+  type Theme,
+} from "./style";
 
 export type { Theme } from "./style";
 
@@ -45,6 +56,8 @@ const LABEL_GAP_PAD_PX = 4; // outline clearance either side of a rim label
 const HALO_PX = 5; // halo peak this far outside the bubble, on screen
 const SPLIT_GAP_PX = 3;
 const LOGK_EPS = 1e-4; // camera scale settles within 0.01%
+/** How often bubbles re-age (their brightness is how long ago they were touched); the curve moves far slower than this. */
+export const AGE_TICK_MS = 30_000;
 
 /** Settle epsilon for world-space springs at zoom k: half a screen pixel, or SETTLE_EPS if k is unusable. */
 function worldEps(k: number): number {
@@ -58,7 +71,8 @@ interface View {
   body: Sprite | null; // files only
   halo: Sprite | null;
   flash: Sprite | null; // merge shimmer
-  g: Graphics; // dir outline, ghost fill, rings
+  glyph: Sprite | null; // a file's state mark ("+", "×"), made on first use
+  g: Graphics; // dir outline, aggregate disc, deleted rim, rings
   gKey: string;
   label: Sprite | null;
   labelKey: string;
@@ -134,8 +148,12 @@ export class MapRenderer {
   #isolated: WorktreeId | null = null;
   #highlighted: string | null = null;
   #styleGen = 0;
-  // Looks per visual (the store makes new visuals per patch), recomputed when the theme or isolation changes.
-  #looks = new WeakMap<NodeVisual, { gen: number; look: FileLook | AggregateLook }>();
+  // Ages are measured against this wall-clock time, advanced every AGE_TICK_MS (#ageGen counts the ticks).
+  #clock = Date.now();
+  #ageGen = 0;
+  #ageTimer: ReturnType<typeof setInterval> | null = null;
+  // Looks per visual (the store makes new visuals per patch), recomputed when the theme, isolation or clock changes.
+  #looks = new WeakMap<NodeVisual, { gen: number; ageGen: number; look: FileLook | AggregateLook }>();
 
   #zoomPath = "";
   #free: Rect | undefined; // where zoom targets are fitted (see fitCamera)
@@ -200,6 +218,12 @@ export class MapRenderer {
       doubleClick: () => this.#onDblClick(),
     });
     app.ticker.add((t) => this.#frame(t.deltaMS));
+    // The ticker stops when idle, so ageing needs its own slow clock.
+    this.#ageTimer = setInterval(() => {
+      this.#clock = Date.now();
+      this.#ageGen++;
+      this.#wake();
+    }, AGE_TICK_MS);
     this.#stopMotionWatch = watchReducedMotion((reduced) => {
       this.#motion = motionPolicy(reduced);
       this.#wake();
@@ -212,6 +236,7 @@ export class MapRenderer {
     // Scene.update reports whether anything moves; wake regardless, because
     // visuals (colours, rings) can change without any motion.
     this.#scene.update(layout, visuals, change, performance.now());
+    this.#clock = Date.now(); // new visuals age from now; cached looks keep theirs until the next tick
     if (!layout.has(this.#zoomPath)) this.#zoomPath = "";
     this.#aimCamera(false);
     this.#wake();
@@ -278,6 +303,7 @@ export class MapRenderer {
     const app = this.#app;
     if (!app) return;
     this.#stopMotionWatch();
+    if (this.#ageTimer !== null) clearInterval(this.#ageTimer);
     app.canvas.removeEventListener("pointermove", this.#onPointerMove);
     app.canvas.removeEventListener("pointerleave", this.#onPointerLeave);
     this.#nav?.destroy();
@@ -502,6 +528,7 @@ export class MapRenderer {
       body,
       halo,
       flash: null,
+      glyph: null,
       g,
       gKey: "",
       label: null,
@@ -526,9 +553,9 @@ export class MapRenderer {
 
   #look(vis: NodeVisual, aggregate: boolean): FileLook | AggregateLook {
     const hit = this.#looks.get(vis);
-    if (hit && hit.gen === this.#styleGen) return hit.look;
-    const look = aggregate ? aggregateLook(vis, this.#theme, this.#isolated) : fileLook(vis, this.#theme, this.#isolated);
-    this.#looks.set(vis, { gen: this.#styleGen, look });
+    if (hit && hit.gen === this.#styleGen && hit.ageGen === this.#ageGen) return hit.look;
+    const look = aggregate ? aggregateLook(vis, this.#theme, this.#isolated, this.#clock) : fileLook(vis, this.#theme, this.#isolated, this.#clock);
+    this.#looks.set(vis, { gen: this.#styleGen, ageGen: this.#ageGen, look });
     return look;
   }
 
@@ -556,16 +583,14 @@ export class MapRenderer {
 
     const vis = n.visual;
     const look = n.isDir ? null : (this.#look(vis, false) as FileLook);
+    const agg = n.aggregate !== undefined ? (this.#look(vis, true) as AggregateLook) : null;
 
-    // Body (files): a sphere or flat disc per theme and lifecycle; none for ghosts and deletions.
+    // Body (files): one flat disc texture, tinted; none for deletions (hollow).
     if (v.body) {
       const body = look?.body ?? null;
       v.body.visible = body !== null;
       if (body) {
-        const tex =
-          body.kind === "flat" ? f.bank.disc : body.kind === "worktree" ? f.bank.worktreeSphere(body.color) : f.bank.sphere(body.color);
-        if (v.body.texture !== tex) v.body.texture = tex;
-        v.body.tint = body.kind === "flat" ? body.tint : 0xffffff;
+        v.body.tint = body.tint;
         v.body.alpha = body.alpha;
         v.body.width = v.body.height = R * 2;
       }
@@ -573,7 +598,7 @@ export class MapRenderer {
 
     // Halo: live uncommitted work glows in its worktree's colour.
     if (v.halo) {
-      const glow = look ? look.halo : this.#look(vis, true).halo;
+      const glow = look ? look.halo : (agg?.halo ?? null);
       v.halo.visible = glow !== null;
       if (glow) {
         v.halo.width = v.halo.height = ((R + HALO_PX) / HALO_RING_FRAC) * 2;
@@ -587,13 +612,16 @@ export class MapRenderer {
 
     // Vector parts, redrawn only when their inputs change.
     const clip = R > f.big ? clipFor(sx, sy, R, f.rect) : WHOLE;
-    const gKey = `${Math.round(R * 2)}|${clip.key}|${this.#styleGen}|${touchSig(vis)}|${vis.ghost}|${vis.deleted}|${n.aggregate ?? -1}|${gap.toFixed(3)}`;
+    // (A file's marks age through the Graphics' alpha; an aggregate's disc through its fill, part of the key.)
+    const gKey = `${Math.round(R * 2)}|${clip.key}|${this.#styleGen}|${touchSig(vis)}|${vis.state}|${n.aggregate ?? -1}|${agg?.fill.alpha.toFixed(2) ?? ""}|${gap.toFixed(3)}`;
     if (gKey !== v.gKey) {
       v.gKey = gKey;
       v.g.clear();
       if (n.isDir) this.#drawDir(v.g, n, R, clip, sx, sy, f, gap);
       else if (look) this.#drawFileMarks(v.g, look, R, clip);
     }
+    v.g.alpha = look ? look.marks : 1;
+    if (look) this.#drawGlyph(v, look, R, f);
 
     if (n.aggregate !== undefined) this.#drawCount(v, n, n.aggregate, R, f);
     this.#drawShimmer(v, n, R, f);
@@ -636,15 +664,31 @@ export class MapRenderer {
     outline(g, R, clip, 0xffffff, night ? (isRoot ? 0.1 : 0.08) : isRoot ? 0.16 : 0.12, 1, gap);
   }
 
-  /** A file's outline (ghost: dashed with a faint fill; deleted: faint solid) and its worktree rings. */
+  /** A file's vector marks: a deletion's rim and the worktree rings. */
   #drawFileMarks(g: Graphics, look: FileLook, R: number, clip: Clip): void {
     const o = look.outline;
-    if (o) {
-      if (o.fillAlpha > 0 && clip.fill.kind === "full") g.circle(0, 0, R).fill({ color: o.fill, alpha: o.fillAlpha });
-      if (o.dashed) dashed(g, R, -Math.PI / 2, Math.PI * 1.5, clip, o.color, o.alpha, 1, 2, 2);
-      else outline(g, R, clip, o.color, o.alpha, 1);
-    }
+    if (o) outline(g, R - DELETED_RIM_W_PX / 2, clip, o.color, o.alpha, DELETED_RIM_W_PX);
     this.#drawRings(g, R, clip, look.rings);
+  }
+
+  /** The state glyph, a tinted sprite of a shared texture, sized with the bubble; hidden when it is too small. */
+  #drawGlyph(v: View, look: FileLook, R: number, f: FrameCtx): void {
+    const size = look.glyph ? glyphSize(R) : null;
+    if (!look.glyph || size === null) {
+      if (v.glyph) v.glyph.visible = false;
+      return;
+    }
+    if (!v.glyph) {
+      v.glyph = new Sprite(f.bank.glyphs[look.glyph.shape]);
+      v.glyph.anchor.set(0.5);
+      v.root.addChildAt(v.glyph, v.root.getChildIndex(v.g) + 1);
+    }
+    const tex = f.bank.glyphs[look.glyph.shape];
+    if (v.glyph.texture !== tex) v.glyph.texture = tex;
+    v.glyph.visible = true;
+    v.glyph.tint = look.glyph.color;
+    v.glyph.alpha = look.glyph.alpha;
+    v.glyph.width = v.glyph.height = size * 2;
   }
 
   /** One ring (or a split ring with one arc per worktree): dashed = uncommitted, solid = committed. */

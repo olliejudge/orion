@@ -21,14 +21,14 @@ describe("computeFrame", () => {
   it("keeps a tiny touched file visible beside a big sibling", () => {
     const f = computeFrame(makeState(files, { w1: [{ path: "tiny.txt", kind: "modified", stage: "committed", size: 1 }] }), 400, 400, 1);
     expect(f.layout.get("tiny.txt")!.r).toBeGreaterThanOrEqual(1.5);
-    expect(f.visuals.get("tiny.txt")).toMatchObject({ tinted: true, touches: [{ worktree: "w1" }] });
+    expect(f.visuals.get("tiny.txt")).toMatchObject({ state: "committed", touches: [{ worktree: "w1" }] });
   });
 
-  it("keeps a tiny uncommitted add beside a subfolder as its own ghost", () => {
+  it("keeps a tiny uncommitted add beside a subfolder as its own bubble", () => {
     const s = makeState({ "src/lib/big.bin": 10_000_000 }, { w2: [{ path: "src/new.ts", kind: "added", stage: "uncommitted", size: 1 }] });
     const f = computeFrame(s, 400, 400, 1);
     expect(f.layout.get("src/new.ts")!.r).toBeGreaterThanOrEqual(1.5);
-    expect(f.visuals.get("src/new.ts")).toMatchObject({ ghost: true, touches: [{ worktree: "w2", stage: "uncommitted" }] });
+    expect(f.visuals.get("src/new.ts")).toMatchObject({ state: "added", touches: [{ worktree: "w2", stage: "uncommitted" }] });
   });
 
   it("carries a touched file in a collapsed folder on the aggregate, and keeps its touched sibling", () => {

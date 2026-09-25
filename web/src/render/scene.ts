@@ -1,4 +1,4 @@
-import type { NodeVisual } from "../layout/encoding";
+import { blankVisual, type NodeVisual } from "../layout/encoding";
 import type { Circle } from "../layout/pack";
 import { nearestShown } from "../layout/shown";
 import type { Change } from "../store";
@@ -35,7 +35,7 @@ function atRest(s: Spring): boolean {
  * - A node with `renamedFrom` whose source node is on screen starts at the
  *   source's current position/radius and glides (on an arc) to its target.
  * - Nodes missing from the layout shrink and fade out, then are dropped.
- * - Deleted files shrink to DELETED_SCALE × r (drawn as faint outlines).
+ * - Deleted files shrink to DELETED_SCALE × r (drawn hollow).
  * - Paths in change.merged shimmer for SHIMMER_MS (or, when a path is not
  *   drawn, its nearest drawn ancestor other than the root: see nearestShown).
  */
@@ -54,8 +54,8 @@ export class Scene {
   update(layout: Map<string, Circle>, visuals: Map<string, NodeVisual>, change: Change, now: number): boolean {
     const next = new Map<string, SceneNode>();
     for (const c of layout.values()) {
-      const visual = visuals.get(c.path) ?? { path: c.path, ext: "", touches: [], ghost: false, deleted: false, tinted: false };
-      const r = c.isDir ? c.r : visual.deleted ? c.r * DELETED_SCALE : c.r;
+      const visual = visuals.get(c.path) ?? blankVisual(c.path);
+      const r = c.isDir ? c.r : visual.state === "deleted" ? c.r * DELETED_SCALE : c.r;
       let n = this.nodes.get(c.path);
       if (n) {
         retarget(n.x, c.x);

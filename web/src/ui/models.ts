@@ -9,7 +9,7 @@ import type { Activity, WorktreeId } from "../protocol";
 import { parentDir } from "../render/geometry";
 import type { RepoState } from "../store";
 import { folderStats } from "./folderStats";
-import { humanSize, splitPath } from "./format";
+import { humanSize, splitPath, timeAgo } from "./format";
 import type { Theme } from "./theme";
 
 /** A worktree counts as active with changes, or with activity in the last 10 minutes. */
@@ -132,9 +132,11 @@ const plural = (n: number, one: string): string => `${n} ${n === 1 ? one : `${on
  * Hover card for files and folders (collapsed or not): most folders are too
  * small on screen for a name, so the card names them, with their file count
  * and each worktree's changed files below them (both leaving out `excluded`
- * folders, as the map does). Null for the repo root.
+ * folders, as the map does). A file's card also says when it was touched
+ * (each change's time, else the base file's last commit), as of `now`.
+ * Null for the repo root.
  */
-export function tooltipInfo(state: RepoState, c: Circle, excluded?: ReadonlySet<string>): TooltipInfo | null {
+export function tooltipInfo(state: RepoState, c: Circle, excluded?: ReadonlySet<string>, now = Date.now()): TooltipInfo | null {
   if (c.isDir) return c.depth === 0 ? null : folderInfo(state, c.path, excluded);
   const visual = encode(state, c.path);
   const touches = visual.touches.map((t) => {
@@ -143,7 +145,8 @@ export function tooltipInfo(state: RepoState, c: Circle, excluded?: ReadonlySet<
     let verb = VERB[t.kind] ?? t.kind;
     if (t.kind === "renamed" && entry?.from) verb = `Moved from ${entry.from}`;
     else if (!entry && t.kind === "deleted") verb = "Moved away";
-    return { color: worktreeColor(t.colorIndex), label: w?.label ?? t.worktree, text: `${verb}, ${stageText(t.stage)}` };
+    const when = t.touched ? ` · ${timeAgo(t.touched, now)}` : "";
+    return { color: worktreeColor(t.colorIndex), label: w?.label ?? t.worktree, text: `${verb}, ${stageText(t.stage)}${when}` };
   });
   let size = state.tree.get(c.path) ?? 0;
   for (const m of state.overlays.values()) {
@@ -151,7 +154,8 @@ export function tooltipInfo(state: RepoState, c: Circle, excluded?: ReadonlySet<
     if (e && e.kind !== "deleted") size = Math.max(size, e.size);
   }
   const { dir, name } = splitPath(c.path);
-  return { dir, name, detail: humanSize(size), touches };
+  const committed = visual.touched ? ` · last commit ${timeAgo(visual.touched, now)}` : "";
+  return { dir, name, detail: `${humanSize(size)}${committed}`, touches };
 }
 
 function folderInfo(state: RepoState, path: string, excluded?: ReadonlySet<string>): TooltipInfo {
@@ -187,9 +191,10 @@ export function hoverTip(
   hover: HoverTarget | null,
   current?: string,
   excluded?: ReadonlySet<string>,
+  now = Date.now(),
 ): { info: TooltipInfo; x: number; y: number } | null {
   const c = hover === null || hover.path === current ? undefined : layout.get(hover.path);
-  const info = c && state ? tooltipInfo(state, c, excluded) : null;
+  const info = c && state ? tooltipInfo(state, c, excluded, now) : null;
   return info && hover ? { info, x: hover.at.x, y: hover.at.y } : null;
 }
 

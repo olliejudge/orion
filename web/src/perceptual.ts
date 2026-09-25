@@ -1,5 +1,5 @@
-// Small perceptual colour helpers (sRGB → CIELAB, D65) used to keep the
-// file-type palette clearly apart from the worktree colours. Pure, no deps.
+// Small perceptual colour helpers (sRGB → CIELAB, D65; WCAG luminance and
+// contrast) used to tune and test the map's tones. Pure, no deps.
 
 export type Lab = [L: number, a: number, b: number];
 
@@ -36,4 +36,29 @@ export function deltaE(a: string, b: string): number {
 export function chroma(hex: string): number {
   const [, a, b] = hexToLab(hex);
   return Math.hypot(a, b);
+}
+
+function channels(hex: string): [number, number, number] {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+/** `top` drawn at `alpha` over `bottom` (both "#rrggbb"), as "#rrggbb". */
+export function over(top: string, alpha: number, bottom: string): string {
+  const t = channels(top);
+  const b = channels(bottom);
+  const mix = t.map((c, i) => Math.round(c * alpha + b[i]! * (1 - alpha)));
+  return `#${((1 << 24) | (mix[0]! << 16) | (mix[1]! << 8) | mix[2]!).toString(16).slice(1)}`;
+}
+
+/** WCAG relative luminance, 0 (black) to 1 (white). */
+export function luminance(hex: string): number {
+  const [r, g, b] = channels(hex).map(linear) as [number, number, number];
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/** WCAG contrast ratio between two colours, 1 to 21. */
+export function contrast(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [number, number];
+  return (hi + 0.05) / (lo + 0.05);
 }

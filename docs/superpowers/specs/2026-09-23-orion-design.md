@@ -14,6 +14,7 @@ Phase 1 shipped as specified below, except for these deviations:
 - **Auth cookie (§7).** The cookie is named per port, `orion_t_<port>`, so orion instances on different ports do not overwrite each other's cookies.
 - **Worktree colours (§6).** A removed worktree frees its colour index, and a new worktree can reuse it.
 - **Real-repo polish (Task 16, after the plan's tasks).** A pass against real repos added, among other tweaks, a muted file-type palette for the Vision theme.
+- **File encoding (§6), after Phase 1.** The file-type palette and gradient spheres were replaced by the who / what / when encoding below (flat worktree-colour fills, state marks, brightness by recency), shared by both themes. The wire gained an optional `touched` time for it (§5).
 
 ## 1. Intent
 
@@ -167,6 +168,8 @@ type Activity = { ts: number; worktree: WorktreeId;
                   path?: string; from?: string; sha?: string; subject?: string; files?: number };
 ```
 
+`ChangeEntry` and `File` carry `touched` (§2). An absent or zero `touched` means unknown: the client treats a change with no time as just now, and an unchanged file with none as old.
+
 Client → server: `{ "type": "resync" }`. The client sends this if it sees a gap in `seq`; the server replies with a fresh snapshot. Every new connection receives a snapshot first.
 
 Activity is derived by `model` when diffing:
@@ -187,19 +190,36 @@ Vite, TypeScript, **Svelte 5** for panels and chrome, **PixiJS v8** (WebGL) for 
 - A full-bleed canvas. The root circle is the repo; folders are nested circles with their names set along the top arc, as in Git Truck, when the radius is large enough. Files are filled bubbles sized by bytes (square-root scaled by `pack`).
 - **Stable layout:** children are sorted by name, not size, so the layout doesn't reshuffle when sizes change. Every node's position and radius is animated with a critically damped spring (about 300 ms) whenever the layout changes.
 - **Node set** = base tree ∪ all overlay paths. The same path touched by several worktrees is still one node.
-- **File colour** (Phase 1): a curated palette keyed by extension group, drawn as a gradient-shaded sphere in Vision and flat graphite in Night.
-- **Worktree encoding:**
+- **File encoding: who / what / when.** Both themes use the same flat system, tuned per theme for contrast with the background.
+  - **Who is colour.** A changed file is a flat disc in its worktree's colour. An unchanged file is a flat, quiet neutral disc (no gradient, no file-type colour).
+  - **What is a mark.** State is shown by a mark on the bubble, not by shading:
 
-  | Situation | Rendering |
-  |---|---|
-  | Uncommitted modified | Normal fill, a glowing halo in the worktree colour, and a dashed ring |
-  | Uncommitted added | A ghost bubble: about 15% fill in the worktree colour and a dashed outline |
-  | Committed on branch | Solid, tinted in the worktree colour, with a thin solid ring |
-  | Deleted (either stage) | Shrinks to a faint outline and stays until the deletion reaches base |
-  | Renamed or moved | The bubble glides from its old position to its new one along a gentle arc |
-  | Touched by 2+ worktrees | A **split ring** with one arc segment per worktree colour |
-  | Merged into base (leaves the overlay) | Returns to the file-type colour with a one-off shimmer (about 600 ms) |
+    | State | Fill | Mark | Ring |
+    |---|---|---|---|
+    | Unchanged | Neutral grey | None | None |
+    | Edited, uncommitted | Worktree colour | A soft glow (live work) | None |
+    | New, uncommitted (added, or the new name of a rename) | Worktree colour | A **+** glyph, and the glow | None |
+    | Committed on branch, not yet in base | Worktree colour | None | A thin solid ring hugging the bubble ("settled") |
+    | Deleted, either stage (or the old name of a rename) | None: hollow | A rim and a **×** in the worktree colour; the bubble shrinks to 85% | None |
+    | Touched by 2+ worktrees | The colour of the worktree behind the state (live work first) | As above | A **split ring**, one arc per worktree: dashed while uncommitted, solid once committed |
+    | Renamed or moved | | The bubble glides from its old position to its new one along a gentle arc | |
+    | Merged into base (leaves the overlay) | Back to neutral, freshly committed so bright | A one-off shimmer (about 600 ms) | None |
 
+    Glyphs scale with the bubble's on-screen radius (they stop growing at 24 px) and are hidden below 5 px, where the fill alone carries the state. The ink of a **+** is white or near-black, whichever keeps at least 3:1 contrast against the fill at every age; a **×** is drawn in the (lightened) worktree colour.
+  - **When is brightness.** Every bubble's alpha encodes how long ago it was last touched (its newest change, else the base file's last commit), on a log scale stretched over the hours-to-weeks band where agent work lives. Recency (1 = just touched, 0 = old) is interpolated on log(age) between these stops:
+
+    | Age | ≤ 1 hour | 1 day | 1 week | 30 days | 180 days | ≥ 1 year |
+    |---|---|---|---|---|---|---|
+    | Recency | 1 | 0.8 | 0.6 | 0.4 | 0.2 | 0 |
+
+    Each theme maps recency onto an alpha range. Unchanged files get a wide range (and warm slightly, staying neutral, as they get fresher), so active areas of the repo stand out from cold ones at a glance; changed files fade within a higher band, at least 0.2 brighter than an unchanged file of the same age. Collapsed folders take the newest time below them. The renderer re-ages bubbles every 30 s (the frame loop stops when idle).
+
+    | Theme | Unchanged (oldest → now) | Changed (oldest → now) | Glow | Collapsed folder, unchanged / changed |
+    |---|---|---|---|---|
+    | Vision | `#a8adc6` at 11% → `#e0dcd2` at 78% | worktree colour at 62% → 100% | 55% | white 5% → 34% / worktree colour 30% → 60% |
+    | Night | `#9ea1b4` at 12% → `#d8d4ca` at 76% | worktree colour at 60% → 100% | 45% | white 5% → 30% / worktree colour 25% → 50% |
+
+  - **Collapsed folders** are a disc in the colour of the worktree changing something below them (a faint neutral disc when nothing is), as bright as the newest touch below them, with one ring arc per worktree, the glow of live work, and their file count.
 - **Worktree colours:** a 10-colour palette built from Apple system colours (blue, orange, green, pink, purple, teal, yellow, indigo, red, mint). The main worktree is always blue ("you"). Other worktrees get colours in order of first activity during the session. Colours are reused only when more than 10 worktrees are active at once, and hover always shows the worktree's label.
 - **Scale:** nodes whose on-screen radius is under 1.5 px are culled; folders whose radius is under about 6 px are drawn as a single aggregate bubble. Targets: 60 fps at 2k files and smooth interaction at 20k files.
 
@@ -208,8 +228,8 @@ Vite, TypeScript, **Svelte 5** for panels and chrome, **PixiJS v8** (WebGL) for 
 - **Top-left, repo + worktrees legend:** the repo name, then a pill per *active* worktree (one with a non-empty overlay or recent activity), showing its colour dot, label and a count of changed files. Idle worktrees collapse into "+N idle", which expands on click. Clicking a worktree pill **isolates** it: other worktrees' encodings dim. Clicking again clears the isolation.
 - **Right, activity stream:** newest first. Each row shows the worktree dot, the file name (with the parent folder dimmed), the kind and a relative time. Commit and merge rows are emphasised. Hovering a row highlights the node on the map, and clicking zooms to it. In Night mode, rows fade with age.
 - **Bottom-centre, time pill:** in Phase 1 a "● Live" indicator. In Phase 2 it expands into the scrubber.
-- **Bottom-left, map key:** a small swatch per mark (unchanged file, edited and new uncommitted, committed on branch, deleted, merged), drawn from the renderer's own encoding in the current theme, plus a note that circles are folders and colours are worktrees. It collapses to a "Key" button, and the choice is remembered in `localStorage`; it starts open, except on narrow screens. The map keeps clear of it like it does of the legend.
-- **Tooltip on hover:** the full path, size, and which worktrees are touching the file and at what stage.
+- **Bottom-left, map key:** a small swatch per mark (unchanged file, edited and new uncommitted, committed on branch, deleted, merged), a strip of bubbles fading from "now" to "months ago", and a collapsed folder, all drawn from the renderer's own encoding in the current theme, plus a note that circles are folders and colours are worktrees. It collapses to a "Key" button, and the choice is remembered in `localStorage`; it starts open, except on narrow screens. The map keeps clear of it like it does of the legend.
+- **Tooltip on hover:** the full path, size, and which worktrees are touching the file and at what stage, with how long ago each change was touched ("Edited, uncommitted · 4 min ago") and, when known, the base file's last commit ("last commit 3 months ago").
 
 ### Interactions
 
@@ -220,7 +240,7 @@ Vite, TypeScript, **Svelte 5** for panels and chrome, **PixiJS v8** (WebGL) for 
 ### Visual language
 
 - **Vision:** a radial deep-indigo-to-near-black background, panels at `rgba(40,40,52,.45)` with `backdrop-filter: blur(18px) saturate(1.6)` and a 1px `rgba(255,255,255,.10)` border, SF Pro via the system font stack, and soft glows.
-- **Night:** a `#000` background, idle files in `#3a3a44`, and only worktree activity in colour.
+- **Night:** a `#000` background, unchanged files in dim grey, and only worktree activity in colour.
 
 ## 7. Server & CLI
 

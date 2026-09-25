@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { humanSize, relativeTime, splitPath } from "./format";
+import { humanSize, relativeTime, splitPath, timeAgo } from "./format";
 
 describe("humanSize", () => {
   it("uses decimal units like Finder", () => {
@@ -24,6 +24,28 @@ describe("relativeTime", () => {
   });
   it("treats future timestamps (clock skew) as now", () => {
     expect(relativeTime(now + 5_000, now)).toBe("now");
+  });
+});
+
+describe("timeAgo", () => {
+  const now = Date.UTC(2026, 8, 25);
+  const MIN = 60_000;
+  const DAY = 24 * 60 * MIN;
+  it("reads naturally from just now to years", () => {
+    expect(timeAgo(now - 20_000, now)).toBe("just now");
+    expect(timeAgo(now + 60_000, now)).toBe("just now"); // clock skew
+    expect(timeAgo(now - MIN, now)).toBe("1 min ago");
+    expect(timeAgo(now - 4 * MIN, now)).toBe("4 min ago");
+    expect(timeAgo(now - 60 * MIN, now)).toBe("1 hour ago");
+    expect(timeAgo(now - 5 * 60 * MIN, now)).toBe("5 hours ago");
+    expect(timeAgo(now - DAY, now)).toBe("1 day ago");
+    expect(timeAgo(now - 13 * DAY, now)).toBe("13 days ago");
+    expect(timeAgo(now - 14 * DAY, now)).toBe("2 weeks ago");
+    expect(timeAgo(now - 44 * DAY, now)).toBe("6 weeks ago");
+    expect(timeAgo(now - 45 * DAY, now)).toBe("1 month ago");
+    expect(timeAgo(now - 92 * DAY, now)).toBe("3 months ago");
+    expect(timeAgo(now - 320 * DAY, now)).toBe("1 year ago");
+    expect(timeAgo(now - 800 * DAY, now)).toBe("2 years ago");
   });
 });
 

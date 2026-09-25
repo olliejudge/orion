@@ -1,9 +1,10 @@
 import { CanvasSource, Texture } from "pixi.js";
-import { lighten, type ExtColor } from "../colors";
 import { arcLetterAngles, fitLabel } from "./geometry";
 import { LABEL_FONT_PX, LABEL_MAX_SPAN } from "./labels";
+import { GLYPH_ARM, GLYPH_STROKE, type GlyphShape } from "./style";
 
 const TEX_PX = 256; // crisp up to ~256px-wide bubbles when zoomed in
+const GLYPH_TEX_PX = 128; // glyphs stop growing at GLYPH_MAX_R_PX (48 px wide), so this stays crisp at 2x
 
 /** Radius of the bright band in the halo texture, as a fraction of the texture's half-size. */
 export const HALO_RING_FRAC = 0.7;
@@ -20,7 +21,7 @@ function makeCanvas(w: number, h: number): { canvas: HTMLCanvasElement; ctx: Can
 /**
  * A texture the bank owns (not in Pixi's cache). Mipmapped, because these are
  * drawn anywhere from 256 px down to 3 px wide: without mips a shrunken
- * sphere loses its anti-aliased edge and sparkles while it moves.
+ * disc loses its anti-aliased edge and sparkles while it moves.
  */
 function bankTexture(canvas: HTMLCanvasElement): Texture {
   return new Texture({ source: new CanvasSource({ resource: canvas, autoGenerateMipmaps: true }) });
@@ -28,42 +29,19 @@ function bankTexture(canvas: HTMLCanvasElement): Texture {
 
 /**
  * Pre-rendered textures. Every bubble is a Sprite of one of these, scaled to
- * its radius, so a frame is only transform updates (no per-node gradients).
+ * its radius and tinted, so a frame is only transform updates (no per-node
+ * vector redraws).
  */
 export class TextureBank {
-  #spheres = new Map<string, Texture>();
   #counts = new Map<string, Texture>();
   readonly disc: Texture;
   readonly halo: Texture;
+  readonly glyphs: Readonly<Record<GlyphShape, Texture>>;
 
   constructor() {
     this.disc = this.#discTexture();
     this.halo = this.#haloTexture();
-  }
-
-  /** Gradient-shaded sphere, same geometry as the mockup's radialGradient cx=35% cy=30% r=50%. */
-  sphere(c: ExtColor): Texture {
-    const key = `${c.light}|${c.base}`;
-    let t = this.#spheres.get(key);
-    if (!t) {
-      const { canvas, ctx } = makeCanvas(TEX_PX, TEX_PX);
-      const R = TEX_PX / 2;
-      const g = ctx.createRadialGradient(R * 0.7, R * 0.6, 0, R * 0.7, R * 0.6, R);
-      g.addColorStop(0, c.light);
-      g.addColorStop(1, c.base);
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.arc(R, R, R - 1, 0, Math.PI * 2);
-      ctx.fill();
-      t = bankTexture(canvas);
-      this.#spheres.set(key, t);
-    }
-    return t;
-  }
-
-  /** Sphere shaded in a worktree colour (committed-on-branch tint). */
-  worktreeSphere(hex: string): Texture {
-    return this.sphere({ light: lighten(hex, 0.45), base: hex });
+    this.glyphs = { plus: this.#glyphTexture("plus"), cross: this.#glyphTexture("cross") };
   }
 
   /**
@@ -95,12 +73,31 @@ export class TextureBank {
   }
 
   destroy(): void {
-    for (const t of this.#spheres.values()) t.destroy(true);
-    this.#spheres.clear();
     for (const t of this.#counts.values()) t.destroy(true);
     this.#counts.clear();
     this.disc.destroy(true);
     this.halo.destroy(true);
+    this.glyphs.plus.destroy(true);
+    this.glyphs.cross.destroy(true);
+  }
+
+  /** A white "+" or "×" filling the texture's half-size box as style.ts's glyph geometry says; tinted per node. */
+  #glyphTexture(shape: GlyphShape): Texture {
+    const { canvas, ctx } = makeCanvas(GLYPH_TEX_PX, GLYPH_TEX_PX);
+    const h = GLYPH_TEX_PX / 2;
+    const arm = GLYPH_ARM * h;
+    ctx.translate(h, h);
+    if (shape === "cross") ctx.rotate(Math.PI / 4);
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = GLYPH_STROKE * h;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(-arm, 0);
+    ctx.lineTo(arm, 0);
+    ctx.moveTo(0, -arm);
+    ctx.lineTo(0, arm);
+    ctx.stroke();
+    return bankTexture(canvas);
   }
 
   #discTexture(): Texture {

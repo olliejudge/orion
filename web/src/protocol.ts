@@ -11,11 +11,15 @@ export interface ChangeEntry {
   from?: string;
   stage: Stage;
   size: number;
+  /** When this change was last touched, unix ms (uncommitted: the file's mtime; committed: the branch commit). Absent or 0: unknown. */
+  touched?: number;
 }
 
 export interface FileEntry {
   path: string;
   size: number;
+  /** The base file's last commit time, unix ms. Absent or 0: unknown. */
+  touched?: number;
 }
 
 export interface Worktree {
