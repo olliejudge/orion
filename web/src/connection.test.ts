@@ -160,6 +160,35 @@ describe("connect", () => {
     expect(statuses.at(-1)).toBe("open");
   });
 
+  it("calls onReconnect when a socket opens after a previous one was open and closed, but not on the first open", () => {
+    const store = new RepoStore();
+    const reconnects: number[] = [];
+    let calls = 0;
+    connect(store, { url: "ws://x/ws", onReconnect: () => reconnects.push(++calls) });
+    last().open();
+    expect(reconnects).toEqual([]);
+    last().drop();
+    vi.advanceTimersByTime(250);
+    last().open();
+    expect(reconnects).toEqual([1]);
+    last().drop();
+    vi.advanceTimersByTime(500);
+    last().open();
+    expect(reconnects).toEqual([1, 2]);
+  });
+
+  it("does not call onReconnect when reconnect attempts fail before ever opening", () => {
+    const store = new RepoStore();
+    const onReconnect = vi.fn();
+    connect(store, { url: "ws://x/ws", onReconnect });
+    last().drop();
+    vi.advanceTimersByTime(250);
+    last().drop();
+    vi.advanceTimersByTime(500);
+    last().open();
+    expect(onReconnect).not.toHaveBeenCalled();
+  });
+
   it("stops reconnecting and closes the socket when disposed", () => {
     const store = new RepoStore();
     const stop = connect(store, { url: "ws://x/ws" });

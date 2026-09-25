@@ -4,9 +4,11 @@ import type { RepoStore } from "./store";
 export type ConnectionStatus = "connecting" | "open" | "reconnecting" | "stopped";
 
 /**
- * Consecutive failed reconnects (~23s of backoff) after which we assume the
- * server was stopped: its auth token is per run, so a restarted Orion can
- * never accept this page again.
+ * Consecutive failed reconnects (~23s of backoff) after which we show
+ * "stopped" rather than "reconnecting". Orion's auth token and cookie now
+ * persist across restarts, so this is just a UI cue that the wait has gone
+ * on a while — reconnecting keeps retrying underneath, and a restarted
+ * Orion picks the page back up as soon as it's listening again.
  */
 export const STOPPED_AFTER_FAILURES = 8;
 
@@ -33,17 +35,20 @@ export function statusAfterClose(failures: number): ConnectionStatus {
 
 /**
  * Keeps a WebSocket open to the Orion server and feeds every message into
- * `store`. Retries forever (quietly past "stopped"). Returns a function that
- * closes the socket and stops reconnecting.
+ * `store`. Retries forever (quietly past "stopped") since the server may
+ * simply have restarted with the same persistent token. Returns a function
+ * that closes the socket and stops reconnecting.
  */
 export function connect(
   store: RepoStore,
-  opts?: { url?: string; onStatus?: (s: ConnectionStatus) => void },
+  opts?: { url?: string; onStatus?: (s: ConnectionStatus) => void; onReconnect?: () => void },
 ): () => void {
   const url = opts?.url ?? wsUrlFromLocation(window.location);
   const onStatus = opts?.onStatus ?? (() => {});
+  const onReconnect = opts?.onReconnect ?? (() => {});
   let attempt = 0;
   let stopped = false;
+  let hadOpenSocket = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let socket: WebSocket | null = null;
 
@@ -53,6 +58,10 @@ export function connect(
     socket = ws;
     ws.onopen = () => {
       attempt = 0;
+      // Only a genuine reconnect (a prior socket was open, then closed) —
+      // not the very first connect of this page load.
+      if (hadOpenSocket) onReconnect();
+      hadOpenSocket = true;
       onStatus("open");
     };
     ws.onmessage = (ev: MessageEvent) => {

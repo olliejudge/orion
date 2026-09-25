@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { servedBuildChanged } from "../build";
   import { connect, type ConnectionStatus } from "../connection";
   import { computeFrame } from "../layout/frame";
   import { Linger } from "../layout/linger";
@@ -158,7 +159,17 @@
     const onResize = (): void => queue.request(NO_CHANGE);
     let stop = (): void => {};
     const start = (): void => {
-      if (!disposed) stop = connect(store, { onStatus: (s) => (status = s) });
+      if (!disposed)
+        stop = connect(store, {
+          onStatus: (s) => (status = s),
+          // Orion may have restarted on a newer build; if the served bundle
+          // changed, reload so we pick up the new UI instead of running stale JS.
+          onReconnect: () => {
+            void servedBuildChanged(document).then((changed) => {
+              if (changed) location.reload();
+            });
+          },
+        });
     };
 
     r.init().then(
