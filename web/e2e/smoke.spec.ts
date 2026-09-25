@@ -65,12 +65,7 @@ async function openOrion(page: Page, url = env("ORION_URL")): Promise<void> {
  * page (createImageBitmap) so no image library is needed.
  */
 async function litFraction(page: Page, threshold: number): Promise<number> {
-  const png = await page.getByTestId("map").screenshot({
-    mask: [page.getByTestId("legend"), page.getByTestId("activity"), page.getByTestId("live-pill"), page.getByTestId("map-key")],
-    maskColor: "#000000",
-    animations: "disabled",
-    scale: "css",
-  });
+  const png = await page.getByTestId("map").screenshot({ mask: MAP_MASK(page), maskColor: "#000000", animations: "disabled", scale: "css" });
   return page.evaluate(
     async ({ b64, threshold }) => {
       const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
@@ -97,6 +92,14 @@ async function litFraction(page: Page, threshold: number): Promise<number> {
     { b64: png.toString("base64"), threshold },
   );
 }
+
+const MAP_MASK = (page: Page) => [
+  page.getByTestId("legend"),
+  page.getByTestId("activity"),
+  page.getByTestId("live-pill"),
+  page.getByTestId("map-key"),
+  page.getByTestId("dir-filter"),
+];
 
 /** Polls litFraction until it beats `min`, and records the last measurement on the test. */
 async function expectLit(page: Page, label: string, threshold: number, min: number): Promise<void> {
@@ -159,6 +162,38 @@ test("a new file in a nested agent worktree appears in the activity stream withi
   const name = `e2e-probe-${Date.now()}.md`;
   writeFileSync(path.join((nested as Worktree).path, name), "# probe\n");
   await expect(page.getByTestId("activity").getByText(name).first()).toBeVisible({ timeout: 5_000 });
+});
+
+test("unticking a folder changes the map's bubbles; Show all restores them", async ({ page }) => {
+  await openOrion(page);
+  // A generous, low threshold: this only needs a consistent yardstick for
+  // "how much of the disc is drawn", not a faithful lit-pixel count, and it
+  // must survive both a lively Vision map and a near-black Night one.
+  const threshold = 40;
+  const baseline = await litFraction(page, threshold);
+
+  const panel = page.getByTestId("dir-filter");
+  await panel.getByRole("button", { name: /Folders/ }).click();
+  // "web" is the demo's biggest top-level area (see scripts/demo/gen.go's
+  // `areas`), so hiding it makes a large, reliably detectable change; which
+  // way the fraction moves depends on how the rest re-packs, so the test
+  // only checks that it moves.
+  const checkbox = panel.getByLabel("web", { exact: true });
+  await expect(checkbox).toBeChecked();
+  await checkbox.click();
+  await expect(checkbox).not.toBeChecked();
+  await expect(panel.getByText(/^\d+ hidden$/)).toBeVisible();
+  await page.waitForTimeout(1_500); // let the layout spring settle
+  const hidden = await litFraction(page, threshold);
+  expect(Math.abs(hidden - baseline), "hiding the map's biggest area should visibly change it").toBeGreaterThan(0.02);
+
+  await panel.getByRole("button", { name: "Show all" }).click();
+  await expect(checkbox).toBeChecked();
+  await page.waitForTimeout(1_500);
+  const restored = await litFraction(page, threshold);
+  // Close to the original, allowing for the demo's own simulated activity
+  // (new commits, edits) drifting file sizes a little in the meantime.
+  expect(Math.abs(restored - baseline), "Show all should bring the map back close to how it looked before").toBeLessThan(0.02);
 });
 
 test("N toggles Night and Vision and remembers the choice", async ({ page }) => {
