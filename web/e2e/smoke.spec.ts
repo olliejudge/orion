@@ -117,6 +117,59 @@ async function theme(page: Page): Promise<string | null> {
   return page.locator("html").getAttribute("data-theme");
 }
 
+/** The path the breadcrumbs currently focus, e.g. via `title` on the last crumb ("" at the root). */
+async function focusedPath(page: Page): Promise<string> {
+  const title = await page.getByTestId("breadcrumbs").locator("button[aria-current='location']").getAttribute("title");
+  return title === "Whole repository" ? "" : (title ?? "");
+}
+
+/** Whether `path` is `dir` or a descendant of it ("" is an ancestor of everything but itself). */
+function isDeeper(dir: string, path: string): boolean {
+  return dir === "" ? path !== "" : path.startsWith(`${dir}/`);
+}
+
+/**
+ * Clicks into a folder one level deeper than the current focus: the packed
+ * circles leave only thin gaps, so a small spiral of points around the map's
+ * centre almost always lands inside one. A miss either leaves the focus
+ * unchanged, or (clicking the background of the folder already in view)
+ * steps back out a level, so this keeps trying until the focus is properly
+ * deeper than where it started.
+ */
+async function clickIntoFolder(page: Page): Promise<void> {
+  const box = await page.getByTestId("map").locator("canvas").boundingBox();
+  if (!box) throw new Error("the map canvas has no layout box");
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  const before = await focusedPath(page);
+  const offsets = [
+    [0, 0],
+    [30, 0],
+    [-30, 0],
+    [0, 30],
+    [0, -30],
+    [60, 0],
+    [-60, 0],
+    [0, 60],
+    [0, -60],
+    [45, 45],
+    [-45, 45],
+    [45, -45],
+    [-45, -45],
+  ];
+  for (const [dx, dy] of offsets) {
+    await page.mouse.click(cx + dx, cy + dy);
+    const after = await focusedPath(page);
+    if (isDeeper(before, after)) return;
+    // A miss zoomed out instead of in (or did nothing): back to `before` before the next try.
+    if (after !== before) {
+      await page.goBack();
+      await expect.poll(() => focusedPath(page)).toBe(before);
+    }
+  }
+  throw new Error("no click around the map's centre landed inside a folder");
+}
+
 test("loads via the tokenised URL and shows the chrome", async ({ page, request }) => {
   const bare = new URL(env("ORION_URL"));
   bare.search = "";
@@ -273,6 +326,120 @@ test("+ zooms in a level, 0 returns home, and the breadcrumbs (and the home butt
   await page.keyboard.press("0");
   await expect(trail).toHaveCount(1);
   await expect(home).toHaveCount(0);
+});
+
+test("keeps the focused folder in the URL hash, with Back and reload restoring it", async ({ page }) => {
+  await openOrion(page);
+  expect(new URL(page.url()).hash, "no location yet at the root").toBe("");
+  // + has nothing to step into until the map has laid out: wait for it to draw.
+  await expectLit(page, "before +", 120, 0.005);
+
+  // + (with the pointer off the map) steps into the largest child, so this
+  // is deterministic without guessing screen coordinates.
+  await page.keyboard.press("+");
+  const path1 = await focusedPath(page);
+  expect(path1, "+ steps into a folder").not.toBe("");
+  const hash1 = new URL(page.url()).hash;
+  expect(decodeURIComponent(hash1), "the hash names the focused folder").toBe(`#/${path1}`);
+
+  await page.keyboard.press("+");
+  const path2 = await focusedPath(page);
+  expect(path2.startsWith(`${path1}/`), "a second + goes a level deeper").toBe(true);
+  const hash2 = new URL(page.url()).hash;
+  expect(hash2).not.toBe(hash1);
+
+  // Back retraces the second step without leaving the app.
+  await page.goBack();
+  await expect.poll(() => focusedPath(page)).toBe(path1);
+  expect(new URL(page.url()).hash).toBe(hash1);
+
+  // Reload restores the location from the hash (rather than returning home).
+  await page.reload();
+  await expect(page.getByTestId("map").locator("canvas")).toBeVisible();
+  await expect(page.getByTestId("legend").getByTestId("worktree-pill").first()).toBeVisible();
+  await expect.poll(() => focusedPath(page)).toBe(path1);
+  expect(new URL(page.url()).hash).toBe(hash1);
+});
+
+test("a click into a folder updates the URL hash", async ({ page }) => {
+  await openOrion(page);
+  // The map has nothing to click into until it has laid out: wait for it to draw.
+  await expectLit(page, "before click", 120, 0.005);
+  await clickIntoFolder(page);
+  const path1 = await focusedPath(page);
+  expect(path1, "the click landed on a folder").not.toBe("");
+  expect(decodeURIComponent(new URL(page.url()).hash)).toBe(`#/${path1}`);
+});
+
+test("a deep link's hash survives the token redirect", async ({ page }) => {
+  // orion's own URL carries `?t=<token>`; a location hash appended to it must
+  // come through the token-for-cookie redirect (see internal/server/server.go)
+  // and land the map on that folder, not the root.
+  await page.goto(`${env("ORION_URL")}#/web`);
+  await expect(page.getByTestId("map").locator("canvas")).toBeVisible();
+  await expect(page.getByTestId("legend").getByTestId("worktree-pill").first()).toBeVisible();
+  expect(new URL(page.url()).search, "the token is dropped from the address bar").toBe("");
+  expect(new URL(page.url()).hash, "the hash survives the token redirect").toBe("#/web");
+  await expect.poll(() => focusedPath(page)).toBe("web");
+});
+
+test("hiding the folder you're in backs the camera out and replaces the hash, without pushing a history entry", async ({ page }) => {
+  await openOrion(page);
+  // + has nothing to step into until the map has laid out: wait for it to draw.
+  await expectLit(page, "before +", 120, 0.005);
+  await page.keyboard.press("+");
+  const path1 = await focusedPath(page);
+  expect(path1).not.toBe("");
+  expect(new URL(page.url()).hash).toBe(`#/${path1}`);
+
+  const panel = page.getByTestId("dir-filter");
+  await panel.getByRole("button", { name: /Folders/ }).click();
+  const checkbox = panel.getByLabel(path1, { exact: true });
+  await checkbox.click();
+  await expect(checkbox).not.toBeChecked();
+
+  // The camera backs out to the root (path1's nearest visible ancestor); the
+  // hash follows by replacing the current entry, not pushing a new one.
+  await expect.poll(() => focusedPath(page)).toBe("");
+  await expect.poll(() => new URL(page.url()).hash).toBe("#/");
+
+  // Nothing was pushed: one Back returns all the way to the pre-navigation
+  // state (no location in the URL) instead of an intermediate "path1, not
+  // yet hidden" entry that a push would have left behind.
+  await page.goBack();
+  await expect.poll(() => new URL(page.url()).hash).toBe("");
+  await expect.poll(() => focusedPath(page)).toBe("");
+});
+
+test("Back into a folder hidden since you navigated there lands on the visible ancestor, without revealing it", async ({ page }) => {
+  await openOrion(page);
+  // + has nothing to step into until the map has laid out: wait for it to draw.
+  await expectLit(page, "before +", 120, 0.005);
+  await page.keyboard.press("+"); // path1: a top-level folder
+  const path1 = await focusedPath(page);
+  await page.keyboard.press("+"); // path2: one of path1's children
+  const path2 = await focusedPath(page);
+  expect(path2.startsWith(`${path1}/`)).toBe(true);
+
+  // Back home before hiding path1, so hiding it doesn't touch the current
+  // (home) history entry — only the older path2 entry is left stale.
+  await page.keyboard.press("0");
+  await expect.poll(() => focusedPath(page)).toBe("");
+
+  const panel = page.getByTestId("dir-filter");
+  await panel.getByRole("button", { name: /Folders/ }).click();
+  const checkbox = panel.getByLabel(path1, { exact: true });
+  await checkbox.click();
+  await expect(checkbox).not.toBeChecked();
+  await page.waitForTimeout(1_500); // let the layout repack without path1's subtree before Back relies on it
+
+  // Back once retraces the second + step, landing on path2's now-stale
+  // entry: it must resolve to the nearest folder the filter still shows
+  // (the root, since path1's whole subtree is hidden), not reveal path1.
+  await page.goBack();
+  await expect.poll(() => focusedPath(page)).toBe("");
+  await expect.poll(() => new URL(page.url()).hash).toBe("#/");
+  await expect(checkbox, "the filter itself is unchanged").not.toBeChecked();
 });
 
 // The Vision shot becomes the README image, so it runs on its own fresh demo

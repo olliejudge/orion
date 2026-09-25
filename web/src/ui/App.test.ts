@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/svelte";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Patch, Snapshot, Worktree } from "../protocol";
@@ -90,10 +90,24 @@ beforeEach(() => {
   h.highlight = [];
   h.updates = 0;
   h.updateThrows = false;
+  // Each test starts with a clean address bar: App reads it back on the
+  // first snapshot, and a stale hash from an earlier test would otherwise
+  // silently steer that test's own restore.
+  history.replaceState(null, "", "/");
 });
 
 afterEach(() => {
+  // Without this, an earlier test's App instance stays mounted (its
+  // svelte:window keydown binding and its onMount's popstate/hashchange
+  // listeners keep firing), so a later test's synthetic key presses or
+  // dispatched events would reach every still-mounted instance too.
+  cleanup();
   delete document.documentElement.dataset.theme;
+  localStorage.clear();
+  // vi.spyOn reuses an existing spy on the same object/method instead of
+  // wrapping it again, so an unrestored history.pushState/replaceState spy
+  // from one test would otherwise keep recording the next test's calls too.
+  vi.restoreAllMocks();
 });
 
 async function ready(): Promise<RepoStore> {
@@ -173,6 +187,107 @@ describe("App", () => {
     expect(h.zoomTo.at(-1)).toBe("src/lib");
     await userEvent.keyboard("=");
     expect(h.zoomTo.at(-1)).toBe("src/lib/deep");
+  });
+
+  it("every discrete zoom (click, Esc, +, 0/Home, an Activity row) pushes a history entry; the hash follows", async () => {
+    const pushed = vi.spyOn(history, "pushState");
+    const replaced = vi.spyOn(history, "replaceState");
+    render(App);
+    await waitFor(() => expect(h.store).not.toBeNull());
+    h.store!.apply({
+      ...snapshot,
+      tree: [{ path: "a.ts", size: 10 }, { path: "src/lib/x.ts", size: 10 }, { path: "src/lib/y.ts", size: 10 }, { path: "src/lib/deep/z.ts", size: 10 }],
+      activity: [{ ts: Date.now(), worktree: "w1", kind: "modified", path: "src/lib/deep/z.ts" }],
+    });
+    const crumbs = await screen.findByTestId("breadcrumbs");
+    await waitFor(() => expect(h.updates).toBeGreaterThan(0));
+
+    // An Activity row jump.
+    await userEvent.click(await screen.findByRole("button", { name: /z\.ts/ }));
+    expect(location.hash).toBe("#/src/lib/deep");
+    expect(pushed).toHaveBeenCalledTimes(1);
+
+    // Backspace steps out.
+    await userEvent.keyboard("{Backspace}");
+    expect(location.hash).toBe("#/src/lib");
+    expect(pushed).toHaveBeenCalledTimes(2);
+
+    // + steps in.
+    await userEvent.keyboard("+");
+    expect(location.hash).toBe("#/src/lib/deep");
+    expect(pushed).toHaveBeenCalledTimes(3);
+
+    // 0 goes home.
+    await userEvent.keyboard("0");
+    expect(location.hash).toBe("#/");
+    expect(pushed).toHaveBeenCalledTimes(4);
+
+    // A breadcrumb click.
+    await userEvent.click(await screen.findByRole("button", { name: /z\.ts/ }));
+    await userEvent.click(within(crumbs).getByRole("button", { name: "sample-app" }));
+    expect(location.hash).toBe("#/");
+    expect(pushed).toHaveBeenCalledTimes(6);
+
+    expect(replaced, "no free-camera move happened in this harness, so nothing should have replaced the hash").not.toHaveBeenCalled();
+  });
+
+  it("hiding the folder you're in replaces the hash with its visible ancestor, instead of pushing", async () => {
+    const pushed = vi.spyOn(history, "pushState");
+    const replaced = vi.spyOn(history, "replaceState");
+    render(App);
+    await waitFor(() => expect(h.store).not.toBeNull());
+    h.store!.apply({ ...snapshot, tree: [{ path: "a.ts", size: 10 }, { path: "src/lib/x.ts", size: 10 }] });
+    await waitFor(() => expect(h.updates).toBeGreaterThan(0));
+
+    await userEvent.keyboard("+"); // -> "src/lib" (src's only child level)
+    expect(location.hash).toBe("#/src/lib");
+    expect(pushed).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(screen.getByRole("button", { name: /Folders/ }));
+    await userEvent.click(screen.getByLabelText("src", { exact: true }));
+
+    await waitFor(() => expect(location.hash).toBe("#/"));
+    expect(h.zoomTo.at(-1)).toBe("");
+    expect(replaced).toHaveBeenCalledTimes(1);
+    expect(pushed, "hiding the current folder must not add a history entry").toHaveBeenCalledTimes(1);
+  });
+
+  it("a stored location naming a now-hidden path lands on the visible ancestor and corrects the hash, without revealing it", async () => {
+    render(App);
+    await waitFor(() => expect(h.store).not.toBeNull());
+    h.store!.apply({ ...snapshot, tree: [{ path: "a.ts", size: 10 }, { path: "src/lib/deep/z.ts", size: 10 }] });
+    await waitFor(() => expect(h.updates).toBeGreaterThan(0));
+
+    await userEvent.click(screen.getByRole("button", { name: /Folders/ }));
+    const checkbox = screen.getByLabelText("src", { exact: true });
+    await userEvent.click(checkbox);
+    expect(checkbox).not.toBeChecked();
+
+    // Simulate arriving here via Back at an old hash from before "src" was hidden.
+    history.pushState(null, "", "#/src/lib/deep");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+
+    await waitFor(() => expect(location.hash).toBe("#/"));
+    expect(h.zoomTo.at(-1)).toBe("");
+    expect(checkbox, "the filter itself is unchanged").not.toBeChecked();
+  });
+
+  it("navigateTo (an explicit jump) reveals a hidden folder, unlike a stored or retraced location", async () => {
+    const { navigateTo } = await import("./navigate");
+    render(App);
+    await waitFor(() => expect(h.store).not.toBeNull());
+    h.store!.apply({ ...snapshot, tree: [{ path: "a.ts", size: 10 }, { path: "src/lib/deep/z.ts", size: 10 }] });
+    await waitFor(() => expect(h.updates).toBeGreaterThan(0));
+
+    await userEvent.click(screen.getByRole("button", { name: /Folders/ }));
+    const checkbox = screen.getByLabelText("src", { exact: true });
+    await userEvent.click(checkbox);
+    expect(checkbox).not.toBeChecked();
+
+    navigateTo("src/lib/deep/z.ts");
+
+    await waitFor(() => expect(h.zoomTo.at(-1)).toBe("src/lib/deep"));
+    expect(checkbox, "navigateTo un-hides the folder it jumps into").toBeChecked();
   });
 
   it("explains a renderer that cannot start instead of showing a blank page", async () => {

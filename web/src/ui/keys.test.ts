@@ -50,4 +50,25 @@ describe("keyAction", () => {
     const input = document.createElement("input");
     expect(keyAction(ev("n", { target: input }))).toBeNull();
   });
+
+  it("maps Alt+Left/Right to retracing the navigation history", () => {
+    expect(keyAction(ev("ArrowLeft", { altKey: true }))).toBe("back");
+    expect(keyAction(ev("ArrowRight", { altKey: true }))).toBe("forward");
+  });
+
+  it("ignores Alt+Left/Right combined with another modifier or held down", () => {
+    expect(keyAction(ev("ArrowLeft", { altKey: true, metaKey: true }))).toBeNull();
+    expect(keyAction(ev("ArrowLeft", { altKey: true, ctrlKey: true }))).toBeNull();
+    expect(keyAction(ev("ArrowLeft", { altKey: true, repeat: true }))).toBeNull();
+  });
+
+  it("ignores plain arrow keys (no Alt)", () => {
+    expect(keyAction(ev("ArrowLeft"))).toBeNull();
+    expect(keyAction(ev("ArrowRight"))).toBeNull();
+  });
+
+  it("ignores Alt+Left/Right while typing in a form field", () => {
+    const input = document.createElement("input");
+    expect(keyAction(ev("ArrowLeft", { altKey: true, target: input }))).toBeNull();
+  });
 });
