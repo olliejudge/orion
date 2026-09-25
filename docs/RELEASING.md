@@ -2,7 +2,7 @@
 
 Push a `vX.Y.Z` tag. The [release workflow](../.github/workflows/release.yml) runs GoReleaser on a macOS runner. It builds the darwin and linux binaries, signs and notarizes the darwin ones (when the Apple secrets are set), publishes the GitHub release and updates the cask in [olliejudge/homebrew-tap](https://github.com/olliejudge/homebrew-tap).
 
-Signing and notarization are optional. GoReleaser does them only when the `MACOS_SIGN_P12` secret is set. Without the Apple secrets, the release still goes out, with unsigned macOS binaries. The five `MACOS_*` secrets are all or nothing: for a stable tag, the workflow fails before publishing if only some of them are set, so a half-finished setup can't ship binaries that are signed but not notarized. The cask clears the quarantine bit after install either way, so `brew install` works in both cases.
+Signing and notarization are optional. GoReleaser does them only when the `MACOS_SIGN_P12` secret is set. Without the Apple secrets, the release still goes out, with unsigned macOS binaries. The five `MACOS_*` secrets are all or nothing: for a stable tag, the workflow fails before publishing if only some of them are set, so a half-finished setup can't ship binaries that are signed but not notarized. The cask no longer clears the quarantine bit itself (removed once a notarized release was verified, see below), so an unsigned release now needs users to clear it manually, e.g. `xattr -d com.apple.quarantine $(brew --prefix)/bin/orion`.
 
 The steps below are a one-time setup. Everything happens on a Mac signed in to the Apple Developer account, with the [GitHub CLI](https://cli.github.com/) logged in to an account that can admin `olliejudge/orion`.
 
@@ -142,7 +142,7 @@ spctl -a -vvv -t install orion
 
 Stapling doesn't apply here. `xcrun stapler staple` only works on `.app`, `.pkg` and `.dmg` files, not on a bare binary. The notarization ticket stays on Apple's servers, and Gatekeeper fetches it online the first time a quarantined `orion` runs. The first run of a freshly downloaded binary therefore needs network access to pass Gatekeeper.
 
-Once one notarized release has passed these checks, the quarantine-clearing `postflight_steps` in the cask (`custom_block` in `.goreleaser.yaml`) is no longer needed and can be removed. Likewise, the `xattr` note in the README then only applies to older releases.
+v0.1.0's darwin binaries passed these checks (Apple accepted all submissions, and a quarantined download ran with no Gatekeeper prompt), so the quarantine-clearing `postflight_steps` in the cask (`custom_block` in `.goreleaser.yaml`) was removed. The README's `xattr` note now only covers unsigned builds from source or an unsigned snapshot, e.g. from a fork.
 
 ## Renewals
 

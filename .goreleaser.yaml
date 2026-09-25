@@ -141,15 +141,3 @@ homebrew_casks:
       - formula: git
     caveats: |
       Run `orion` inside any git repository. It serves on 127.0.0.1 only.
-    # Clear the quarantine bit so Gatekeeper doesn't block the first run of an
-    # un-notarized binary. Harmless on a notarized one; drop it once a
-    # notarized release has been verified (docs/RELEASING.md). Written as
-    # Homebrew's declarative postflight_steps (Homebrew >= 7.0.4); GoReleaser
-    # 2.18's `hooks` emit the deprecated `postflight` block. {{staged_path}} is
-    # a Homebrew token, so it is escaped from GoReleaser's own templating.
-    custom_block: |
-      postflight_steps do
-        on_macos do
-          run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ "{{staged_path}}" }}/orion"]
-        end
-      end
