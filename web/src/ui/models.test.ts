@@ -219,6 +219,25 @@ describe("tooltipInfo", () => {
     expect(tooltipInfo(s, circle("b", true))!.touches.map((t) => t.text)).toEqual(["1 changed, uncommitted"]);
   });
 
+  it("leaves hidden folders out of the counts, as the map does", () => {
+    const s = makeState(
+      { "src/a.ts": 1, "src/gen/b.ts": 1, "src/gen/c.ts": 1 },
+      {
+        w1: [
+          { path: "src/gen/b.ts", kind: "modified", stage: "uncommitted", size: 1 },
+          { path: "src/a.ts", kind: "modified", stage: "committed", size: 1 },
+        ],
+        w2: [{ path: "src/new.ts", kind: "renamed", from: "src/gen/c.ts", stage: "uncommitted", size: 1 }],
+      },
+    );
+    const excluded = new Set(["src/gen"]);
+    const all = tooltipInfo(s, circle("src", true))!;
+    expect(all.detail).toBe("4 files");
+    const shown = tooltipInfo(s, circle("src", true), excluded)!;
+    expect(shown.detail).toBe("2 files");
+    expect(shown.touches.map((t) => t.text)).toEqual(["1 changed, committed on branch", "1 changed, uncommitted"]);
+  });
+
   it("has no card for the repo root", () => {
     const s = makeState({ "a.ts": 1 });
     expect(tooltipInfo(s, { ...circle("", true), depth: 0 })).toBeNull();

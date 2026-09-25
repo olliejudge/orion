@@ -131,10 +131,11 @@ const plural = (n: number, one: string): string => `${n} ${n === 1 ? one : `${on
 /**
  * Hover card for files and folders (collapsed or not): most folders are too
  * small on screen for a name, so the card names them, with their file count
- * and each worktree's changed files below them. Null for the repo root.
+ * and each worktree's changed files below them (both leaving out `excluded`
+ * folders, as the map does). Null for the repo root.
  */
-export function tooltipInfo(state: RepoState, c: Circle): TooltipInfo | null {
-  if (c.isDir) return c.depth === 0 ? null : folderInfo(state, c.path);
+export function tooltipInfo(state: RepoState, c: Circle, excluded?: ReadonlySet<string>): TooltipInfo | null {
+  if (c.isDir) return c.depth === 0 ? null : folderInfo(state, c.path, excluded);
   const visual = encode(state, c.path);
   const touches = visual.touches.map((t) => {
     const w = state.worktrees.get(t.worktree);
@@ -153,8 +154,8 @@ export function tooltipInfo(state: RepoState, c: Circle): TooltipInfo | null {
   return { dir, name, detail: humanSize(size), touches };
 }
 
-function folderInfo(state: RepoState, path: string): TooltipInfo {
-  const stats = folderStats(state, path);
+function folderInfo(state: RepoState, path: string, excluded?: ReadonlySet<string>): TooltipInfo {
+  const stats = folderStats(state, path, excluded);
   const rank = (id: WorktreeId): number => {
     const i = state.worktrees.get(id)?.colorIndex ?? -1;
     return i < 0 ? Number.MAX_SAFE_INTEGER : i;
@@ -185,9 +186,10 @@ export function hoverTip(
   layout: Map<string, Circle>,
   hover: HoverTarget | null,
   current?: string,
+  excluded?: ReadonlySet<string>,
 ): { info: TooltipInfo; x: number; y: number } | null {
   const c = hover === null || hover.path === current ? undefined : layout.get(hover.path);
-  const info = c && state ? tooltipInfo(state, c) : null;
+  const info = c && state ? tooltipInfo(state, c, excluded) : null;
   return info && hover ? { info, x: hover.at.x, y: hover.at.y } : null;
 }
 
