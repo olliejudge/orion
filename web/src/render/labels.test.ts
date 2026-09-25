@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  COUNT_MIN_R,
   LABEL_LINE_PX,
   LABEL_MAX_SPAN,
   LABEL_MIN_R,
   NEXT_LABEL_MIN_R,
+  countFontPx,
+  digitCount,
   labelMinR,
   labelSpan,
   labelTier,
   nextLevels,
+  placeCounts,
   placeLabels,
   straightWidth,
   type LabelCandidate,
@@ -181,3 +185,31 @@ describe("placeLabels: next level", () => {
   });
 });
 
+describe("file counts on collapsed folders", () => {
+  it("counts digits", () => {
+    expect([0, 7, 10, 99, 421, 2497].map(digitCount)).toEqual([1, 1, 2, 2, 3, 4]);
+  });
+
+  it("shows a count from about 14 px across, when the number fits inside the disc", () => {
+    expect(countFontPx(COUNT_MIN_R - 0.1, 1)).toBeNull();
+    expect(countFontPx(COUNT_MIN_R, 2)).toBe(8);
+    expect(countFontPx(COUNT_MIN_R, 3)).toBeNull();
+    expect(countFontPx(9, 3)).toBe(8);
+    expect(countFontPx(12, 4)).toBeNull();
+    expect(countFontPx(14, 4)).toBe(10);
+    expect(countFontPx(40, 4)).toBe(11);
+  });
+
+  it("hides a count that a placed name covers", () => {
+    const spots = placeLabels([cand("lib", 100, 100, 20, 40, "next")]);
+    const shown = placeCounts(
+      [
+        { path: "lib/vendor", x: 104, y: 102, digits: 2, font: 8 },
+        { path: "lib/assets", x: 104, y: 113, digits: 2, font: 8 },
+        { path: "other", x: 300, y: 300, digits: 3, font: 9 },
+      ],
+      spots,
+    );
+    expect([...shown]).toEqual(["other"]);
+  });
+});

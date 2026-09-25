@@ -196,3 +196,58 @@ export function placeLabels(cands: readonly LabelCandidate[]): Map<string, Label
   return out;
 }
 
+// ---- file counts on collapsed folders ------------------------------------
+
+/** On-screen radius (CSS px) a collapsed folder needs before it shows its file count. */
+export const COUNT_MIN_R = 7;
+const COUNT_MIN_FONT_PX = 8;
+const COUNT_MAX_FONT_PX = LABEL_FONT_PX;
+/** A digit's advance as a fraction of the font size (the system UI font's digits are tabular). */
+export const DIGIT_EM = 0.62;
+
+/** Decimal digits in a non-negative integer. */
+export function digitCount(n: number): number {
+  let d = 1;
+  for (let v = Math.floor(Math.abs(n)); v >= 10; v = Math.floor(v / 10)) d++;
+  return d;
+}
+
+/**
+ * Font size (CSS px) for a collapsed folder's file count of `digits` digits
+ * in a disc of on-screen radius r, growing with the disc; null when the disc
+ * is under COUNT_MIN_R or the number would not fit inside it.
+ */
+export function countFontPx(r: number, digits: number): number | null {
+  if (!(r >= COUNT_MIN_R)) return null;
+  const font = Math.max(COUNT_MIN_FONT_PX, Math.min(COUNT_MAX_FONT_PX, Math.floor(r * 0.75)));
+  return digits * DIGIT_EM * font <= 2 * r - 3 ? font : null;
+}
+
+export interface CountCandidate {
+  path: string;
+  /** Disc centre on screen, CSS px. */
+  x: number;
+  y: number;
+  /** Digits in the count, and its font size (countFontPx). */
+  digits: number;
+  font: number;
+}
+
+/** The collapsed folders whose count shows: those clear of every placed label (a folder's name wins over a count). */
+export function placeCounts(cands: readonly CountCandidate[], spots: ReadonlyMap<string, LabelSpot>): Set<string> {
+  const out = new Set<string>();
+  for (const c of cands) {
+    const dx = (c.digits * DIGIT_EM * c.font) / 2;
+    const dy = c.font / 2;
+    const box: Box = { x0: c.x - dx, x1: c.x + dx, y0: c.y - dy, y1: c.y + dy };
+    let clear = true;
+    for (const s of spots.values()) {
+      if (overlaps(s.box, box)) {
+        clear = false;
+        break;
+      }
+    }
+    if (clear) out.add(c.path);
+  }
+  return out;
+}

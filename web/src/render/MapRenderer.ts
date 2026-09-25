@@ -21,12 +21,16 @@ import { MapNavigator } from "./navigate";
 import { Scene, type SceneNode } from "./scene";
 import {
   LABEL_LINE_PX,
+  countFontPx,
+  digitCount,
   labelMinR,
   labelSpan,
   labelTier,
   nextLevels,
+  placeCounts,
   placeLabels,
   straightWidth,
+  type CountCandidate,
   type LabelCandidate,
   type LabelSpot,
 } from "./labels";
@@ -60,6 +64,10 @@ interface View {
   labelKey: string;
   labelR: number; // on-screen text radius (arc) or folder radius (straight) the label was rendered for
   labelShownAt: number | null; // when the label last appeared (for its fade-in)
+  count: Sprite | null; // a collapsed folder's file count
+  countN: number; // what the count sprite's texture shows: the number, its font size, and the style generation
+  countFont: number;
+  countGen: number;
 }
 
 /**
@@ -84,6 +92,7 @@ interface FrameCtx {
   now: number;
   camBusy: boolean;
   spots: Map<string, LabelSpot>; // label placements (from the last frame at rest while the camera moves)
+  counts: Set<string>; // collapsed folders whose file count shows (likewise)
 }
 
 /**
@@ -116,6 +125,7 @@ export class MapRenderer {
   #labels = new Map<string, string>();
   #labelWidths = new Map<string, number>();
   #spots = new Map<string, LabelSpot>();
+  #counts = new Set<string>();
   #labelsFading = false;
   // The next level below the folder in view (nextLevels), recomputed when the names or the view change.
   #next: { labels: Map<string, string>; focus: string; set: Set<string> } | null = null;
@@ -445,10 +455,12 @@ export class MapRenderer {
       now,
       camBusy,
       spots: this.#spots,
+      counts: this.#counts,
     };
     if (!camBusy) {
       this.#placeLabels(f);
       f.spots = this.#spots;
+      f.counts = this.#counts;
     }
     this.#labelsFading = false;
     for (const n of this.#scene.nodes.values()) this.#draw(n, f);
@@ -496,6 +508,10 @@ export class MapRenderer {
       labelKey: "",
       labelR: 0,
       labelShownAt: null,
+      count: null,
+      countN: -1,
+      countFont: 0,
+      countGen: -1,
     };
     this.#views.set(n.path, v);
     return v;
@@ -579,7 +595,32 @@ export class MapRenderer {
       else if (look) this.#drawFileMarks(v.g, look, R, clip);
     }
 
+    if (n.aggregate !== undefined) this.#drawCount(v, n, n.aggregate, R, f);
     this.#drawShimmer(v, n, R, f);
+  }
+
+  /** A collapsed folder's file count, centred in its disc, when placed at rest and it still fits. */
+  #drawCount(v: View, n: SceneNode, files: number, R: number, f: FrameCtx): void {
+    const font = !n.leaving && f.counts.has(n.path) ? countFontPx(R, digitCount(files)) : null;
+    if (font === null) {
+      if (v.count) v.count.visible = false;
+      return;
+    }
+    const dpr = this.#app?.renderer.resolution ?? 1;
+    if (!v.count) {
+      v.count = new Sprite();
+      v.count.anchor.set(0.5);
+      v.root.addChild(v.count);
+    }
+    if (v.countN !== files || v.countFont !== font || v.countGen !== this.#styleGen) {
+      const color = this.#theme === "night" ? "rgba(235,235,245,0.5)" : "rgba(235,235,245,0.62)";
+      v.count.texture = f.bank.count(files, font, color, dpr);
+      v.countN = files;
+      v.countFont = font;
+      v.countGen = this.#styleGen;
+    }
+    v.count.visible = true;
+    v.count.scale.set(1 / dpr);
   }
 
   #drawDir(g: Graphics, n: SceneNode, R: number, clip: Clip, sx: number, sy: number, f: FrameCtx, gap: number): void {
@@ -655,16 +696,28 @@ export class MapRenderer {
 
   /**
    * At rest: where each visible folder's name goes, with collisions pushed
-   * inward, set straight or hidden.
+   * inward, set straight or hidden; and which collapsed folders show their
+   * file count (those clear of every name).
    */
   #placeLabels(f: FrameCtx): void {
     const next = this.#nextLevels();
     const cands: LabelCandidate[] = [];
+    const counts: CountCandidate[] = [];
     for (const n of this.#scene.nodes.values()) {
-      if (!n.isDir || n.aggregate !== undefined || n.leaving) continue;
+      if (!n.isDir || n.leaving) continue;
       // Wait until the folder stops growing/shrinking so labels never balloon.
       if (Math.abs(n.r.value - n.r.target) > 0.05 * Math.max(n.r.target, 1e-6)) continue;
       const R = n.r.value * f.k;
+      if (n.aggregate !== undefined) {
+        const digits = digitCount(n.aggregate);
+        const font = countFontPx(R, digits);
+        if (font === null) continue;
+        const pos = this.#scene.drawPosition(n);
+        const x = pos.x * f.k + f.ox;
+        const y = pos.y * f.k + f.oy;
+        if (rimView(x, y, R, f.rect).kind !== "hidden") counts.push({ path: n.path, x, y, digits, font });
+        continue;
+      }
       const name = this.#labels.get(n.path);
       if (name === undefined) continue;
       const tier = labelTier(n.path, this.#zoomPath, next);
@@ -677,6 +730,7 @@ export class MapRenderer {
       cands.push({ path: n.path, x, y, r: R, width: this.#labelWidth(name), tier });
     }
     this.#spots = placeLabels(cands);
+    this.#counts = placeCounts(counts, this.#spots);
   }
 
   #hideLabel(v: View): void {

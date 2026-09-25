@@ -32,6 +32,7 @@ function bankTexture(canvas: HTMLCanvasElement): Texture {
  */
 export class TextureBank {
   #spheres = new Map<string, Texture>();
+  #counts = new Map<string, Texture>();
   readonly disc: Texture;
   readonly halo: Texture;
 
@@ -65,9 +66,39 @@ export class TextureBank {
     return this.sphere({ light: lighten(hex, 0.45), base: hex });
   }
 
+  /**
+   * A collapsed folder's file count, centred in the texture and rendered at
+   * `dpr` (draw it at scale 1/dpr). Shared by every disc showing the same
+   * number at the same size, so a frame only swaps textures when a disc's
+   * font size changes.
+   */
+  count(n: number, fontPx: number, color: string, dpr: number): Texture {
+    const key = `${n}|${fontPx}|${color}|${dpr}`;
+    let t = this.#counts.get(key);
+    if (!t) {
+      const text = String(n);
+      const font = labelFont(fontPx);
+      probe ??= makeCanvas(1, 1).ctx;
+      probe.font = font;
+      const pad = 2;
+      const { canvas, ctx } = makeCanvas((probe.measureText(text).width + 2 * pad) * dpr, (fontPx + 2 * pad) * dpr);
+      ctx.scale(dpr, dpr);
+      ctx.font = font;
+      ctx.fillStyle = color;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(text, canvas.width / dpr / 2, canvas.height / dpr / 2);
+      t = Texture.from(canvas, true);
+      this.#counts.set(key, t);
+    }
+    return t;
+  }
+
   destroy(): void {
     for (const t of this.#spheres.values()) t.destroy(true);
     this.#spheres.clear();
+    for (const t of this.#counts.values()) t.destroy(true);
+    this.#counts.clear();
     this.disc.destroy(true);
     this.halo.destroy(true);
   }
