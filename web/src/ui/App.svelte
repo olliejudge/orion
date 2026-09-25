@@ -18,7 +18,7 @@
   import Legend from "./Legend.svelte";
   import LivePill from "./LivePill.svelte";
   import MapKey from "./MapKey.svelte";
-  import { hoverTip, mapInsets, shownFolder, type Footprint, type HoverTarget, type TooltipInfo } from "./models";
+  import { crumbsSlot, hoverTip, mapInsets, shownFolder, type CrumbsSize, type Footprint, type HoverTarget, type TooltipInfo } from "./models";
   import { clickTarget, crumbs, doubleClickTarget, upOne } from "./nav";
   import { applyTheme, loadTheme, saveTheme, type Theme } from "./theme";
   import Tooltip from "./Tooltip.svelte";
@@ -36,6 +36,10 @@
   let legendBox: Footprint = $state.raw({ width: 0, height: 0 });
   let keyBox: Footprint = $state.raw({ width: 0, height: 0 });
   let pillX: number | null = $state(null); // centre of the map's free area
+  let viewW = $state(0);
+  let crumbsBox: CrumbsSize = $state.raw({ full: 0, min: 0 });
+  // The breadcrumbs keep clear of the legend (and Vision's activity panel).
+  const crumbsAt = $derived(viewW > 0 ? crumbsSlot(theme, viewW, legendBox, pillX, crumbsBox) : null);
 
   let mapEl: HTMLDivElement;
   let renderer: MapRenderer | null = null;
@@ -239,7 +243,7 @@
   });
 </script>
 
-<svelte:window onkeydown={onKey} />
+<svelte:window onkeydown={onKey} bind:innerWidth={viewW} />
 
 <div class="map" data-testid="map" role="img" aria-label="Repository map" bind:this={mapEl}></div>
 
@@ -265,7 +269,11 @@
 {/if}
 <LivePill {status} centerX={pillX} />
 {#if repo}
-  <Breadcrumbs crumbs={crumbs(zoomPath, layout, labels, repo.repo.name)} centerX={pillX} onSelect={zoom} />
+  <Breadcrumbs
+    crumbs={crumbs(zoomPath, layout, labels, repo.repo.name)}
+    slot={crumbsAt}
+    onMeasure={(b) => (crumbsBox = b)}
+    onSelect={zoom} />
 {/if}
 <Tooltip info={tip?.info ?? null} x={tip?.x ?? 0} y={tip?.y ?? 0} />
 
