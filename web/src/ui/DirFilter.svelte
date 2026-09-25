@@ -196,6 +196,9 @@
     flex-direction: column;
     min-height: 0;
   }
+  .body[hidden] {
+    display: none;
+  }
   .head {
     display: flex;
     justify-content: flex-end;

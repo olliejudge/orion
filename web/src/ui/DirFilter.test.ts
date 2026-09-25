@@ -103,7 +103,23 @@ describe("DirFilter", () => {
     expect(screen.getByRole("button", { name: "Show all" })).toBeDisabled();
   });
 
-  it("collapses and expands the panel from its toggle and remembers the choice", async () => {
+  it("collapses and expands the panel from its toggle, hiding and showing its content", async () => {
+    render(DirFilter, { dirs: DIRS, excluded: new Set<string>(), onChange: vi.fn(), storage: storage() });
+    const button = screen.getByRole("button", { name: /Folders/ });
+    const body = document.getElementById(button.getAttribute("aria-controls")!)!;
+    expect(button).toHaveAttribute("aria-expanded", "false");
+    expect(body).not.toBeVisible();
+
+    await userEvent.click(button);
+    expect(button).toHaveAttribute("aria-expanded", "true");
+    expect(body).toBeVisible();
+
+    await userEvent.click(button);
+    expect(button).toHaveAttribute("aria-expanded", "false");
+    expect(body).not.toBeVisible();
+  });
+
+  it("remembers the open/closed choice across a remount", async () => {
     const s = storage();
     const { unmount } = render(DirFilter, { dirs: DIRS, excluded: new Set<string>(), onChange: vi.fn(), storage: s });
     const button = screen.getByRole("button", { name: /Folders/ });
