@@ -175,10 +175,53 @@ describe("tooltipInfo", () => {
     expect(tooltipInfo(s, circle("moved.ts", false))!.touches[0]!.text).toBe("Moved from old.ts, uncommitted");
   });
 
-  it("describes a collapsed folder by its file count, and ignores plain folders", () => {
+  it("describes a collapsed folder by its file count", () => {
     const s = makeState({ "vendor/a.js": 1, "vendor/b.js": 1 });
     expect(tooltipInfo(s, circle("vendor", true, 2))).toEqual({ dir: "", name: "vendor/", detail: "2 files", touches: [] });
-    expect(tooltipInfo(s, circle("vendor", true))).toBeNull();
+  });
+
+  it("describes a plain folder: its path, files at any depth, and changed files per worktree", () => {
+    const s = makeState(
+      { "src/ui/a.ts": 1, "src/ui/b.ts": 1, "src/ui/deep/c.ts": 1, "src/d.ts": 1, "docs/x.md": 1 },
+      {
+        w2: [{ path: "src/ui/deep/c.ts", kind: "modified", stage: "committed", size: 1 }],
+        w1: [
+          { path: "src/ui/a.ts", kind: "modified", stage: "committed", size: 1 },
+          { path: "src/ui/new.ts", kind: "added", stage: "uncommitted", size: 1 },
+          { path: "src/d.ts", kind: "modified", stage: "uncommitted", size: 1 },
+        ],
+      },
+    );
+    expect(tooltipInfo(s, { ...circle("src/ui", true), depth: 2 })).toEqual({
+      dir: "src/",
+      name: "ui/",
+      detail: "4 files",
+      touches: [
+        { color: "#ff9f0a", label: "feat/a", text: "2 changed, uncommitted" },
+        { color: "#30d158", label: "fix/b", text: "1 changed, committed on branch" },
+      ],
+    });
+    expect(tooltipInfo(s, circle("src/ui/deep", true))!.detail).toBe("1 file");
+    expect(tooltipInfo(s, circle("docs", true))!.touches).toEqual([]);
+  });
+
+  it("counts a file moved out of a folder as a change to it, and a move within it once", () => {
+    const s = makeState(
+      { "a/old.ts": 1, "a/keep.ts": 1 },
+      {
+        w1: [
+          { path: "b/new.ts", kind: "renamed", from: "a/old.ts", stage: "uncommitted", size: 1 },
+          { path: "a/sub/keep.ts", kind: "renamed", from: "a/keep.ts", stage: "uncommitted", size: 1 },
+        ],
+      },
+    );
+    expect(tooltipInfo(s, circle("a", true))!.touches.map((t) => t.text)).toEqual(["2 changed, uncommitted"]);
+    expect(tooltipInfo(s, circle("b", true))!.touches.map((t) => t.text)).toEqual(["1 changed, uncommitted"]);
+  });
+
+  it("has no card for the repo root", () => {
+    const s = makeState({ "a.ts": 1 });
+    expect(tooltipInfo(s, { ...circle("", true), depth: 0 })).toBeNull();
   });
 });
 
@@ -195,6 +238,14 @@ describe("hoverTip", () => {
     expect(tip.info.detail).toBe("2.5 KB");
     expect(tip.info.touches[0]!.text).toBe("Edited, uncommitted");
     expect([tip.x, tip.y]).toEqual([40, 60]);
+  });
+
+  it("hides over the folder in view (its background), but not over its subfolders", () => {
+    const s = makeState({ "src/ui/a.ts": 1 });
+    const dir = (path: string): [string, Circle] => [path, { path, x: 0, y: 0, r: 50, depth: path.split("/").length, isDir: true }];
+    const layout = new Map([dir("src"), dir("src/ui")]);
+    expect(hoverTip(s, layout, { path: "src", at }, "src")).toBeNull();
+    expect(hoverTip(s, layout, { path: "src/ui", at }, "src")!.info.name).toBe("ui/");
   });
 
   it("hides when nothing is hovered or the hovered path left the map", () => {
