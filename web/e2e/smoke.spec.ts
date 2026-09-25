@@ -262,6 +262,9 @@ test("+ zooms in a level, 0 returns home, and the breadcrumbs (and the home butt
   const home = crumbs.getByRole("button", { name: /Home/ });
   await expect(trail).toHaveCount(1);
   await expect(home).toHaveCount(0);
+  // The legend fills in from the snapshot a frame before the map is laid out,
+  // and + has nothing to step into until it is: wait for the map to draw.
+  await expectLit(page, "before +", 120, 0.005);
 
   await page.keyboard.press("+");
   await expect(trail).not.toHaveCount(1);
