@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/svelte";
+import { render, screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Breadcrumbs from "./Breadcrumbs.svelte";
@@ -13,11 +13,28 @@ describe("Breadcrumbs", () => {
   it("shows one button per level, the last marked as the current location", () => {
     render(Breadcrumbs, { crumbs: trail, onSelect: () => {} });
     const nav = screen.getByTestId("breadcrumbs");
-    const buttons = screen.getAllByRole("button");
+    const buttons = within(nav.querySelector("ol")!).getAllByRole("button");
     expect(buttons.map((b) => b.textContent)).toEqual(["demo", "web/src", "components"]);
     expect(buttons[2]).toHaveAttribute("aria-current", "location");
     expect(buttons[0]).not.toHaveAttribute("aria-current");
     expect(nav).toHaveAccessibleName("Map location");
+  });
+
+  describe("home button", () => {
+    it("is hidden at home (a single crumb)", () => {
+      render(Breadcrumbs, { crumbs: [{ path: "", label: "demo" }], onSelect: () => {} });
+      expect(screen.queryByRole("button", { name: /Home/ })).toBeNull();
+    });
+
+    it("shows once away from home, has an accessible label, can be reached by keyboard, and zooms to the root", async () => {
+      const onSelect = vi.fn();
+      render(Breadcrumbs, { crumbs: trail, onSelect });
+      const home = screen.getByRole("button", { name: /Home/ });
+      home.focus();
+      expect(home).toHaveFocus();
+      await userEvent.click(home);
+      expect(onSelect).toHaveBeenCalledWith("");
+    });
   });
 
   it("zooms to the folder of the clicked segment, the repo name to the root", async () => {
@@ -62,13 +79,15 @@ describe("Breadcrumbs", () => {
 
     it("shows the whole trail when it fits its slot", async () => {
       render(Breadcrumbs, { crumbs: deep, slot: { x: 500, top: 16, maxWidth: 314 }, onSelect: () => {} });
-      await waitFor(() => expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["demo", "web", "src", "components", "styles"]));
+      const nav = screen.getByTestId("breadcrumbs");
+      await waitFor(() => expect(within(nav.querySelector("ol")!).getAllByRole("button").map((b) => b.textContent)).toEqual(["demo", "web", "src", "components", "styles"]));
     });
 
     it("collapses the middle of a trail too long for its slot into one …, which zooms to the deepest hidden level", async () => {
       const onSelect = vi.fn();
       render(Breadcrumbs, { crumbs: deep, slot: { x: 500, top: 16, maxWidth: 260 }, onSelect });
-      await waitFor(() => expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["demo", "…", "components", "styles"]));
+      const nav = screen.getByTestId("breadcrumbs");
+      await waitFor(() => expect(within(nav.querySelector("ol")!).getAllByRole("button").map((b) => b.textContent)).toEqual(["demo", "…", "components", "styles"]));
       const more = screen.getByRole("button", { name: "web/src" });
       expect(more).toHaveAttribute("title", "web/src");
       await userEvent.click(more);
