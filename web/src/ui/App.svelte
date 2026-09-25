@@ -144,9 +144,15 @@
 
   $effect(() => {
     // If the zoom focus just became (or already was, on load) excluded, back
-    // out to the nearest ancestor still on the map.
+    // out to the nearest ancestor still on the map. This is a correction, not
+    // a navigation: it replaces the URL in place rather than pushing, so
+    // hiding the folder you're in doesn't add a history entry.
     const ex = excluded;
-    if (isExcluded(zoomPath, ex)) zoom(nearestVisibleAncestor(zoomPath, ex));
+    if (isExcluded(zoomPath, ex)) {
+      const target = nearestVisibleAncestor(zoomPath, ex);
+      zoom(target);
+      locationSync?.replaceNow(target);
+    }
   });
 
   function relayout(change: Change): void {
@@ -169,11 +175,17 @@
     tip = hoverTip(s, layout, mapHover, zoomPath, excluded); // the file under a still pointer may have changed
   }
 
-  /** Reads the URL hash back once the first layout exists; falls back to the nearest existing ancestor if the path is gone (see location.ts). */
+  /**
+   * Reads the URL hash back once the first layout exists. Falls back to the
+   * nearest existing, visible ancestor if the path is gone or the Folders
+   * filter currently hides it — restoring a link never un-hides anything
+   * (see navigateTo's `revealAndLayout`, below, for the one entry point that
+   * does).
+   */
   function restoreFromHash(): void {
     const decoded = decodeLocation(location.hash);
     if (decoded === null) return; // no location in the URL: stay home
-    const target = decoded === "" ? "" : (nearestShown(decoded, revealAndLayout(decoded)) ?? "");
+    const target = decoded === "" ? "" : (nearestShown(decoded, layout) ?? "");
     zoom(target);
     if (target === decoded) locationSync?.sync(target);
     else locationSync?.replaceNow(target);
@@ -181,11 +193,15 @@
 
   /**
    * If `path` sits behind a folder the Folders filter hides, un-hides it and
-   * returns a layout that already reflects that, so a stored location or
-   * navigateTo lands exactly there instead of silently landing on the
-   * nearest ancestor the filter still shows (`excluded` itself only takes
-   * effect on the next relayout, which is too late for the zoom this same
-   * turn is about to make). Otherwise returns the current layout unchanged.
+   * returns a layout that already reflects that, so an explicit jump —
+   * `navigateTo`, e.g. an Activity row, or `/` search once it lands — goes
+   * exactly there instead of landing on the nearest ancestor the filter
+   * still shows (`excluded` itself only takes effect on the next relayout,
+   * which is too late for the zoom this same turn is about to make).
+   * Otherwise returns the current layout unchanged. Unlike navigateTo, a
+   * *stored* location (restoreFromHash, popstate/hashchange) never reveals:
+   * hiding the folder you're in and pressing Back should land you on the
+   * ancestor the filter still shows, not silently undo your filter choice.
    */
   function revealAndLayout(path: string): Map<string, Circle> {
     if (path === "" || !isExcluded(path, excluded)) return layout;
@@ -276,12 +292,21 @@
     let stop = (): void => {};
     locationSync = new HashSync(decodeLocation(location.hash) ?? "");
     // The browser changed the URL itself (Back/Forward, or a hand-edited
-    // hash): zoom to match without pushing a new entry (see location.ts).
+    // hash): zoom to match without pushing a new entry (see location.ts). A
+    // path the Folders filter now hides (or that's simply gone) resolves to
+    // the nearest ancestor still shown, same as restoreFromHash — landing on
+    // a stale hash from before you hid a folder must not silently reveal it.
     const onLocationChange = (): void => {
       const decoded = decodeLocation(location.hash);
-      const target = decoded === null || decoded === "" ? "" : (nearestShown(decoded, revealAndLayout(decoded)) ?? "");
+      // The browser already wrote `decoded` (that's what just changed);
+      // record it before deciding whether to correct it further, or
+      // `replaceNow` below could wrongly no-op against a stale `#written`
+      // left over from an earlier, unrelated write.
+      if (decoded !== null) locationSync?.sync(decoded);
+      const target = decoded === null || decoded === "" ? "" : (nearestShown(decoded, layout) ?? "");
       zoom(target);
-      locationSync?.sync(target);
+      if (decoded !== null && target !== decoded) locationSync?.replaceNow(target);
+      else locationSync?.sync(target);
     };
     window.addEventListener("popstate", onLocationChange);
     window.addEventListener("hashchange", onLocationChange);
