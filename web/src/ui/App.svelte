@@ -2,8 +2,10 @@
   import { onMount } from "svelte";
   import { servedBuildChanged } from "../build";
   import { connect, repoIdentity, type ConnectionStatus } from "../connection";
+  import { directoryEntries, isExcluded, loadExcluded, nearestVisibleAncestor, saveExcluded } from "../layout/exclude";
   import { computeFrame } from "../layout/frame";
   import { Linger } from "../layout/linger";
+  import { buildTree } from "../layout/nodes";
   import type { Circle } from "../layout/pack";
   import { nearestShown } from "../layout/shown";
   import type { Snapshot, WorktreeId } from "../protocol";
@@ -14,14 +16,27 @@
   import Activity from "./Activity.svelte";
   import Breadcrumbs from "./Breadcrumbs.svelte";
   import { FrameCoalescer } from "./coalesce";
+  import DirFilter from "./DirFilter.svelte";
   import { keyAction } from "./keys";
   import Legend from "./Legend.svelte";
   import LivePill from "./LivePill.svelte";
   import MapKey from "./MapKey.svelte";
-  import { crumbsSlot, hoverTip, mapInsets, shownFolder, type CrumbsSize, type Footprint, type HoverTarget, type TooltipInfo } from "./models";
+  import {
+    crumbsSlot,
+    hoverTip,
+    mapInsets,
+    shownFolder,
+    stackFootprint,
+    type CrumbsSize,
+    type Footprint,
+    type HoverTarget,
+    type TooltipInfo,
+  } from "./models";
   import { clickTarget, crumbs, doubleClickTarget, upOne } from "./nav";
   import { applyTheme, loadTheme, saveTheme, type Theme } from "./theme";
   import Tooltip from "./Tooltip.svelte";
+
+  const DIRFILTER_GAP = 8; // gap between the map key and the filter panel stacked above it
 
   const NO_CHANGE: Change = { kind: "patch", merged: [] };
 
@@ -35,11 +50,26 @@
   let noWebGL = $state(false);
   let legendBox: Footprint = $state.raw({ width: 0, height: 0 });
   let keyBox: Footprint = $state.raw({ width: 0, height: 0 });
+  let dirFilterBox: Footprint = $state.raw({ width: 0, height: 0 });
   let pillX: number | null = $state(null); // centre of the map's free area
   let viewW = $state(0);
   let crumbsBox: CrumbsSize = $state.raw({ full: 0, min: 0 });
   // The breadcrumbs keep clear of the legend (and Vision's activity panel).
   const crumbsAt = $derived(viewW > 0 ? crumbsSlot(theme, viewW, legendBox, pillX, crumbsBox) : null);
+  // The map key and the folder filter both live bottom-left, stacked: mapInsets
+  // (and the filter's own position) treat them as one combined obstacle.
+  const bottomLeftBox = $derived(stackFootprint(keyBox, dirFilterBox, DIRFILTER_GAP));
+  const dirFilterLift = $derived(keyBox.height > 0 ? keyBox.height + DIRFILTER_GAP : 0);
+
+  // Directories hidden from the map, persisted per repo (see layout/exclude.ts).
+  let excluded: ReadonlySet<string> = $state.raw(new Set());
+  let excludedFor: string | null = null; // the repo name `excluded` was loaded for
+  const dirs = $derived(repo ? directoryEntries(buildTree(repo)) : []);
+
+  function setExcluded(next: Set<string>): void {
+    excluded = next;
+    if (repo) saveExcluded(repo.repo.name, next);
+  }
 
   let mapEl: HTMLDivElement;
   let renderer: MapRenderer | null = null;
@@ -72,8 +102,13 @@
   });
 
   $effect(() => {
-    void legendBox; // the map keeps clear of the legend and the key (see mapInsets)
-    void keyBox;
+    void legendBox; // the map keeps clear of the legend and the key/filter stack (see mapInsets)
+    void bottomLeftBox;
+    queue.request(NO_CHANGE);
+  });
+
+  $effect(() => {
+    void excluded; // toggling a folder re-lays out the map like any other node-set change
     queue.request(NO_CHANGE);
   });
 
@@ -84,13 +119,32 @@
     renderer?.isolate(id);
   });
 
+  $effect(() => {
+    // A repo loads its own remembered exclusions once its name is known (a
+    // reconnect that lands on a different repo reloads the page first, see
+    // App's onSnapshot below, so `repo.repo.name` is stable for the rest of
+    // this page's life).
+    const name = repo?.repo.name;
+    if (name !== undefined && name !== excludedFor) {
+      excludedFor = name;
+      excluded = loadExcluded(name);
+    }
+  });
+
+  $effect(() => {
+    // If the zoom focus just became (or already was, on load) excluded, back
+    // out to the nearest ancestor still on the map.
+    const ex = excluded;
+    if (isExcluded(zoomPath, ex)) zoom(nearestVisibleAncestor(zoomPath, ex));
+  });
+
   function relayout(change: Change): void {
     const s = store.state;
     if (!s || !renderer) return;
     const w = mapEl.clientWidth;
     const h = mapEl.clientHeight;
     if (w <= 0 || h <= 0) return; // nothing to lay out into (d3's pack throws on an empty rect)
-    const f = computeFrame(s, w, h, scale, mapInsets(theme, w, h, legendBox, keyBox), linger.paths());
+    const f = computeFrame(s, w, h, scale, mapInsets(theme, w, h, legendBox, bottomLeftBox), linger.paths(), excluded);
     layout = f.layout;
     labels = labelNames(f.layout);
     pillX = (f.free.x0 + f.free.x1) / 2;
@@ -259,10 +313,19 @@
     {repo}
     {now}
     {isolated}
+    {excluded}
     onIsolate={(id) => (isolated = id)}
     onFootprint={(b) => (legendBox = b)}
-    reserveBottom={Math.max(64, keyBox.height + 32)} />
-  <Activity {repo} {now} onHover={highlight} onSelect={(p) => zoom(shownFolder(p, layout))} />
+    reserveBottom={Math.max(64, bottomLeftBox.height + 32)} />
+  <Activity {repo} {now} {excluded} onHover={highlight} onSelect={(p) => zoom(shownFolder(p, layout))} />
+{/if}
+{#if repo && !noWebGL}
+  <DirFilter
+    {dirs}
+    {excluded}
+    onChange={setExcluded}
+    onFootprint={(b) => (dirFilterBox = b)}
+    lift={dirFilterLift} />
 {/if}
 {#if !noWebGL}
   <MapKey {theme} onFootprint={(b) => (keyBox = b)} />
