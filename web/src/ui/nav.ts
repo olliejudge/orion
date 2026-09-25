@@ -78,3 +78,36 @@ export function doubleClickTarget(path: string | null, layout: Map<string, Circl
   if (path === before) return upOne(before, layout, labels);
   return c.isDir ? path : parentDir(path);
 }
+
+/**
+ * The levels one step in from `current` (its direct children, chain
+ * compression included), largest circle first.
+ */
+export function childLevels(current: string, layout: Map<string, Circle>, labels: Map<string, string> | undefined): Circle[] {
+  const seen = new Set<string>();
+  const out: Circle[] = [];
+  for (const c of layout.values()) {
+    if (!c.isDir || c.depth === 0 || c.path === current || !isWithin(c.path, current) || !isLevel(c.path, layout, labels)) continue;
+    const cs = crumbs(c.path, layout, labels, "");
+    const at = cs.findIndex((cr) => cr.path === current);
+    if (at < 0 || at + 1 >= cs.length) continue;
+    const child = cs[at + 1]!.path;
+    if (seen.has(child)) continue;
+    seen.add(child);
+    const cc = layout.get(child);
+    if (cc) out.push(cc);
+  }
+  return out.sort((a, b) => b.r - a.r);
+}
+
+/**
+ * Where the `+`/`=` key zooms: one level from `current` toward the folder
+ * under the pointer (`hover`, a file or folder path, or null when the
+ * pointer isn't over the map or isn't over anything within `current`); with
+ * no such target, the largest child level of `current`.
+ */
+export function stepIn(hover: string | null, layout: Map<string, Circle>, labels: Map<string, string> | undefined, current: string): string {
+  if (hover !== null && hover !== current && isWithin(hover, current) && layout.has(hover)) return clickTarget(hover, layout, labels, current);
+  const kids = childLevels(current, layout, labels);
+  return kids.length > 0 ? kids[0]!.path : current;
+}

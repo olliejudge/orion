@@ -33,7 +33,7 @@
     type HoverTarget,
     type TooltipInfo,
   } from "./models";
-  import { clickTarget, crumbs, doubleClickTarget, upOne } from "./nav";
+  import { clickTarget, crumbs, doubleClickTarget, stepIn, upOne } from "./nav";
   import { applyTheme, loadTheme, saveTheme, type Theme } from "./theme";
   import Tooltip from "./Tooltip.svelte";
 
@@ -217,6 +217,10 @@
       else zoom(upOne(zoomPath, layout, labels));
     }
     else if (action === "fullscreen") toggleFullscreen();
+    // + / = steps in toward the folder under the pointer, or the largest
+    // child of the folder in view when the pointer isn't over the map.
+    else if (action === "zoomIn") zoom(stepIn(mapHover?.path ?? null, layout, labels, zoomPath));
+    else if (action === "home") zoom("");
   }
 
   onMount(() => {
