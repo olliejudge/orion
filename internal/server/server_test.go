@@ -480,6 +480,9 @@ func TestAllowHostsAcceptsExactHostOnAnyPort(t *testing.T) {
 		"box.tail.ts.net":           200,
 		"box.tail.ts.net:443":       200,
 		"box.tail.ts.net:" + h.port: 200,
+		"BOX.tail.ts.net":           200,
+		"box.tail.ts.net.":          200,
+		"box.tail.ts.net.:443":      200,
 		"127.0.0.1:" + h.port:       200,
 		"evil.box.tail.ts.net":      403,
 		"box.tail.ts.net.evil":      403,
@@ -493,6 +496,42 @@ func TestAllowHostsAcceptsExactHostOnAnyPort(t *testing.T) {
 	for _, path := range []string{"/", "/healthz"} {
 		if resp := h.get(t, path, "", func(r *http.Request) { r.Host = "box.tail.ts.net" }); resp.StatusCode != http.StatusForbidden {
 			t.Errorf("GET %s on allowed host without token: status %d, want 403", path, resp.StatusCode)
+		}
+	}
+}
+
+func TestStartRejectsInvalidAllowHosts(t *testing.T) {
+	for _, hosts := range [][]string{{""}, {"box.tail.ts.net", "*.ts.net"}} {
+		if srv, err := Start(context.Background(), newFakeSource(1), Options{AllowHosts: hosts}); err == nil {
+			t.Errorf("Start(AllowHosts: %q) succeeded, want an error", hosts)
+			_ = srv
+		}
+	}
+}
+
+// TestAllowHostsRejectsEmptyHost: an HTTP/1.0 request may omit Host entirely.
+func TestAllowHostsRejectsEmptyHost(t *testing.T) {
+	h := startServer(t, Options{Assets: uiFS, AllowHosts: []string{"box.tail.ts.net"}})
+	for _, path := range []string{"/?t=" + h.token, "/healthz"} {
+		conn, err := net.Dial("tcp", h.host)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = fmt.Fprintf(conn, "GET %s HTTP/1.0\r\n\r\n", path)
+		status, err := bufio.NewReader(conn).ReadString('\n')
+		_ = conn.Close()
+		if err != nil || !strings.Contains(status, " 403 ") {
+			t.Errorf("GET %s without Host: %q %v, want 403", path, status, err)
+		}
+	}
+}
+
+func TestHealthzRejectsProxiedRequests(t *testing.T) {
+	h := startServer(t, Options{AllowHosts: []string{"box.tail.ts.net"}})
+	for _, hdr := range []string{"X-Forwarded-For", "X-Forwarded-Host", "Forwarded", "Tailscale-User-Login"} {
+		resp := h.get(t, "/healthz", "", func(r *http.Request) { r.Header.Set(hdr, "x") })
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("/healthz with %s: status %d, want 403", hdr, resp.StatusCode)
 		}
 	}
 }

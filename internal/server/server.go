@@ -50,9 +50,10 @@ type Source interface {
 // (Vite serves the UI on VitePort and proxies /ws). Assets is the built UI;
 // when it has no index.html, its fallback.html (or a built-in page) is served.
 // Token is the auth token (see LoadToken); empty means a random one per run.
-// AllowHosts are extra hostnames (see CheckAllowHost), on any port, that the
-// Host and Origin checks accept besides loopback, e.g. a tailnet name a
-// reverse proxy forwards. The token is still required.
+// AllowHosts are extra hostnames (see CheckAllowHost) that the Host check
+// accepts on any port, and the Origin check on the scheme's default port,
+// besides loopback, e.g. a tailnet name a reverse proxy forwards. The token is
+// still required.
 type Options struct {
 	Port       int
 	Dev        bool
@@ -84,6 +85,14 @@ type Server struct {
 
 // Start listens on 127.0.0.1 (with port fallback) and serves until ctx is done.
 func Start(ctx context.Context, src Source, opt Options) (*Server, error) {
+	hosts := make([]string, len(opt.AllowHosts))
+	for i, h := range opt.AllowHosts {
+		var err error
+		if hosts[i], err = CheckAllowHost(h); err != nil {
+			return nil, err
+		}
+	}
+	opt.AllowHosts = hosts
 	ln, err := listen(opt.Port)
 	if err != nil {
 		return nil, err
@@ -188,11 +197,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// forwardHeaders are set by reverse proxies (tailscale serve among them),
+// whose clients may claim a loopback Host.
+var forwardHeaders = []string{"X-Forwarded-For", "X-Forwarded-Host", "Forwarded", "Tailscale-User-Login"}
+
 // serveHealth answers GET /healthz without a token, for supervisors checking
 // that orion is up: 200 and "orion VERSION". Start runs after the engine has
 // built its first snapshot, so a server that answers has state to serve. Only
-// a loopback Host is accepted, so a page on another origin cannot probe it.
+// a loopback Host is accepted, and no proxied request, so a page on another
+// origin or a client behind a proxy cannot probe it.
 func (s *Server) serveHealth(w http.ResponseWriter, r *http.Request) {
+	for _, hdr := range forwardHeaders {
+		if r.Header.Get(hdr) != "" {
+			http.Error(w, "forbidden host", http.StatusForbidden)
+			return
+		}
+	}
 	if !s.loopback(r.Host) {
 		http.Error(w, "forbidden host", http.StatusForbidden)
 		return
@@ -229,12 +249,13 @@ func (s *Server) loopback(hostport string) bool {
 }
 
 // allowed reports whether hostport's host, with any port or none, is one of
-// Options.AllowHosts.
+// Options.AllowHosts. Hostnames are case-insensitive and may end in a dot.
 func (s *Server) allowed(hostport string) bool {
 	h := hostport
 	if host, _, err := net.SplitHostPort(hostport); err == nil {
 		h = host
 	}
+	h = strings.TrimSuffix(strings.ToLower(h), ".")
 	for _, a := range s.opt.AllowHosts {
 		if h == a {
 			return true
@@ -244,17 +265,20 @@ func (s *Server) allowed(hostport string) bool {
 }
 
 // originOK accepts a bare http origin on a loopback host, or an http or https
-// origin (a proxy such as tailscale serve may add TLS) on an allowed host.
+// origin (a proxy such as tailscale serve may add TLS) on an allowed host's
+// default port. Cookies are not port-isolated, so another app on the same
+// name at another port must not be able to open /ws with orion's cookie.
 func (s *Server) originOK(origin string) bool {
 	u, err := url.Parse(origin)
 	if err != nil || u.Path != "" || u.RawQuery != "" || u.User != nil {
 		return false
 	}
+	allowed := u.Port() == "" && s.allowed(u.Host)
 	switch u.Scheme {
 	case "http":
-		return s.loopback(u.Host) || s.allowed(u.Host)
+		return s.loopback(u.Host) || allowed
 	case "https":
-		return s.allowed(u.Host)
+		return allowed
 	}
 	return false
 }
