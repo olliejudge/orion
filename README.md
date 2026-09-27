@@ -102,6 +102,7 @@ Orion has two themes and remembers your choice:
 
 - Orion runs entirely on your machine. It makes no network requests of its own and has no telemetry.
 - The server binds to `127.0.0.1` only. The first run generates a random token and saves it, readable only by you, as `orion/token` in your user config directory (`~/Library/Application Support` on macOS, `~/.config` on Linux). The token is part of the URL Orion prints; the browser swaps it for a cookie (`orion_t_<port>`) on first load. Requests without the token are refused, and so are requests with a foreign `Host` or `Origin`, so other websites can't read your repo through it. The token is reused by every Orion you run, so treat the URL like a password: anyone who has it can read your repos' file names while Orion is running. Delete the file to rotate the token (Orion also replaces it if its permissions let others read it); if Orion can't read or write it, it uses a one-off token for that run.
+- `GET /healthz` answers `200` and `orion <version>` without the token, for service supervisors. It accepts only a `127.0.0.1` or `localhost` `Host`, and reveals nothing about the repo.
 - It reads git metadata and file sizes. It never reads file contents.
 
 ## Try it on a demo repo

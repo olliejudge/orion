@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/olliejudge/orion/internal/model"
+	"github.com/olliejudge/orion/internal/version"
 )
 
 // cookiePrefix + PORT names the auth cookie. Browsers scope cookies by host,
@@ -151,6 +153,10 @@ func inspectAssets(a fs.FS) (bool, []byte) {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if r.URL.Path == "/healthz" {
+		s.serveHealth(w, r)
+		return
+	}
 	if !s.loopback(r.Host) {
 		http.Error(w, "forbidden host", http.StatusForbidden)
 		return
@@ -175,6 +181,24 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		s.serveStatic(w, r)
 	}
+}
+
+// serveHealth answers GET /healthz without a token, for supervisors checking
+// that orion is up: 200 and "orion VERSION". Start runs after the engine has
+// built its first snapshot, so a server that answers has state to serve. Only
+// a loopback Host is accepted, so a page on another origin cannot probe it.
+func (s *Server) serveHealth(w http.ResponseWriter, r *http.Request) {
+	if !s.loopback(r.Host) {
+		http.Error(w, "forbidden host", http.StatusForbidden)
+		return
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = io.WriteString(w, "orion "+version.Version+"\n")
 }
 
 func (s *Server) validToken(t string) bool {

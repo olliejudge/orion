@@ -231,6 +231,31 @@ func TestRejectsForeignHostHeader(t *testing.T) {
 	}
 }
 
+func TestHealthzNeedsNoTokenButLoopbackHost(t *testing.T) {
+	h := startServer(t, Options{Assets: uiFS})
+	resp := h.get(t, "/healthz", "", nil)
+	if resp.StatusCode != 200 || resp.Body != "orion dev\n" || resp.Header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("GET /healthz: %d %q cache %q, want 200 \"orion dev\\n\" no-store", resp.StatusCode, resp.Body, resp.Header.Get("Cache-Control"))
+	}
+	for _, host := range []string{"evil.example:" + h.port, "localhost"} {
+		if resp := h.get(t, "/healthz", "", func(r *http.Request) { r.Host = host }); resp.StatusCode != http.StatusForbidden {
+			t.Errorf("Host %q: status %d, want 403", host, resp.StatusCode)
+		}
+	}
+	req, err := http.NewRequest(http.MethodPost, h.base+"/healthz", http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	post, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = post.Body.Close()
+	if post.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("POST /healthz: status %d, want 405", post.StatusCode)
+	}
+}
+
 func TestStaticSPAFallback(t *testing.T) {
 	h := startServer(t, Options{Assets: uiFS})
 	cases := []struct {
