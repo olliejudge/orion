@@ -70,6 +70,17 @@ func TestRunUnknownFlag(t *testing.T) {
 	}
 }
 
+func TestRunRejectsWildcardAllowHost(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--allow-host", "*.ts.net"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "not a hostname") {
+		t.Fatalf("stderr %q does not explain the bad host", stderr.String())
+	}
+}
+
 func TestRunHelpExitsZero(t *testing.T) {
 	for _, arg := range []string{"-h", "--help"} {
 		var stdout, stderr bytes.Buffer

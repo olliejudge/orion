@@ -63,7 +63,7 @@ orion
 Orion prints a URL like `http://127.0.0.1:7070/?t=…`, opens it in your browser and keeps the map live until you press Ctrl-C. The URL stays the same from run to run, so you can bookmark it (or, once it has loaded, just `http://127.0.0.1:7070/`, as long as Orion gets the same port). An open tab reconnects by itself when Orion restarts, and reloads if Orion was upgraded.
 
 ```
-orion [path] [--port N] [--no-open] [--base BRANCH] [--dev] [--version]
+orion [path] [--port N] [--no-open] [--base BRANCH] [--allow-host HOST]... [--dev] [--version]
 ```
 
 | Flag | Meaning |
@@ -72,6 +72,7 @@ orion [path] [--port N] [--no-open] [--base BRANCH] [--dev] [--version]
 | `--port N` | Port to listen on. Default 7070; if it is taken, the next free port is used. |
 | `--no-open` | Print the URL but don't open a browser. |
 | `--base BRANCH` | Branch to compare against. Default: `origin`'s default branch, then `main`, then `master`, then the main worktree's current branch. |
+| `--allow-host HOST` | Also accept requests for this exact hostname, e.g. when a reverse proxy such as `tailscale serve` forwards to Orion. Repeatable. No wildcards; the token is still required. |
 | `--dev` | Serve no embedded UI; expect Vite's dev server at `:5173` instead. A busy port is an error rather than falling back, because Vite proxies to that exact port. For contributors, see "Building from source" below. |
 | `--version` | Print the version and exit. |
 
@@ -101,7 +102,8 @@ Orion has two themes and remembers your choice:
 ## Privacy and security
 
 - Orion runs entirely on your machine. It makes no network requests of its own and has no telemetry.
-- The server binds to `127.0.0.1` only. The first run generates a random token and saves it, readable only by you, as `orion/token` in your user config directory (`~/Library/Application Support` on macOS, `~/.config` on Linux). The token is part of the URL Orion prints; the browser swaps it for a cookie (`orion_t_<port>`) on first load. Requests without the token are refused, and so are requests with a foreign `Host` or `Origin`, so other websites can't read your repo through it. The token is reused by every Orion you run, so treat the URL like a password: anyone who has it can read your repos' file names while Orion is running. Delete the file to rotate the token (Orion also replaces it if its permissions let others read it); if Orion can't read or write it, it uses a one-off token for that run.
+- The server binds to `127.0.0.1` only. The first run generates a random token and saves it, readable only by you, as `orion/token` in your user config directory (`~/Library/Application Support` on macOS, `~/.config` on Linux). The token is part of the URL Orion prints; the browser swaps it for a cookie (`orion_t_<port>`) on first load. Requests without the token are refused, and so are requests with a foreign `Host` or `Origin`, so other websites can't read your repo through it (`--allow-host` adds exact hostnames you trust, such as your tailnet name, to the loopback ones). The token is reused by every Orion you run, so treat the URL like a password: anyone who has it can read your repos' file names while Orion is running. Delete the file to rotate the token (Orion also replaces it if its permissions let others read it); if Orion can't read or write it, it uses a one-off token for that run.
+- `GET /healthz` answers `200` and `orion <version>` without the token, for service supervisors. It accepts only a `127.0.0.1:PORT` or `localhost:PORT` `Host`, refuses requests that came through a reverse proxy, and reveals nothing about the repo.
 - It reads git metadata and file sizes. It never reads file contents.
 
 ## Try it on a demo repo

@@ -26,8 +26,9 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	defer s.conns.Done()
 
-	// Origin was verified above against the exact loopback host:port; the
-	// library's own same-host check would reject Vite's origin in --dev.
+	// Origin was verified above against the exact loopback host:port or an
+	// allowed host; the library's own same-host check would reject Vite's
+	// origin in --dev, and a proxy's https origin.
 	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 	if err != nil {
 		return
