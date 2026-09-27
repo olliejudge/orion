@@ -49,7 +49,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("orion", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: orion [path] [--port N] [--no-open] [--base BRANCH] [--dev] [--version]")
+		fmt.Fprintln(stderr, "usage: orion [path] [--port N] [--no-open] [--base BRANCH] [--allow-host HOST]... [--dev] [--version]")
 		fs.PrintDefaults()
 	}
 	port := fs.Int("port", 7070, "port to listen on (the next free port is used if taken)")
@@ -57,6 +57,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 	base := fs.String("base", "", "branch to compare against (default: origin/HEAD, main, master, current)")
 	dev := fs.Bool("dev", false, "serve only /ws; the UI comes from the Vite dev server")
 	showVersion := fs.Bool("version", false, "print the version and exit")
+	var allowHosts []string
+	fs.Func("allow-host", "also accept this exact hostname, e.g. behind a reverse proxy (repeatable)", func(v string) error {
+		h, err := server.CheckAllowHost(v)
+		if err == nil {
+			allowHosts = append(allowHosts, h)
+		}
+		return err
+	})
 
 	// Go's flag package stops at the first positional argument; keep parsing
 	// so `orion . --port 8080` works as well as `orion --port 8080 .`.
@@ -106,6 +114,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	defer cancel()
 	srv, err := server.Start(ctx, eng, server.Options{
 		Port: *port, Dev: *dev, Assets: webassets.FS(), Token: loadToken(stderr),
+		AllowHosts: allowHosts,
 	})
 	if err != nil {
 		if ctx.Err() != nil {

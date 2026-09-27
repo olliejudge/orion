@@ -233,3 +233,21 @@ func TestWSRejectsForeignHostWithValidOrigin(t *testing.T) {
 		}
 	}
 }
+
+func TestWSAllowHostsAcceptsItsOrigins(t *testing.T) {
+	h := startServer(t, Options{AllowHosts: []string{"box.tail.ts.net"}})
+	for _, origin := range []string{"https://box.tail.ts.net", "http://box.tail.ts.net:8443", h.base} {
+		c, _, err := h.dial(t, origin, h.token)
+		if err != nil {
+			t.Fatalf("Origin %q: %v", origin, err)
+		}
+		if m := read(t, c); m.Type != "snapshot" {
+			t.Fatalf("Origin %q: got %+v, want snapshot", origin, m)
+		}
+	}
+	for _, origin := range []string{"https://" + h.host, "https://evil.box.tail.ts.net", "wss://box.tail.ts.net", "https://box.tail.ts.net/x"} {
+		if _, status, _ := h.dial(t, origin, h.token); status != http.StatusForbidden {
+			t.Errorf("Origin %q: status %d, want 403", origin, status)
+		}
+	}
+}

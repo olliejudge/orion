@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net"
@@ -49,11 +50,15 @@ type Source interface {
 // (Vite serves the UI on VitePort and proxies /ws). Assets is the built UI;
 // when it has no index.html, its fallback.html (or a built-in page) is served.
 // Token is the auth token (see LoadToken); empty means a random one per run.
+// AllowHosts are extra hostnames (see CheckAllowHost), on any port, that the
+// Host and Origin checks accept besides loopback, e.g. a tailnet name a
+// reverse proxy forwards. The token is still required.
 type Options struct {
-	Port   int
-	Dev    bool
-	Assets fs.FS
-	Token  string
+	Port       int
+	Dev        bool
+	Assets     fs.FS
+	Token      string
+	AllowHosts []string
 }
 
 // Server is a running orion HTTP server.
@@ -157,7 +162,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.serveHealth(w, r)
 		return
 	}
-	if !s.loopback(r.Host) {
+	if !s.loopback(r.Host) && !s.allowed(r.Host) {
 		http.Error(w, "forbidden host", http.StatusForbidden)
 		return
 	}
@@ -223,12 +228,55 @@ func (s *Server) loopback(hostport string) bool {
 	return p == s.port || (s.opt.Dev && p == strconv.Itoa(VitePort))
 }
 
+// allowed reports whether hostport's host, with any port or none, is one of
+// Options.AllowHosts.
+func (s *Server) allowed(hostport string) bool {
+	h := hostport
+	if host, _, err := net.SplitHostPort(hostport); err == nil {
+		h = host
+	}
+	for _, a := range s.opt.AllowHosts {
+		if h == a {
+			return true
+		}
+	}
+	return false
+}
+
+// originOK accepts a bare http origin on a loopback host, or an http or https
+// origin (a proxy such as tailscale serve may add TLS) on an allowed host.
 func (s *Server) originOK(origin string) bool {
 	u, err := url.Parse(origin)
-	if err != nil || u.Scheme != "http" || u.Path != "" || u.RawQuery != "" || u.User != nil {
+	if err != nil || u.Path != "" || u.RawQuery != "" || u.User != nil {
 		return false
 	}
-	return s.loopback(u.Host)
+	switch u.Scheme {
+	case "http":
+		return s.loopback(u.Host) || s.allowed(u.Host)
+	case "https":
+		return s.allowed(u.Host)
+	}
+	return false
+}
+
+// CheckAllowHost validates an --allow-host value and returns it lowercased:
+// an exact hostname or IPv4 address, without scheme, port or wildcard.
+func CheckAllowHost(h string) (string, error) {
+	h = strings.ToLower(h)
+	if h == "" || len(h) > 253 || strings.HasPrefix(h, ".") || strings.HasSuffix(h, ".") || strings.Contains(h, "..") {
+		return "", fmt.Errorf("%q is not a hostname", h)
+	}
+	for _, label := range strings.Split(h, ".") {
+		if len(label) > 63 || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return "", fmt.Errorf("%q is not a hostname", h)
+		}
+		for _, c := range label {
+			if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
+				return "", fmt.Errorf("%q is not a hostname: give an exact name, without scheme, port or wildcard", h)
+			}
+		}
+	}
+	return h, nil
 }
 
 func (s *Server) serveStatic(w http.ResponseWriter, r *http.Request) {

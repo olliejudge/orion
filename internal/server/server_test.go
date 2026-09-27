@@ -473,3 +473,48 @@ func TestSecurityHeadersOnEveryResponse(t *testing.T) {
 		}
 	}
 }
+
+func TestAllowHostsAcceptsExactHostOnAnyPort(t *testing.T) {
+	h := startServer(t, Options{Assets: uiFS, AllowHosts: []string{"box.tail.ts.net"}})
+	for host, want := range map[string]int{
+		"box.tail.ts.net":           200,
+		"box.tail.ts.net:443":       200,
+		"box.tail.ts.net:" + h.port: 200,
+		"127.0.0.1:" + h.port:       200,
+		"evil.box.tail.ts.net":      403,
+		"box.tail.ts.net.evil":      403,
+		"other.tail.ts.net":         403,
+	} {
+		if resp := h.get(t, "/", h.token, func(r *http.Request) { r.Host = host }); resp.StatusCode != want {
+			t.Errorf("Host %q: status %d, want %d", host, resp.StatusCode, want)
+		}
+	}
+	// The token is still required, and /healthz stays loopback-only.
+	for _, path := range []string{"/", "/healthz"} {
+		if resp := h.get(t, path, "", func(r *http.Request) { r.Host = "box.tail.ts.net" }); resp.StatusCode != http.StatusForbidden {
+			t.Errorf("GET %s on allowed host without token: status %d, want 403", path, resp.StatusCode)
+		}
+	}
+}
+
+func TestCheckAllowHost(t *testing.T) {
+	for in, want := range map[string]string{
+		"box.tail.ts.net": "box.tail.ts.net",
+		"Box.Tail.TS.net": "box.tail.ts.net",
+		"my-box":          "my-box",
+		"100.64.0.1":      "100.64.0.1",
+	} {
+		if got, err := CheckAllowHost(in); err != nil || got != want {
+			t.Errorf("CheckAllowHost(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	for _, in := range []string{
+		"", "*.ts.net", "box.ts.net:443", "https://box.ts.net", "box.ts.net/",
+		".ts.net", "box.ts.net.", "box..ts.net", "-box.ts.net", "[::1]", "a b",
+		strings.Repeat("a", 64) + ".net",
+	} {
+		if got, err := CheckAllowHost(in); err == nil {
+			t.Errorf("CheckAllowHost(%q) = %q, want an error", in, got)
+		}
+	}
+}
