@@ -55,6 +55,31 @@ describe("RectScene", () => {
     expect(s.box(n)).toEqual(B(60, 60, 90, 90));
   });
 
+  it("glides a renamed node from its source's current box instead of growing out of its ancestor", () => {
+    const s = new RectScene();
+    const dir = rect("src", B(0, 0, 100, 100), { isDir: true });
+    s.update(...frame([dir, rect("src/old.ts", B(10, 10, 30, 30))]), patch, 0);
+    settle(s, 700);
+    s.update(...frame([dir, rect("src/new.ts", B(60, 60, 90, 90))], [visual("src/new.ts", { renamedFrom: "src/old.ts" })]), patch, 700);
+    const n = s.get("src/new.ts")!;
+    expect(s.box(n)).toEqual(B(10, 10, 30, 30));
+    expect(n.alpha.value).toBe(1);
+    s.step(16, 716);
+    expect(n.x0.value).toBeGreaterThan(10);
+    settle(s, 700, 716);
+    expect(s.box(n)).toEqual(B(60, 60, 90, 90));
+    expect(s.get("src/old.ts")).toBeUndefined();
+  });
+
+  it("grows a renamed node out of its ancestor when the source has no node", () => {
+    const s = new RectScene();
+    const dir = rect("src", B(0, 0, 100, 100), { isDir: true });
+    s.update(...frame([dir]), patch, 0);
+    settle(s, 700);
+    s.update(...frame([dir, rect("src/new.ts", B(60, 60, 90, 90))], [visual("src/new.ts", { renamedFrom: "gone.ts" })]), patch, 700);
+    expect(s.box(s.get("src/new.ts")!)).toEqual(B(0, 0, 100, 100));
+  });
+
   it("springs an existing box to its new place (a zoom)", () => {
     const s = new RectScene();
     s.update(...frame([rect("a/b.ts", B(0, 0, 10, 10))]), patch, 0);

@@ -47,7 +47,9 @@ function parentOf(path: string): string | null {
  * where they now are.
  *
  * - Hidden layout entries (ancestors of the folder in view) are skipped.
- * - A new node starts at the current box of its nearest ancestor on screen
+ * - A new node whose visual has `renamedFrom` set to a path with a node
+ *   starts at that node's current box and springs to its own (a rename glide).
+ * - Otherwise a new node starts at the current box of its nearest ancestor on screen
  *   (zooming out reads as growth from the folder), else at its own box,
  *   fading in from alpha 0.
  * - Nodes missing from the layout shrink to their centre and fade, then are dropped.
@@ -76,7 +78,9 @@ export class RectScene {
         this.#aim(n, b, 1);
         n.leaving = false;
       } else {
-        const from = this.#ancestor(c.path, next);
+        // A rename glides from where the old path's box is now; otherwise grow out of the nearest ancestor.
+        const src = visual.renamedFrom !== undefined ? this.nodes.get(visual.renamedFrom) : undefined;
+        const from = src ?? this.#ancestor(c.path, next);
         n = from
           ? this.#make(c, visual, { x0: from.x0.value, y0: from.y0.value, x1: from.x1.value, y1: from.y1.value }, from.alpha.value)
           : this.#make(c, visual, b, 0);
