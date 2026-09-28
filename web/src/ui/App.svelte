@@ -30,6 +30,7 @@
     dirFilterTreeMaxHeight,
     hoverTip,
     mapInsets,
+    rectInsets,
     shownFolder,
     stackFootprint,
     type CrumbsSize,
@@ -164,10 +165,9 @@
 
   /** The current view's frame for state `s` in a w×h map. */
   function frameFor(s: RepoState, w: number, h: number): ReturnType<typeof computeFrame> {
-    const insets = mapInsets(theme, w, h, legendBox, bottomLeftBox);
     return view === "bubbles"
-      ? computeFrame(s, w, h, scale, insets, linger.paths(), excluded)
-      : computeRectFrame(s, view, zoomPath, w, h, insets, linger.paths(), excluded);
+      ? computeFrame(s, w, h, scale, mapInsets(theme, w, h, legendBox, bottomLeftBox), linger.paths(), excluded)
+      : computeRectFrame(s, view, zoomPath, w, h, rectInsets(theme, w, h, legendBox, bottomLeftBox), linger.paths(), excluded);
   }
 
   function relayout(change: Change): void {
@@ -317,7 +317,6 @@
     const old = renderer;
     renderer = null;
     old?.destroy();
-    mapEl.replaceChildren();
     const r: MapView = view === "bubbles" ? new MapRenderer(mapEl) : new RectRenderer(mapEl, view, { headerPx: TREEMAP_HEADER_PX });
     r.init().then(
       () => {

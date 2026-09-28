@@ -264,6 +264,33 @@ interface CornerPanel {
 }
 
 /**
+ * Where a rectangle view (tree map, partition) may sit. A box fills its whole
+ * free area, so unlike the root circle it can't tuck its corners past the
+ * legend (top-left) and map key (bottom-left): it steps right of them, or
+ * between them (below the legend, above the key), whichever leaves more area.
+ * Vision keeps clear of the activity panel as mapInsets does.
+ */
+export function rectInsets(theme: Theme, width: number, height: number, legend?: Footprint, key?: Footprint): Insets {
+  const base = mapInsets(theme, width, height);
+  if (width <= NARROW_W) return base;
+  const measured = (b?: Footprint): b is Footprint => b !== undefined && b.width > 0 && b.height > 0;
+  const lw = measured(legend) ? legend.width : 0;
+  const kw = measured(key) ? key.width : 0;
+  if (lw === 0 && kw === 0) return base;
+  const beside: Insets = { ...base, left: Math.max(base.left, GUTTER + Math.max(lw, kw) + GUTTER) };
+  const between: Insets = {
+    ...base,
+    top: measured(legend) ? Math.max(base.top, GUTTER + legend.height + GUTTER) : base.top,
+    bottom: measured(key) ? Math.max(base.bottom, GUTTER + key.height + GUTTER) : base.bottom,
+  };
+  const area = (i: Insets): number => {
+    const f = freeArea(width, height, i);
+    return (f.x1 - f.x0) * (f.y1 - f.y0);
+  };
+  return area(beside) >= area(between) ? beside : between;
+}
+
+/**
  * Where the map may sit. Vision's activity panel is opaque-ish glass, so the
  * map centres in the space beside it (or above it, where it becomes a bottom
  * sheet on narrow screens). Night's stream floats over the map: full-bleed.
