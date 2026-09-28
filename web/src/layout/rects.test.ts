@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { labelNames, parentDir } from "../render/geometry";
 import { crumbs } from "../ui/nav";
 import { makeState } from "./fixtures";
-import { PARTITION_ROW_PX, computeRectFrame, type RectKind } from "./rects";
+import { PARTITION_FOCUS_ROW_PX, PARTITION_ROW_PX, computeRectFrame, type RectKind } from "./rects";
 import type { Box, Circle } from "./pack";
 
 function repo(): Record<string, number> {
@@ -126,6 +126,13 @@ describe("partition", () => {
     expect(cap.box!.x1 - cap.box!.x0).toBeCloseTo(((a.x1 - a.x0) * 2) / 3);
   });
 
+  it("keeps rows equal when the focus holds files directly", () => {
+    const f = computeRectFrame(makeState(deep), "partition", "", 600, 800);
+    const row = 800 / 9; // nine rows: the root, then eight levels down to x.ts
+    expect(f.layout.get("")!.box!.y1).toBeCloseTo(row);
+    expect(f.layout.get("top.ts")!.box).toMatchObject({ y0: expect.closeTo(row), y1: expect.closeTo(2 * row) });
+  });
+
   it("gives children at most their parent's width", () => {
     const f = computeRectFrame(makeState(repo()), "partition", "", 1000, 800);
     const widths = new Map<string, number>();
@@ -154,6 +161,12 @@ describe("partition", () => {
     expect(byPath("a/b/c").depth).toBe(3);
     expect(byPath("a/b/c/d/e/f/g/x.ts").depth).toBe(8);
     expect(byPath("a/b").box!.y0).toBeCloseTo(0);
+    // a/b holds only a folder: its row is short, and the six rows below share the rest.
+    expect(byPath("a/b").box!.y1).toBeCloseTo(PARTITION_FOCUS_ROW_PX);
+    expect(byPath("a/b/c").box!.y0).toBeCloseTo(PARTITION_FOCUS_ROW_PX);
+    const row = (800 - PARTITION_FOCUS_ROW_PX) / 6;
+    expect(byPath("a/b/c").box!.y1).toBeCloseTo(PARTITION_FOCUS_ROW_PX + row);
+    expect(byPath("a/b/c/d/e/f/g/x.ts").box!.y1).toBeCloseTo(800);
     expect(byPath("a").hidden).toBe(true);
     expect(f.layout.has("a/z.ts")).toBe(false);
   });

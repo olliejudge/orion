@@ -8,6 +8,11 @@ import type { FreeArea } from "../layout/frame";
 import { motionPolicy, watchReducedMotion, type Motion } from "./motion";
 import { boxH, boxW, capLabels, dashPolyline, fitText, focusOf, inset, perimeterSegments, pickBox, type LabelWant } from "./rectGeometry";
 import { RectScene, type RectNode } from "./rectScene";
+import type { CameraPath } from "./camera";
+import { zoomPath, screenToWorld, type Camera, type Rect } from "./geometry";
+import { MapNavigator } from "./navigate";
+import { boxToScreen, rectHome, rectPanBy, rectZoomAround } from "./rectCamera";
+import { isSettled, makeSpring, retarget, snapSpring, stepSpring, SPRING_OMEGA, type Spring } from "./springs";
 import {
   DELETED_RIM_W_PX,
   GLYPH_ARM,
@@ -29,7 +34,20 @@ export type RectKind = "treemap" | "partition";
 export interface RectRendererOptions {
   /** Tree map: the height of a folder's name strip, CSS px (the layout's header constant). Default 18. */
   headerPx?: number;
+  /** The name shown for the repo root when it is the folder in view. */
+  rootName?: () => string;
 }
+
+/** The free camera's springs; while `path` is set (a zoom) the centre follows the scale. */
+interface CameraAnim {
+  cx: Spring;
+  cy: Spring;
+  logk: Spring;
+  target: Camera;
+  path: CameraPath | null;
+}
+
+const LOGK_EPS = 1e-4; // camera scale settles within 0.01%
 
 const FILE_INSET_PX = 0.5; // half the 1 px gap between neighbouring files
 const GLOW_PX = 2.5; // live glow: a soft border this wide outside the box
@@ -61,9 +79,13 @@ interface LabelSpot extends LabelWant {
 }
 
 /**
- * Pixi v8 renderer for the rectangle views (tree map, partition). All
- * animation state lives in RectScene (pure, unit-tested); there is no camera,
- * since App hands over a new layout per folder in view and boxes spring to it.
+ * Pixi v8 renderer for the rectangle views (tree map, partition). All box
+ * animation state lives in RectScene (pure, unit-tested): App hands over a
+ * new layout per folder in view and boxes spring to it. On top of that, a
+ * free camera (wheel/pinch zoom, drag; see rectCamera) magnifies the layout
+ * between 1× and RECT_MAX_ZOOM×; a new folder in view sends it home. Boxes
+ * are drawn in screen space through the camera, so strokes and labels keep
+ * their on-screen size.
  *
  * Two Graphics layers keep thousands of boxes cheap: `base` holds every box
  * and is redrawn only when something changed (layout, looks, theme,
@@ -75,6 +97,7 @@ export class RectRenderer implements MapView {
   #host: HTMLElement;
   #kind: RectKind;
   #headerPx: number;
+  #rootName: () => string;
   #app: Application | null = null;
   #destroyed = false;
 
@@ -85,6 +108,10 @@ export class RectRenderer implements MapView {
   #scene = new RectScene();
   #layout = new Map<string, Circle>();
   #focus: string | null = null;
+  #free: Rect | null = null;
+  #cam: CameraAnim;
+  #vp: { cam: Camera; width: number; height: number } = { cam: { cx: 0, cy: 0, k: 1 }, width: 1, height: 1 }; // this frame's camera and size
+  #nav: MapNavigator | null = null;
   #labels = new Map<string, Label>();
   #widths = new Map<string, number>();
   #style = new TextStyle({ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif', fontWeight: "500", fontSize: LABEL_FONT_PX });
@@ -116,6 +143,9 @@ export class RectRenderer implements MapView {
     this.#host = host;
     this.#kind = kind;
     this.#headerPx = opts.headerPx ?? 18;
+    this.#rootName = opts.rootName ?? (() => "");
+    const { width, height } = this.#size();
+    this.#cam = this.#snapped(rectHome(width, height));
   }
 
   async init(): Promise<void> {
@@ -135,12 +165,30 @@ export class RectRenderer implements MapView {
     this.#app = app;
     this.#host.appendChild(app.canvas);
     app.canvas.style.display = "block";
-    app.canvas.style.cursor = "default";
     app.stage.addChild(this.#base, this.#labelLayer, this.#fx);
+    const { width, height } = this.#size();
+    this.#cam = this.#snapped(rectHome(width, height));
     app.canvas.addEventListener("pointermove", this.#onPointerMove);
     app.canvas.addEventListener("pointerleave", this.#onPointerLeave);
-    app.canvas.addEventListener("click", this.#onClick);
-    app.canvas.addEventListener("dblclick", this.#onDblClick);
+    this.#nav = new MapNavigator(app.canvas, {
+      camera: () => this.#camera(),
+      aimed: () => this.#cam.target,
+      size: () => this.#size(),
+      root: () => undefined,
+      free: () => this.#freeRect(),
+      layout: () => this.#layout,
+      view: (target, path, snap) => this.#setView(target, path, snap),
+      click: (ev) => this.#onClick(ev),
+      doubleClick: () => this.#onDblClick(),
+      zoomAround: (cur, aimed, factor, sx, sy) => {
+        const { width: w, height: h } = this.#size();
+        return rectZoomAround(cur, aimed, factor, sx, sy, w, h, this.#bounds(), this.#freeRect());
+      },
+      panBy: (start, dx, dy) => {
+        const { width: w, height: h } = this.#size();
+        return rectPanBy(start, dx, dy, this.#bounds(), w, h, this.#freeRect());
+      },
+    });
     app.renderer.on("resize", this.#onResize);
     app.ticker.add((t) => this.#frame(t.deltaMS));
     // The ticker stops when idle, so ageing needs its own slow clock.
@@ -158,7 +206,10 @@ export class RectRenderer implements MapView {
 
   update(layout: Map<string, Circle>, visuals: Map<string, NodeVisual>, change: Change): void {
     this.#layout = layout;
+    const was = this.#focus;
     this.#focus = focusOf(layout);
+    // A new folder in view is a new layout: the free camera goes home. Live patches keep it.
+    if (was !== null && this.#focus !== was) this.#goHome();
     this.#scene.update(layout, visuals, change, performance.now());
     this.#clock = Date.now();
     this.#invalidate();
@@ -182,9 +233,20 @@ export class RectRenderer implements MapView {
     this.#wake();
   }
 
-  // No camera: App zooms by handing over a new layout.
-  zoomTo(_path: string): void {}
-  setFreeArea(_rect: FreeArea): void {}
+  /**
+   * App zooms by handing over a new layout for the folder; any free zoom is
+   * dropped (also when it asks for the folder already in view, e.g. home).
+   */
+  zoomTo(_path: string): void {
+    this.#goHome();
+  }
+
+  setFreeArea(rect: FreeArea): void {
+    this.#free = rect;
+  }
+
+  // The free camera never reports: App would re-cull (onZoom) or re-lay out
+  // the next patch around a new zoomPath (onFocus) and jump the camera home.
   onZoom(_fn: (scale: number) => void): void {}
   onFocus(_fn: (path: string) => void): void {}
 
@@ -209,24 +271,116 @@ export class RectRenderer implements MapView {
     if (this.#ageTimer !== null) clearInterval(this.#ageTimer);
     app.canvas.removeEventListener("pointermove", this.#onPointerMove);
     app.canvas.removeEventListener("pointerleave", this.#onPointerLeave);
-    app.canvas.removeEventListener("click", this.#onClick);
-    app.canvas.removeEventListener("dblclick", this.#onDblClick);
+    this.#nav?.destroy();
+    this.#nav = null;
     app.renderer.off("resize", this.#onResize);
     this.#labels.clear();
     app.destroy(true, { children: true });
     this.#app = null;
   }
 
+  // ---- camera -----------------------------------------------------------
+
+  #size(): { width: number; height: number } {
+    return { width: this.#host.clientWidth || 1, height: this.#host.clientHeight || 1 };
+  }
+
+  #freeRect(): Rect {
+    const { width, height } = this.#size();
+    return this.#free ?? { x0: 0, y0: 0, x1: width, y1: height };
+  }
+
+  /** The folder in view's box: the camera keeps the free area's centre inside it. */
+  #bounds(): Box | undefined {
+    const c = this.#focus === null ? undefined : this.#layout.get(this.#focus);
+    return c?.box;
+  }
+
+  #camera(): Camera {
+    return { cx: this.#cam.cx.value, cy: this.#cam.cy.value, k: Math.exp(this.#cam.logk.value) };
+  }
+
+  #snapped(c: Camera): CameraAnim {
+    return { cx: makeSpring(c.cx), cy: makeSpring(c.cy), logk: makeSpring(Math.log(c.k)), target: c, path: null };
+  }
+
+  #aim(target: Camera, path: CameraPath | null): void {
+    const cam = this.#cam;
+    cam.target = target;
+    cam.path = path;
+    retarget(cam.cx, target.cx);
+    retarget(cam.cy, target.cy);
+    retarget(cam.logk, Math.log(target.k));
+  }
+
+  /** A free camera move (wheel zoom, drag). */
+  #setView(target: Camera, path: CameraPath | null, snap: boolean): void {
+    const cam = this.#cam;
+    this.#aim(target, snap ? null : path);
+    if (snap) for (const s of [cam.cx, cam.cy, cam.logk]) snapSpring(s);
+    this.#invalidate();
+  }
+
+  /** Animates the camera back to the layout as laid out (the step snaps it under reduced motion). */
+  #goHome(): void {
+    const { width, height } = this.#size();
+    const home = rectHome(width, height);
+    const t = this.#cam.target;
+    if (t.cx === home.cx && t.cy === home.cy && t.k === home.k) return;
+    this.#aim(home, zoomPath(this.#camera(), home));
+    this.#invalidate();
+  }
+
+  /** Advances the camera; returns true while it is still moving. */
+  #stepCamera(dt: number): boolean {
+    const cam = this.#cam;
+    if (this.#motion.snap) {
+      const moved = [cam.cx, cam.cy, cam.logk].some((s) => s.value !== s.target);
+      for (const s of [cam.cx, cam.cy, cam.logk]) snapSpring(s);
+      cam.path = null;
+      return moved;
+    }
+    stepSpring(cam.logk, dt, SPRING_OMEGA, LOGK_EPS);
+    if (cam.path) {
+      const at = cam.path(Math.exp(cam.logk.value));
+      cam.cx.value = at.cx;
+      cam.cy.value = at.cy;
+      cam.cx.velocity = cam.cy.velocity = 0;
+      if (!isSettled(cam.logk, LOGK_EPS)) return true;
+      cam.path = null;
+      cam.cx.value = cam.cx.target;
+      cam.cy.value = cam.cy.target;
+      return true; // one more frame draws the settled camera
+    }
+    const eps = 0.5 / Math.exp(cam.logk.value); // half a screen pixel
+    stepSpring(cam.cx, dt, SPRING_OMEGA, eps);
+    stepSpring(cam.cy, dt, SPRING_OMEGA, eps);
+    return !isSettled(cam.cx, eps) || !isSettled(cam.cy, eps) || !isSettled(cam.logk, LOGK_EPS);
+  }
+
+  /** A layout box on screen this frame. */
+  #screen(b: Box): Box {
+    const { cam, width, height } = this.#vp;
+    return boxToScreen(cam, width, height, b);
+  }
+
+  #offscreen(b: Box): boolean {
+    return b.x1 < 0 || b.y1 < 0 || b.x0 > this.#vp.width || b.y0 > this.#vp.height;
+  }
+
   // ---- input ------------------------------------------------------------
 
   #pickAt(ev: MouseEvent): string | null {
     const rect = (ev.currentTarget as HTMLElement).getBoundingClientRect();
-    return pickBox(this.#layout, ev.clientX - rect.left, ev.clientY - rect.top);
+    const { width, height } = this.#size();
+    const w = screenToWorld(this.#camera(), width, height, ev.clientX - rect.left, ev.clientY - rect.top);
+    return pickBox(this.#layout, w.x, w.y);
   }
 
   #onPointerMove = (ev: PointerEvent): void => {
+    if (this.#nav?.dragging) return this.#onPointerLeave(ev); // no tooltip while dragging
     const path = this.#pickAt(ev);
-    if (this.#app) this.#app.canvas.style.cursor = path !== null && path !== this.#focus ? "pointer" : "default";
+    if (this.#app) this.#app.canvas.style.cursor = path !== null && path !== this.#focus ? "pointer" : "grab";
     this.#lastHover = path;
     for (const fn of this.#hoverFns) fn(path, { x: ev.clientX, y: ev.clientY });
   };
@@ -237,18 +391,23 @@ export class RectRenderer implements MapView {
     for (const fn of this.#hoverFns) fn(null, { x: ev.clientX, y: ev.clientY });
   };
 
-  #onClick = (ev: MouseEvent): void => {
-    if (ev.detail > 1) return; // a double click's second click is #onDblClick's
+  /** A click the navigator let through (not a drag's end, nor a double click's second click). */
+  #onClick(ev: MouseEvent): void {
     const path = this.#pickAt(ev);
     this.#firstPick = path;
     for (const fn of this.#clickFns) fn(path);
-  };
+  }
 
-  #onDblClick = (): void => {
+  #onDblClick(): void {
     for (const fn of this.#dblFns) fn(this.#firstPick);
-  };
+  }
 
-  #onResize = (): void => this.#invalidate();
+  /** App re-lays out for the new size, so any free zoom no longer lines up: start from home. */
+  #onResize = (): void => {
+    const { width, height } = this.#size();
+    this.#cam = this.#snapped(rectHome(width, height));
+    this.#invalidate();
+  };
 
   // ---- frame loop -------------------------------------------------------
 
@@ -266,8 +425,11 @@ export class RectRenderer implements MapView {
     const app = this.#app;
     if (!app) return;
     const now = performance.now();
-    const busy = this.#scene.step(dtMs, now, this.#motion.snap);
-    const moving = this.#scene.moving;
+    const camBusy = this.#stepCamera(Math.max(0, Math.min(dtMs || 0, 64)) / 1000);
+    const busy = this.#scene.step(dtMs, now, this.#motion.snap) || camBusy;
+    const { width, height } = this.#size();
+    this.#vp = { cam: this.#camera(), width, height };
+    const moving = this.#scene.moving || camBusy;
     if (this.#dirty || moving || this.#wasMoving) {
       this.#drawBase();
       this.#drawLabels(!moving);
@@ -297,9 +459,9 @@ export class RectRenderer implements MapView {
     g.clear();
     this.#fxNodes = [];
     for (const n of this.#scene.nodes.values()) {
-      const b = this.#scene.box(n);
+      const b = this.#screen(this.#scene.box(n));
       const a = n.alpha.value;
-      if (boxW(b) < 0.5 || boxH(b) < 0.5 || a < 0.01) continue;
+      if (boxW(b) < 0.5 || boxH(b) < 0.5 || a < 0.01 || this.#offscreen(b)) continue;
       if (!n.isDir) this.#drawFile(g, n, b, a);
       else if (n.aggregate !== undefined) this.#drawAggregate(g, n, b, a);
       else this.#drawFolder(g, n, b, a);
@@ -322,7 +484,7 @@ export class RectRenderer implements MapView {
     // Tree map: a faint wash, a slightly stronger name strip, and an outline (the focus folder frames everything).
     if (!focus) {
       g.rect(b.x0, b.y0, boxW(b), boxH(b)).fill({ color: 0xffffff, alpha: (night ? 0.02 : 0.03) * a });
-      const hh = Math.min(this.#headerPx, boxH(b));
+      const hh = Math.min(this.#headerPx * this.#vp.cam.k, boxH(b));
       g.rect(b.x0, b.y0, boxW(b), hh).fill({ color: 0xffffff, alpha: (night ? 0.03 : 0.04) * a });
     }
     g.rect(inner.x0, inner.y0, boxW(inner), boxH(inner)).stroke({ ...line, alpha: (focus ? (night ? 0.12 : 0.18) : night ? 0.08 : 0.12) * a });
@@ -401,7 +563,7 @@ export class RectRenderer implements MapView {
     const breath = this.#motion.breath(now);
     for (const n of this.#fxNodes) {
       if (n.leaving) continue;
-      const b = this.#scene.box(n);
+      const b = this.#screen(this.#scene.box(n));
       const a = n.alpha.value;
       const look = n.isDir ? (this.#look(n.visual, true) as AggregateLook) : (this.#look(n.visual, false) as FileLook);
       const halo = look.halo;
@@ -437,7 +599,7 @@ export class RectRenderer implements MapView {
     const path = this.#highlighted;
     const n = path === null ? undefined : this.#scene.get(path);
     if (!n || n.leaving) return;
-    const b = inset(this.#scene.box(n), 1);
+    const b = inset(this.#screen(this.#scene.box(n)), 1);
     if (boxW(b) <= 0 || boxH(b) <= 0) return;
     g.rect(b.x0, b.y0, boxW(b), boxH(b)).stroke({ color: 0xffffff, alpha: 0.9, width: 2 });
   }
@@ -464,22 +626,28 @@ export class RectRenderer implements MapView {
     const folder = this.#folderColor();
     const quiet = countColor(this.#theme);
     const hh = this.#headerPx;
+    const vw = this.#vp.width;
     for (const n of this.#scene.nodes.values()) {
       if (n.leaving) continue;
-      const b = this.#scene.box(n);
+      const b = this.#screen(this.#scene.box(n));
+      if (this.#offscreen(b)) continue;
       const w = boxW(b);
       const h = boxH(b);
-      const name = n.path === "" ? "" : n.path.slice(n.path.lastIndexOf("/") + 1);
+      // The folder in view shows its name too: the repo's for the root.
+      const name = n.path === "" ? (n.path === this.#focus ? this.#rootName() : "") : n.path.slice(n.path.lastIndexOf("/") + 1);
       if (n.aggregate !== undefined) {
         const count = String(n.aggregate);
         if (w >= this.#measure(count) + LABEL_PAD_PX && h >= LABEL_FONT_PX + 3) {
           out.push({ path: n.path, rank: 1e6 - w * h, name: count, x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2, anchorX: 0.5, maxWidth: w, color: quiet });
         }
       } else if (n.isDir) {
-        if (name === "" || w < FOLDER_LABEL_MIN_W) continue;
+        // Zoomed in, a folder wider than the screen keeps its name on screen.
+        const x0 = Math.max(b.x0, 0);
+        const seen = Math.min(b.x1, vw) - x0;
+        if (name === "" || seen < FOLDER_LABEL_MIN_W) continue;
         const strip = this.#kind === "treemap" ? hh : Math.min(hh, h);
         if (h < Math.min(strip, LABEL_FONT_PX + 3)) continue;
-        out.push({ path: n.path, rank: n.depth, name, x: b.x0 + LABEL_PAD_PX, y: b.y0 + Math.min(strip, h) / 2, anchorX: 0, maxWidth: w - 2 * LABEL_PAD_PX, color: folder });
+        out.push({ path: n.path, rank: n.depth, name, x: x0 + LABEL_PAD_PX, y: b.y0 + Math.min(strip, h) / 2, anchorX: 0, maxWidth: seen - 2 * LABEL_PAD_PX, color: folder });
       } else if (w >= FILE_LABEL_MIN_W && h >= FILE_LABEL_MIN_H) {
         out.push({ path: n.path, rank: 1e6 - w * h, name, x: b.x0 + LABEL_PAD_PX, y: b.y0 + FILE_LABEL_MIN_H / 2, anchorX: 0, maxWidth: w - 2 * LABEL_PAD_PX, color: quiet });
       }

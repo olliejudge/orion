@@ -317,7 +317,7 @@
     const old = renderer;
     renderer = null;
     old?.destroy();
-    const r: MapView = view === "bubbles" ? new MapRenderer(mapEl) : new RectRenderer(mapEl, view, { headerPx: TREEMAP_HEADER_PX });
+    const r: MapView = view === "bubbles" ? new MapRenderer(mapEl) : new RectRenderer(mapEl, view, { headerPx: TREEMAP_HEADER_PX, rootName: () => repo?.repo.name ?? "" });
     r.init().then(
       () => {
         if (gen !== rendererGen) {

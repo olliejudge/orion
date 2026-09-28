@@ -19,8 +19,9 @@ export const VIEW_LABELS: Readonly<Record<ViewKind, string>> = {
 /**
  * What App needs from a map renderer. MapRenderer (bubbles) zooms with a
  * camera; RectRenderer (tree map, partition) is handed a new layout per
- * folder in view instead, so for it zoomTo, setFreeArea, onZoom and onFocus
- * are no-ops (it never calls their callbacks).
+ * folder in view instead, and its free camera (wheel zoom, drag) only
+ * magnifies that layout: its zoomTo just sends the camera home, and it never
+ * calls the onZoom or onFocus callbacks.
  */
 export interface MapView {
   init(): Promise<void>;
