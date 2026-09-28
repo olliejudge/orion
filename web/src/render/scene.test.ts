@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { NodeVisual } from "../layout/encoding";
 import type { Circle } from "../layout/pack";
 import type { Change } from "../store";
-import { DELETED_SCALE, SHIMMER_MS, Scene } from "./scene";
+import { DELETED_SCALE, PING_MS, PING_RECENT_MS, SHIMMER_MS, Scene } from "./scene";
 
 const circle = (path: string, x: number, y: number, r: number, isDir = false): Circle => ({ path, x, y, r, depth: path.split("/").length, isDir });
 const visual = (path: string, over: Partial<NodeVisual> = {}): NodeVisual => ({
@@ -117,6 +117,40 @@ describe("Scene", () => {
     expect(s.step(16, 1000 + SHIMMER_MS / 2)).toBe(true);
     expect(s.step(16, 1000 + SHIMMER_MS + 1)).toBe(false);
     expect(s.shimmer(s.get("a.ts")!, 1000 + SHIMMER_MS + 1)).toBeNull();
+  });
+
+  it("pings a node whose work gets fresher, for PING_MS", () => {
+    const s = new Scene();
+    const edit = (touched: number, stage: "uncommitted" | "committed" = "uncommitted"): NodeVisual =>
+      visual("a.ts", { state: "edited", touches: [{ worktree: "w1", colorIndex: 1, stage, kind: "modified", touched }] });
+    const WALL = 1e12;
+    s.update(...frame([circle("a.ts", 0, 0, 8)], [edit(WALL - 60_000)]), patch, 0, WALL);
+    expect(s.get("a.ts")!.pingAt).toBeNull(); // first seen, but touched a minute ago
+    settle(s, 700);
+    s.update(...frame([circle("a.ts", 0, 0, 8)], [edit(WALL - 60_000)]), patch, 1000, WALL);
+    expect(s.get("a.ts")!.pingAt).toBeNull(); // nothing new
+    s.update(...frame([circle("a.ts", 0, 0, 8)], [edit(WALL)]), patch, 2000, WALL);
+    expect(s.ping(s.get("a.ts")!, 2000)).toBe(0);
+    expect(s.ping(s.get("a.ts")!, 2000 + PING_MS / 2)).toBeCloseTo(0.5);
+    expect(s.step(16, 2000 + PING_MS / 2)).toBe(true);
+    expect(s.step(16, 2000 + PING_MS + 1)).toBe(false);
+    expect(s.ping(s.get("a.ts")!, 2000 + PING_MS + 1)).toBeNull();
+  });
+
+  it("pings a node that first appears freshly touched (a new file), not one revealed with old work", () => {
+    const s = new Scene();
+    const WALL = 1e12;
+    const at = (path: string, touched: number): NodeVisual =>
+      visual(path, { state: "added", touches: [{ worktree: "w1", colorIndex: 1, stage: "uncommitted", kind: "added", touched }] });
+    s.update(...frame([circle("new.ts", 0, 0, 8), circle("old.ts", 20, 0, 8)], [at("new.ts", WALL - 1000), at("old.ts", WALL - PING_RECENT_MS - 1)]), patch, 0, WALL);
+    expect(s.get("new.ts")!.pingAt).toBe(0);
+    expect(s.get("old.ts")!.pingAt).toBeNull();
+  });
+
+  it("does not ping unchanged files", () => {
+    const s = new Scene();
+    s.update(...frame([circle("a.ts", 0, 0, 8)], [visual("a.ts", { touched: Date.now() })]), patch, 0);
+    expect(s.get("a.ts")!.pingAt).toBeNull();
   });
 
   it("snaps every node to its target in one step when asked to (reduced motion)", () => {

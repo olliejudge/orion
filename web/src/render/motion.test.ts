@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { STATIC_FLASH_ALPHA, motionPolicy, watchReducedMotion } from "./motion";
+import { BREATH_MS, STATIC_FLASH_ALPHA, motionPolicy, watchReducedMotion } from "./motion";
 
 describe("motionPolicy", () => {
   it("animates by default: springs move, the merge shimmer pulses and grows", () => {
@@ -14,6 +14,35 @@ describe("motionPolicy", () => {
     const m = motionPolicy(true);
     expect(m.snap).toBe(true);
     for (const p of [0, 0.3, 0.99]) expect(m.shimmer(p)).toEqual({ alpha: STATIC_FLASH_ALPHA, scale: 1 });
+  });
+});
+
+describe("live glow and ping", () => {
+  it("a live glow breathes: dim and full size between breaths, full and swollen mid-breath", () => {
+    const m = motionPolicy(false);
+    expect(m.breathes).toBe(true);
+    expect(m.breath(0).alpha).toBeCloseTo(0.55);
+    expect(m.breath(0).scale).toBeCloseTo(1);
+    expect(m.breath(BREATH_MS / 2).alpha).toBeCloseTo(1);
+    expect(m.breath(BREATH_MS / 2).scale).toBeCloseTo(1.1);
+    expect(m.breath(BREATH_MS).alpha).toBeCloseTo(m.breath(0).alpha);
+  });
+
+  it("a ping rings out from the bubble and fades to nothing", () => {
+    const m = motionPolicy(false);
+    expect(m.ping(0)).toEqual({ alpha: 0.8, scale: 1 });
+    const mid = m.ping(0.5)!;
+    expect(mid.alpha).toBeGreaterThan(0);
+    expect(mid.scale).toBeGreaterThan(1.5);
+    expect(m.ping(1)!.alpha).toBeCloseTo(0);
+    expect(m.ping(1)!.scale).toBeCloseTo(2.6);
+  });
+
+  it("with reduced motion the glow holds still and there is no ping", () => {
+    const m = motionPolicy(true);
+    expect(m.breathes).toBe(false);
+    for (const t of [0, 600, 1200]) expect(m.breath(t)).toEqual({ alpha: 1, scale: 1 });
+    expect(m.ping(0.2)).toBeNull();
   });
 });
 

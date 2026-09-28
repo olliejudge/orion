@@ -58,6 +58,8 @@ const SPLIT_GAP_PX = 3;
 const LOGK_EPS = 1e-4; // camera scale settles within 0.01%
 /** How often bubbles re-age (their brightness is how long ago they were touched); the curve moves far slower than this. */
 export const AGE_TICK_MS = 30_000;
+/** Frame rate cap while the only motion is live glows breathing: plenty for a slow pulse, at half the GPU. */
+export const BREATH_FPS = 30;
 
 /** Settle epsilon for world-space springs at zoom k: half a screen pixel, or SETTLE_EPS if k is unusable. */
 function worldEps(k: number): number {
@@ -71,6 +73,7 @@ interface View {
   body: Sprite | null; // files only
   halo: Sprite | null;
   flash: Sprite | null; // merge shimmer
+  ping: Sprite | null; // a fresh touch's ring, made on first use
   glyph: Sprite | null; // a file's state mark ("+", "×"), made on first use
   g: Graphics; // dir outline, aggregate disc, deleted rim, rings
   gKey: string;
@@ -104,6 +107,7 @@ interface FrameCtx {
   rect: Rect; // the viewport, in screen px
   big: number; // circles larger than this on screen are clipped to the viewport
   now: number;
+  breath: { alpha: number; scale: number }; // live glows this frame (see Motion.breath)
   camBusy: boolean;
   spots: Map<string, LabelSpot>; // label placements (from the last frame at rest while the camera moves)
   counts: Set<string>; // collapsed folders whose file count shows (likewise)
@@ -171,6 +175,7 @@ export class MapRenderer {
   #reportedK = 1; // last scale sent to onZoom (culling)
   #firstPick: string | null = null; // the path under a double click's first click
   #idleFrames = 0;
+  #breathing = false; // a breathing glow was drawn this frame
   #lastHover: string | null = null;
   #motion: Motion = motionPolicy(false);
   #stopMotionWatch = (): void => {};
@@ -479,6 +484,7 @@ export class MapRenderer {
       rect: { x0: 0, y0: 0, x1: width, y1: height },
       big: Math.max(width, height),
       now,
+      breath: this.#motion.breath(now),
       camBusy,
       spots: this.#spots,
       counts: this.#counts,
@@ -489,14 +495,18 @@ export class MapRenderer {
       f.counts = this.#counts;
     }
     this.#labelsFading = false;
+    this.#breathing = false;
     for (const n of this.#scene.nodes.values()) this.#draw(n, f);
     for (const [path, v] of this.#views) {
       if (!this.#scene.nodes.has(path)) this.#dropView(path, v);
     }
     this.#drawHighlight(f);
 
-    // Stop the ticker once idle so an ambient dashboard costs ~0 GPU.
-    if (camBusy || sceneBusy || this.#labelsFading) this.#idleFrames = 0;
+    // Stop the ticker once idle so an ambient dashboard costs ~0 GPU; while
+    // only live glows breathe, keep going at a capped frame rate.
+    const busy = camBusy || sceneBusy || this.#labelsFading;
+    app.ticker.maxFPS = !busy && this.#breathing ? BREATH_FPS : 0;
+    if (busy || this.#breathing) this.#idleFrames = 0;
     else if (++this.#idleFrames > 2) app.ticker.stop();
   }
 
@@ -528,6 +538,7 @@ export class MapRenderer {
       body,
       halo,
       flash: null,
+      ping: null,
       glyph: null,
       g,
       gKey: "",
@@ -601,9 +612,10 @@ export class MapRenderer {
       const glow = look ? look.halo : (agg?.halo ?? null);
       v.halo.visible = glow !== null;
       if (glow) {
-        v.halo.width = v.halo.height = ((R + HALO_PX) / HALO_RING_FRAC) * 2;
+        v.halo.width = v.halo.height = ((R + HALO_PX) / HALO_RING_FRAC) * 2 * f.breath.scale;
         v.halo.tint = glow.color;
-        v.halo.alpha = glow.alpha;
+        v.halo.alpha = glow.alpha * f.breath.alpha;
+        if (this.#motion.breathes && !n.leaving) this.#breathing = true;
       }
     }
 
@@ -625,6 +637,26 @@ export class MapRenderer {
 
     if (n.aggregate !== undefined) this.#drawCount(v, n, n.aggregate, R, f);
     this.#drawShimmer(v, n, R, f);
+    this.#drawPing(v, n, R, f, look ? (look.halo?.color ?? look.body?.tint ?? look.outline?.color) : (agg?.halo?.color ?? agg?.fill.color));
+  }
+
+  /** A fresh touch: a soft ring in the worktree's colour travelling out from the bubble. */
+  #drawPing(v: View, n: SceneNode, R: number, f: FrameCtx, color: number | undefined): void {
+    const p = this.#scene.ping(n, f.now);
+    const look = p === null || color === undefined ? null : this.#motion.ping(p);
+    if (!look) {
+      if (v.ping) v.ping.visible = false;
+      return;
+    }
+    if (!v.ping) {
+      v.ping = new Sprite(f.bank.halo);
+      v.ping.anchor.set(0.5);
+      v.root.addChild(v.ping);
+    }
+    v.ping.visible = true;
+    v.ping.tint = color!;
+    v.ping.alpha = look.alpha;
+    v.ping.width = v.ping.height = ((Math.max(R, 3) * look.scale) / HALO_RING_FRAC) * 2;
   }
 
   /** A collapsed folder's file count, centred in its disc, when placed at rest and it still fits. */
