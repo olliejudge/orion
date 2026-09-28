@@ -3,7 +3,7 @@ import { WORKTREE_COLORS, hexToNumber, lighten, worktreeColor } from "../colors"
 import { encode, encodeAll, type NodeVisual } from "../layout/encoding";
 import { makeState } from "../layout/fixtures";
 import type { Circle } from "../layout/pack";
-import { chroma, contrast, over } from "../perceptual";
+import { chroma, contrast, deltaE, over } from "../perceptual";
 import type { ChangeEntry } from "../protocol";
 import { RING_GAP_PX, RING_W_PX } from "./draw";
 import {
@@ -112,8 +112,14 @@ describe("tones", () => {
     }
   });
 
-  it.each(THEMES)("%s: unchanged files stay neutral (cool when old, slightly warm when fresh)", (theme) => {
-    for (const r of [0, 0.5, 1]) expect(chroma(`#${idleTint(theme, r).toString(16)}`)).toBeLessThan(15); // Apple colours are 70–90
+  it.each(THEMES)("%s: unchanged files are muted (cool when old, warm when fresh), far from every worktree colour", (theme) => {
+    for (let r = 0; r <= 1; r += 0.125) {
+      const hex = `#${idleTint(theme, r).toString(16).padStart(6, "0")}`;
+      expect(chroma(hex), `r ${r}`).toBeLessThan(35); // Apple colours are 70–90
+      for (const w of WORKTREE_COLORS) expect(deltaE(hex, w), `r ${r} vs ${w}`).toBeGreaterThan(30);
+    }
+    expect(idleTint(theme, 0) & 0xff).toBeGreaterThan(idleTint(theme, 0) >> 16); // old: blue over red
+    expect(idleTint(theme, 1) >> 16).toBeGreaterThan(idleTint(theme, 1) & 0xff); // fresh: red over blue
   });
 
   it.each(THEMES)("%s: unchanged files span a wide brightness range, readable step to step", (theme) => {

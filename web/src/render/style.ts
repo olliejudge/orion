@@ -14,10 +14,12 @@ import { RING_GAP_PX, RING_W_PX } from "./draw";
  * - WHO is colour: a changed file is filled flat in its worktree's colour.
  * - WHAT is a mark: "+" for new, "×" on a hollow rim for deleted, a hugging
  *   ring for committed on a branch, a glow for live (uncommitted) work, and
- *   nothing extra for a plain edit. Unchanged files are quiet neutral discs.
- * - WHEN is brightness: every bubble fades with the time since it was last
- *   touched (see recency), changed files always staying brighter than
- *   unchanged ones.
+ *   nothing extra for a plain edit. Unchanged files are quiet, muted discs.
+ * - WHEN is brightness, and for unchanged files a muted dusk ramp too (dusky
+ *   blue when old, through mauve, to warm sand when just touched): every
+ *   bubble fades with the time since it was last touched (see recency),
+ *   changed files always staying brighter than unchanged ones. The ramp is
+ *   far less saturated than any worktree colour, so colour still means who.
  */
 
 export type Theme = "vision" | "night";
@@ -79,8 +81,8 @@ export function ageOf(vis: NodeVisual, now: number): number {
 export interface Tone {
   /** The map's background (darkest stop of Vision's gradient; Night's black): glyph ink is chosen against it. */
   bg: string;
-  /** Unchanged files: a neutral that warms slightly from [oldest] to [just touched], and brightens a lot. */
-  idle: readonly [number, number];
+  /** Unchanged files: a muted ramp [oldest, middle, just touched], brightening a lot along it. */
+  idle: readonly [number, number, number];
   idleAlpha: readonly [number, number];
   /** Changed files' fill (and their marks): well above idleAlpha at the same age. */
   changedAlpha: readonly [number, number];
@@ -93,8 +95,8 @@ export interface Tone {
 export const TONES: Readonly<Record<Theme, Tone>> = {
   vision: {
     bg: "#0c0c14",
-    idle: [0xa8adc6, 0xe0dcd2],
-    idleAlpha: [0.11, 0.78],
+    idle: [0x7d88bd, 0xb9a3cc, 0xf2cf9c],
+    idleAlpha: [0.15, 0.78],
     changedAlpha: [0.62, 1],
     halo: 0.55,
     aggIdleAlpha: [0.05, 0.34],
@@ -102,8 +104,8 @@ export const TONES: Readonly<Record<Theme, Tone>> = {
   },
   night: {
     bg: "#000000",
-    idle: [0x9ea1b4, 0xd8d4ca],
-    idleAlpha: [0.12, 0.76],
+    idle: [0x6f79a8, 0xa896ba, 0xe6c592],
+    idleAlpha: [0.14, 0.76],
     changedAlpha: [0.6, 1],
     halo: 0.45,
     aggIdleAlpha: [0.05, 0.3],
@@ -125,7 +127,8 @@ function mixColor(range: readonly [number, number], r: number): number {
 
 /** The unchanged-file disc colour at recency `r` (0..1). */
 export function idleTint(theme: Theme, r: number): number {
-  return mixColor(TONES[theme].idle, r);
+  const [old, mid, fresh] = TONES[theme].idle;
+  return r < 0.5 ? mixColor([old, mid], r * 2) : mixColor([mid, fresh], r * 2 - 1);
 }
 
 // ---- what: marks -----------------------------------------------------------

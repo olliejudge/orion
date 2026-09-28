@@ -1,4 +1,4 @@
-import { blankVisual, type NodeVisual } from "../layout/encoding";
+import { blankVisual, isLive, type NodeVisual } from "../layout/encoding";
 import type { Circle } from "../layout/pack";
 import { nearestShown } from "../layout/shown";
 import type { Change } from "../store";
@@ -7,6 +7,9 @@ import { SETTLE_EPS, SPRING_OMEGA, isSettled, makeSpring, retarget, snapSpring, 
 
 export const DELETED_SCALE = 0.85;
 export const SHIMMER_MS = 600;
+export const PING_MS = 1100;
+/** A node that first appears already touched this recently (wall clock) pings too: a new file. */
+export const PING_RECENT_MS = 5000;
 
 export interface SceneNode {
   path: string;
@@ -21,6 +24,25 @@ export interface SceneNode {
   leaving: boolean;
   glide: Glide | null;
   shimmerAt: number | null;
+  pingAt: number | null;
+}
+
+/** How fresh a visual's work is: its newest known touch time, and how many worktrees are live on it. */
+function freshness(v: NodeVisual): { at: number; live: number } {
+  let at = -Infinity;
+  let live = 0;
+  for (const t of v.touches) {
+    if (t.touched !== undefined) at = Math.max(at, t.touched);
+    if (isLive(t)) live++;
+  }
+  return { at, live };
+}
+
+/** Whether `next` shows newer work than `prev`: a later touch, or another worktree going live. */
+function fresher(prev: NodeVisual, next: NodeVisual): boolean {
+  const a = freshness(prev);
+  const b = freshness(next);
+  return b.at > a.at || b.live > a.live;
 }
 
 function atRest(s: Spring): boolean {
@@ -38,6 +60,9 @@ function atRest(s: Spring): boolean {
  * - Deleted files shrink to DELETED_SCALE × r (drawn hollow).
  * - Paths in change.merged shimmer for SHIMMER_MS (or, when a path is not
  *   drawn, its nearest drawn ancestor other than the root: see nearestShown).
+ * - A node whose work gets fresher (see fresher), or that first appears
+ *   touched within PING_RECENT_MS of `wall`, pings for PING_MS. Nodes merely
+ *   revealed by zooming hold old work, so they stay quiet.
  */
 export class Scene {
   readonly nodes = new Map<string, SceneNode>();
@@ -51,12 +76,13 @@ export class Scene {
    * animating (so a stopped ticker must restart). The check is exact, not
    * epsilon-based, so it is correct at any zoom scale.
    */
-  update(layout: Map<string, Circle>, visuals: Map<string, NodeVisual>, change: Change, now: number): boolean {
+  update(layout: Map<string, Circle>, visuals: Map<string, NodeVisual>, change: Change, now: number, wall: number = Date.now()): boolean {
     const next = new Map<string, SceneNode>();
     for (const c of layout.values()) {
       const visual = visuals.get(c.path) ?? blankVisual(c.path);
       const r = c.isDir ? c.r : visual.state === "deleted" ? c.r * DELETED_SCALE : c.r;
       let n = this.nodes.get(c.path);
+      const ping = n ? !n.leaving && fresher(n.visual, visual) : freshness(visual).at >= wall - PING_RECENT_MS;
       if (n) {
         retarget(n.x, c.x);
         retarget(n.y, c.y);
@@ -76,6 +102,7 @@ export class Scene {
         }
       }
       n.visual = visual;
+      if (ping) n.pingAt = now;
       n.isDir = c.isDir;
       n.depth = c.depth;
       if (c.aggregate !== undefined) n.aggregate = c.aggregate;
@@ -100,7 +127,7 @@ export class Scene {
     }
 
     for (const n of this.nodes.values()) {
-      if (n.shimmerAt !== null || !atRest(n.x) || !atRest(n.y) || !atRest(n.r) || !atRest(n.alpha)) return true;
+      if (n.shimmerAt !== null || n.pingAt !== null || !atRest(n.x) || !atRest(n.y) || !atRest(n.r) || !atRest(n.alpha)) return true;
     }
     return false;
   }
@@ -131,11 +158,12 @@ export class Scene {
       const moving = !isSettled(n.x, eps) || !isSettled(n.y, eps) || !isSettled(n.r, eps) || !isSettled(n.alpha);
       if (n.glide && !moving) n.glide = null;
       if (n.shimmerAt !== null && now - n.shimmerAt > SHIMMER_MS) n.shimmerAt = null;
+      if (n.pingAt !== null && now - n.pingAt > PING_MS) n.pingAt = null;
       if (n.leaving && !moving) {
         this.nodes.delete(path);
         continue;
       }
-      if (moving || n.shimmerAt !== null) busy = true;
+      if (moving || n.shimmerAt !== null || n.pingAt !== null) busy = true;
     }
     return busy;
   }
@@ -154,6 +182,13 @@ export class Scene {
     return p > 1 ? null : Math.max(0, p);
   }
 
+  /** Ping progress 0..1, or null when not pinging. */
+  ping(n: SceneNode, now: number): number | null {
+    if (n.pingAt === null) return null;
+    const p = (now - n.pingAt) / PING_MS;
+    return p > 1 ? null : Math.max(0, p);
+  }
+
   #make(c: Circle, visual: NodeVisual, x: number, y: number, r: number): SceneNode {
     return {
       path: c.path,
@@ -167,6 +202,7 @@ export class Scene {
       leaving: false,
       glide: null,
       shimmerAt: null,
+      pingAt: null,
     };
   }
 }
