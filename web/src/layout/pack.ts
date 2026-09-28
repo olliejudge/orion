@@ -9,6 +9,21 @@ export interface Circle {
   depth: number;
   isDir: boolean;
   aggregate?: number; // collapsed dir: number of descendant files
+  /**
+   * Rectangle views (tree map, partition): the node's box in layout px. x, y
+   * are then its centre and r half its shorter side, so circle-based helpers
+   * (navigation, labels, tooltips) keep working unchanged.
+   */
+  box?: Box;
+  /** Rectangle views: an ancestor of the folder in view, kept so navigation knows the path but not drawn. */
+  hidden?: true;
+}
+
+export interface Box {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
 }
 
 export const MIN_FILE_R = 1.5;

@@ -311,6 +311,38 @@ test("N toggles Night and Vision and remembers the choice", async ({ page }) => 
   await expect.poll(() => theme(page)).toBe("vision");
 });
 
+test("V cycles the tree map and partition views, which draw, zoom and are remembered", async ({ page }) => {
+  mkdirSync(SHOTS, { recursive: true });
+  await openOrion(page);
+  const view = page.getByTestId("view-switch");
+  const crumbs = page.getByTestId("breadcrumbs").locator("ol").first().getByRole("button");
+  await expect(view.getByRole("radio", { name: "Bubbles" })).toHaveAttribute("aria-checked", "true");
+
+  await page.keyboard.press("v");
+  await expect(view.getByRole("radio", { name: "Tree map" })).toHaveAttribute("aria-checked", "true");
+  await expectLit(page, "tree map", 120, 0.005);
+  await page.waitForTimeout(800); // let the boxes settle
+  await page.screenshot({ path: path.join(SHOTS, "treemap.png") });
+  await page.keyboard.press("+");
+  await expect(crumbs).not.toHaveCount(1);
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: path.join(SHOTS, "treemap-zoomed.png") });
+  await page.keyboard.press("0");
+  await expect(crumbs).toHaveCount(1);
+
+  await page.keyboard.press("v");
+  await expect(view.getByRole("radio", { name: "Partition" })).toHaveAttribute("aria-checked", "true");
+  await expectLit(page, "partition", 120, 0.005);
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: path.join(SHOTS, "partition.png") });
+
+  await page.reload();
+  await expect(page.getByTestId("view-switch").getByRole("radio", { name: "Partition" })).toHaveAttribute("aria-checked", "true");
+  await page.getByTestId("view-switch").getByRole("radio", { name: "Bubbles" }).click();
+  await expect(page.getByTestId("view-switch").getByRole("radio", { name: "Bubbles" })).toHaveAttribute("aria-checked", "true");
+  await expectLit(page, "bubbles again", 120, 0.005);
+});
+
 test("+ zooms in a level, 0 returns home, and the breadcrumbs (and the home button) reflect it", async ({ page }) => {
   await openOrion(page);
   const crumbs = page.getByTestId("breadcrumbs");

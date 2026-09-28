@@ -1,3 +1,4 @@
+import type { MapView } from "./view";
 import { Application, Container, Graphics, Sprite } from "pixi.js";
 import type { NodeVisual } from "../layout/encoding";
 import type { Circle } from "../layout/pack";
@@ -126,7 +127,7 @@ interface FrameCtx {
  *
  * Visual behaviour is verified by the Playwright smoke test (Task 14).
  */
-export class MapRenderer {
+export class MapRenderer implements MapView {
   #host: HTMLElement;
   #app: Application | null = null;
   #bank: TextureBank | null = null;

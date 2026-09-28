@@ -28,7 +28,7 @@ export interface SceneNode {
 }
 
 /** How fresh a visual's work is: its newest known touch time, and how many worktrees are live on it. */
-function freshness(v: NodeVisual): { at: number; live: number } {
+export function freshness(v: NodeVisual): { at: number; live: number } {
   let at = -Infinity;
   let live = 0;
   for (const t of v.touches) {
@@ -39,7 +39,7 @@ function freshness(v: NodeVisual): { at: number; live: number } {
 }
 
 /** Whether `next` shows newer work than `prev`: a later touch, or another worktree going live. */
-function fresher(prev: NodeVisual, next: NodeVisual): boolean {
+export function fresher(prev: NodeVisual, next: NodeVisual): boolean {
   const a = freshness(prev);
   const b = freshness(next);
   return b.at > a.at || b.live > a.live;

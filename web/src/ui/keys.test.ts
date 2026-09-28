@@ -8,6 +8,8 @@ describe("keyAction", () => {
   it("maps N, F and Esc (either case)", () => {
     expect(keyAction(ev("n"))).toBe("theme");
     expect(keyAction(ev("N"))).toBe("theme");
+    expect(keyAction(ev("v"))).toBe("view");
+    expect(keyAction(ev("V"))).toBe("view");
     expect(keyAction(ev("f"))).toBe("fullscreen");
     expect(keyAction(ev("Escape"))).toBe("zoomOut");
     expect(keyAction(ev("x"))).toBeNull();

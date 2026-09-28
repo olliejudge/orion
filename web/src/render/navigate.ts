@@ -20,6 +20,10 @@ export interface NavHost {
   click(ev: MouseEvent): void;
   /** A double click whose presses were both clicks, not drags. */
   doubleClick(): void;
+  /** Overrides the bubbles' wheel zoom (zoomAround) with the host's own camera rules. */
+  zoomAround?(cur: Camera, aimed: Camera, factor: number, sx: number, sy: number): { target: Camera; path: CameraPath | null };
+  /** Overrides the bubbles' drag (panBy) with the host's own camera rules. */
+  panBy?(start: Camera, dx: number, dy: number): Camera;
 }
 
 /**
@@ -85,7 +89,11 @@ export class MapNavigator {
     const r = this.#el.getBoundingClientRect();
     const { width, height } = this.#host.size();
     const h = this.#host;
-    const { target, path } = zoomAround(h.camera(), h.aimed(), factor, ev.clientX - r.left, ev.clientY - r.top, width, height, h.root(), h.free(), h.layout());
+    const sx = ev.clientX - r.left;
+    const sy = ev.clientY - r.top;
+    const { target, path } = h.zoomAround
+      ? h.zoomAround(h.camera(), h.aimed(), factor, sx, sy)
+      : zoomAround(h.camera(), h.aimed(), factor, sx, sy, width, height, h.root(), h.free(), h.layout());
     h.view(target, path, false);
   };
 
@@ -118,8 +126,9 @@ export class MapNavigator {
       this.#dragging = true;
       this.#el.style.cursor = "grabbing";
     }
-    const { width, height } = this.#host.size();
-    this.#host.view(panBy(d.start, dx, dy, this.#host.root(), width, height, this.#host.free()), null, true);
+    const h = this.#host;
+    const { width, height } = h.size();
+    h.view(h.panBy ? h.panBy(d.start, dx, dy) : panBy(d.start, dx, dy, h.root(), width, height, h.free()), null, true);
   };
 
   /** pointerup, pointercancel or lostpointercapture. */

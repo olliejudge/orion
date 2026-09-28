@@ -3,6 +3,7 @@ import { makeState, wt } from "../layout/fixtures";
 import type { Circle } from "../layout/pack";
 import type { Activity } from "../protocol";
 import {
+  rectInsets,
   ACTIVE_WINDOW_MS,
   activityRows,
   crumbsSize,
@@ -358,6 +359,23 @@ describe("dirFilterTreeMaxHeight", () => {
 
   it("never goes negative on a short window", () => {
     expect(dirFilterTreeMaxHeight(300, legend, 190)).toBe(0);
+  });
+});
+
+describe("rectInsets", () => {
+  const legend = { width: 340, height: 186 };
+  const key = { width: 270, height: 460 };
+
+  it("keeps rectangle views off the legend and key: beside them, or between them if that leaves more room", () => {
+    // Tall key: stepping right of both panels leaves more area than squeezing between them.
+    expect(rectInsets("vision", 1440, 900, legend, key)).toEqual({ top: 48, right: 320, bottom: 48, left: 16 + 340 + 16 });
+    // Short panels on a tall screen: between them loses less.
+    expect(rectInsets("night", 1000, 1400, legend, { width: 270, height: 120 })).toEqual({ top: 16 + 186 + 16, right: 48, bottom: 16 + 120 + 16, left: 48 });
+  });
+
+  it("matches mapInsets with no panels, and on narrow screens", () => {
+    expect(rectInsets("vision", 1440, 900)).toEqual(mapInsets("vision", 1440, 900));
+    expect(rectInsets("vision", 720, 1000, legend, key)).toEqual(mapInsets("vision", 720, 1000));
   });
 });
 
