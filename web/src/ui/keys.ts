@@ -1,6 +1,6 @@
-export type KeyAction = "theme" | "fullscreen" | "zoomOut" | "zoomIn" | "home" | "back" | "forward";
+export type KeyAction = "theme" | "view" | "fullscreen" | "zoomOut" | "zoomIn" | "home" | "back" | "forward";
 
-/** N toggles Night/Vision, F toggles fullscreen, Esc/Backspace/- zoom out one level, +/= zoom in
+/** N toggles Night/Vision, V cycles the map view, F toggles fullscreen, Esc/Backspace/- zoom out one level, +/= zoom in
  * one level, 0/Home go home, Alt+Left/Right retrace the navigation history. `/` search is Phase 2,
  * left unbound here on purpose. A held key does not repeat, so holding any of these cannot strobe the page. */
 export function keyAction(e: KeyboardEvent): KeyAction | null {
@@ -15,6 +15,9 @@ export function keyAction(e: KeyboardEvent): KeyAction | null {
     case "n":
     case "N":
       return "theme";
+    case "v":
+    case "V":
+      return "view";
     case "f":
     case "F":
       return "fullscreen";

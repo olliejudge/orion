@@ -2,15 +2,18 @@
   import { DELETED_RIM_W_PX, GLYPH_ARM, GLYPH_STROKE, type Theme } from "../render/style";
   import { SWATCH_H, SWATCH_W, countSwatch, hexOf, keyEntries, loadKeyOpen, saveKeyOpen, type KeyMark } from "./encodingKey";
   import type { Footprint } from "./models";
+  import type { ViewKind } from "../render/view";
 
   interface Props {
     theme: Theme;
+    /** Circles are folders in the bubble view; boxes are in the tree map and partition. */
+    view?: ViewKind;
     /** Reports the panel's size whenever it changes (the map keeps clear of it). */
     onFootprint?: (size: Footprint) => void;
     /** Where the open/closed choice is remembered (defaults to localStorage). */
     storage?: Storage | null;
   }
-  let { theme, onFootprint, storage }: Props = $props();
+  let { theme, view = "bubbles", onFootprint, storage }: Props = $props();
 
   const uid = $props.id();
   // Read once, on mount: afterwards `open` is the panel's own state. An
@@ -161,7 +164,7 @@
         <span>{counted.label}</span>
       </li>
     </ul>
-    <p class="note">Circles are folders. Colours are worktrees; a split ring means several. Brightness is recency.</p>
+    <p class="note">{view === "bubbles" ? "Circles" : "Boxes"} are folders, sized by the files in them. Colours are worktrees; a split ring means several. Brightness is recency.</p>
     <p class="note">Click: in one level · Double-click: straight in · Scroll: zoom · Esc: out · 0: home</p>
   </div>
 </section>

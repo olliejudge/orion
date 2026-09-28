@@ -11,6 +11,9 @@
   import type { Snapshot, WorktreeId } from "../protocol";
   import { labelNames } from "../render/geometry";
   import { MapRenderer } from "../render/MapRenderer";
+  import { RectRenderer } from "../render/RectRenderer";
+  import type { MapView, ViewKind } from "../render/view";
+  import { computeRectFrame, TREEMAP_HEADER_PX } from "../layout/rects";
   import { SHIMMER_MS } from "../render/scene";
   import { RepoStore, type Change, type RepoState } from "../store";
   import Activity from "./Activity.svelte";
@@ -38,6 +41,8 @@
   import { setNavigateHandler } from "./navigate";
   import { applyTheme, loadTheme, saveTheme, type Theme } from "./theme";
   import Tooltip from "./Tooltip.svelte";
+  import { loadView, nextView, saveView } from "./view";
+  import ViewSwitch from "./ViewSwitch.svelte";
 
   const DIRFILTER_GAP = 8; // gap between the map key and the filter panel stacked above it
 
@@ -47,6 +52,8 @@
   let repo: RepoState | null = $state.raw(null);
   let status: ConnectionStatus = $state("connecting");
   let theme: Theme = $state(loadTheme());
+  // Bubbles zoom with a camera; the rectangle views re-lay out the folder in view to fill the map.
+  let view: ViewKind = $state(loadView());
   let isolated: WorktreeId | null = $state(null);
   let now = $state(Date.now());
   let tip: { info: TooltipInfo; x: number; y: number } | null = $state.raw(null);
@@ -81,7 +88,7 @@
   }
 
   let mapEl: HTMLDivElement;
-  let renderer: MapRenderer | null = null;
+  let renderer: MapView | null = null;
   let layout: Map<string, Circle> = $state.raw(new Map());
   // Folder names as the map shows them: the navigation levels (see nav.ts).
   let labels: Map<string, string> = $state.raw(new Map());
@@ -155,13 +162,21 @@
     }
   });
 
+  /** The current view's frame for state `s` in a w×h map. */
+  function frameFor(s: RepoState, w: number, h: number): ReturnType<typeof computeFrame> {
+    const insets = mapInsets(theme, w, h, legendBox, bottomLeftBox);
+    return view === "bubbles"
+      ? computeFrame(s, w, h, scale, insets, linger.paths(), excluded)
+      : computeRectFrame(s, view, zoomPath, w, h, insets, linger.paths(), excluded);
+  }
+
   function relayout(change: Change): void {
     const s = store.state;
     if (!s || !renderer) return;
     const w = mapEl.clientWidth;
     const h = mapEl.clientHeight;
     if (w <= 0 || h <= 0) return; // nothing to lay out into (d3's pack throws on an empty rect)
-    const f = computeFrame(s, w, h, scale, mapInsets(theme, w, h, legendBox, bottomLeftBox), linger.paths(), excluded);
+    const f = frameFor(s, w, h);
     layout = f.layout;
     labels = labelNames(f.layout);
     pillX = (f.free.x0 + f.free.x1) / 2;
@@ -210,7 +225,7 @@
     const w = mapEl?.clientWidth ?? 0;
     const h = mapEl?.clientHeight ?? 0;
     if (!s || w <= 0 || h <= 0) return layout;
-    return computeFrame(s, w, h, scale, mapInsets(theme, w, h, legendBox, bottomLeftBox), linger.paths(), excluded).layout;
+    return frameFor(s, w, h).layout;
   }
 
   // A file inside a collapsed folder is highlighted as the folder's aggregate.
@@ -253,6 +268,16 @@
   function zoom(path: string): void {
     zoomPath = path;
     renderer?.zoomTo(path);
+    // The rectangle views have no camera: the folder in view is laid out afresh to fill the map.
+    if (view !== "bubbles") queue.request(NO_CHANGE);
+  }
+
+  function setView(v: ViewKind): void {
+    if (v === view) return;
+    view = v;
+    saveView(v);
+    scale = 1;
+    startRenderer();
   }
 
   /** A discrete navigation (click, double-click, a breadcrumb, Esc, an Activity row, navigateTo): zooms and pushes a history entry. */
@@ -269,6 +294,7 @@
   function onKey(e: KeyboardEvent): void {
     const action = keyAction(e);
     if (action === "theme") theme = theme === "vision" ? "night" : "vision";
+    else if (action === "view") setView(nextView(view));
     else if (action === "zoomOut") {
       // Esc backs out one step: first the isolation, then the zoom.
       if (isolated !== null) isolated = null;
@@ -283,8 +309,65 @@
     else if (action === "forward") history.forward();
   }
 
+  let rendererGen = 0; // bumped per renderer, so a slow init of a replaced one is dropped
+
+  /** (Re)creates the renderer for the current view, replacing any running one. */
+  function startRenderer(): void {
+    const gen = ++rendererGen;
+    const old = renderer;
+    renderer = null;
+    old?.destroy();
+    mapEl.replaceChildren();
+    const r: MapView = view === "bubbles" ? new MapRenderer(mapEl) : new RectRenderer(mapEl, view, { headerPx: TREEMAP_HEADER_PX });
+    r.init().then(
+      () => {
+        if (gen !== rendererGen) {
+          r.destroy();
+          return;
+        }
+        renderer = r;
+        noWebGL = false;
+        r.setTheme(theme);
+        r.isolate(isolated);
+        r.onZoom((k) => {
+          scale = k;
+          // Culling follows the camera without a frame's lag.
+          queue.request(NO_CHANGE);
+          queue.flush();
+        });
+        r.onClick((path) => {
+          beforeClick = zoomPath;
+          goTo(clickTarget(path, layout, labels, zoomPath));
+        });
+        r.onDoubleClick((path) => goTo(doubleClickTarget(path, layout, labels, beforeClick)));
+        // Free camera moves (wheel zoom, drag) update the hash in place, debounced (see location.ts).
+        r.onFocus((path) => {
+          zoomPath = path;
+          locationSync?.replace(path);
+        });
+        r.onHover((path, at) => {
+          mapHover = path === null ? null : { path, at };
+          tip = hoverTip(repo, layout, mapHover, zoomPath, excluded);
+        });
+        queue.request({ kind: "snapshot", merged: [] });
+        if (zoomPath !== "") r.zoomTo(zoomPath);
+        onRendererReady?.();
+        onRendererReady = null;
+      },
+      (err: unknown) => {
+        if (gen !== rendererGen) return;
+        // Pixi found no usable WebGL, WebGPU or canvas context (or failed to
+        // start one): say so instead of leaving a blank page. The panels still work.
+        console.error("Orion: could not start the map renderer", err);
+        noWebGL = true;
+        onRendererReady?.();
+        onRendererReady = null;
+      },
+    );
+  }
+  let onRendererReady: (() => void) | null = null;
+
   onMount(() => {
-    const r = new MapRenderer(mapEl);
     let disposed = false;
     const off = store.subscribe(onChange);
     const tick = setInterval(() => (now = Date.now()), 5000);
@@ -343,43 +426,10 @@
         });
     };
 
-    r.init().then(
-      () => {
-        if (disposed) return;
-        renderer = r;
-        r.setTheme(theme);
-        r.isolate(isolated);
-        r.onZoom((k) => {
-          scale = k;
-          // Culling follows the camera without a frame's lag.
-          queue.request(NO_CHANGE);
-          queue.flush();
-        });
-        r.onClick((path) => {
-          beforeClick = zoomPath;
-          goTo(clickTarget(path, layout, labels, zoomPath));
-        });
-        r.onDoubleClick((path) => goTo(doubleClickTarget(path, layout, labels, beforeClick)));
-        // Free camera moves (wheel zoom, drag) update the hash in place, debounced (see location.ts).
-        r.onFocus((path) => {
-          zoomPath = path;
-          locationSync?.replace(path);
-        });
-        r.onHover((path, at) => {
-          mapHover = path === null ? null : { path, at };
-          tip = hoverTip(repo, layout, mapHover, zoomPath, excluded);
-        });
-        queue.request({ kind: "snapshot", merged: [] });
-        start();
-      },
-      (err: unknown) => {
-        // Pixi found no usable WebGL, WebGPU or canvas context (or failed to
-        // start one): say so instead of leaving a blank page. The panels still work.
-        console.error("Orion: could not start the map renderer", err);
-        noWebGL = true;
-        start();
-      },
-    );
+    onRendererReady = () => {
+      if (!disposed) start();
+    };
+    startRenderer();
     window.addEventListener("resize", onResize);
 
     return () => {
@@ -394,7 +444,8 @@
       offNavigate();
       off();
       stop();
-      r.destroy();
+      rendererGen++;
+      renderer?.destroy();
       renderer = null;
     };
   });
@@ -432,7 +483,10 @@
     treeMaxHeight={dirFilterTreeMax} />
 {/if}
 {#if !noWebGL}
-  <MapKey {theme} onFootprint={(b) => (keyBox = b)} />
+  <MapKey {theme} {view} onFootprint={(b) => (keyBox = b)} />
+{/if}
+{#if !noWebGL}
+  <ViewSwitch {view} centerX={pillX} onSelect={setView} />
 {/if}
 <LivePill {status} centerX={pillX} />
 {#if repo}
