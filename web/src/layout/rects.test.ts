@@ -62,7 +62,7 @@ describe("computeRectFrame", () => {
       expect(f.layout.has("pkg0")).toBe(false);
       const chain = crumbs("pkg1/sub/deep", f.layout, labelNames(f.layout), "repo");
       expect(chain[0]).toEqual({ path: "", label: "repo" });
-      expect(chain[chain.length - 1]!.path).toBe("pkg1/sub/deep");
+      expect(chain.map((c) => c.path)).toEqual(["", "pkg1", "pkg1/sub", "pkg1/sub/deep"]); // hidden ancestors are levels of their own
       expect(crumbs("pkg1/sub/deep", f.layout, undefined, "repo").map((c) => c.path)).toEqual(["", "pkg1", "pkg1/sub", "pkg1/sub/deep"]);
     });
   }

@@ -229,7 +229,8 @@ export function labelNames(layout: Map<string, Circle>): Map<string, string> {
   const carrier = (path: string): string | undefined => {
     const k = kids.get(path);
     const self = layout.get(path);
-    if (!k || !self) return undefined;
+    // A hidden ancestor (rectangle views) is a level of its own: it never hands its name down.
+    if (!k || !self || self.hidden) return undefined;
     const dirs = k.filter((c) => c.isDir && c.aggregate === undefined);
     if (k.length === 1 && dirs.length === 1) return dirs[0]!.path;
     const big = dirs.reduce<Circle | undefined>((m, c) => (m === undefined || c.r > m.r ? c : m), undefined);
