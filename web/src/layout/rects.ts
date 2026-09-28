@@ -24,7 +24,7 @@ export const TREEMAP_MIN_DIR_H = 24;
 export const TREEMAP_MIN_FILE_PX = 2;
 /** Partition: the minimum row height; rows past the cap fold into aggregates. */
 export const PARTITION_ROW_PX = 26;
-/** Partition: the focus row's height when the focus holds no files directly (the row carries only its name). */
+/** Partition: the focus row's height (it only ever carries the name: files directly in the focus sit in the next row). */
 export const PARTITION_FOCUS_ROW_PX = 26;
 /** Partition: a cell narrower than this is dropped with its subtree (unless touched or lingering). */
 export const PARTITION_MIN_W = 1.5;
@@ -231,10 +231,9 @@ function layoutPartition(focus: TreeNode, free: FreeArea, baseDepth: number, kee
     .sort(byValueThenName);
   const laid = partition<TreeNode>().size([fw, fh]).round(false)(h);
 
-  // Rows are equal, except that a focus with no files directly in it gets a
-  // short top row (it only carries the name) and the rest share what's left.
+  // The focus gets a short top row (it only carries the name); the rest share what's left equally.
   const rows = laid.height + 1;
-  const shortTop = rows > 1 && fh / rows > PARTITION_FOCUS_ROW_PX && !(focus.children ?? []).some((k) => !k.isDir);
+  const shortTop = rows > 1 && fh / rows > PARTITION_FOCUS_ROW_PX;
   const rowTop = (d: number): number =>
     !shortTop ? (d * fh) / rows : d === 0 ? 0 : PARTITION_FOCUS_ROW_PX + ((d - 1) * (fh - PARTITION_FOCUS_ROW_PX)) / (rows - 1);
 

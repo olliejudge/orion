@@ -126,11 +126,11 @@ describe("partition", () => {
     expect(cap.box!.x1 - cap.box!.x0).toBeCloseTo(((a.x1 - a.x0) * 2) / 3);
   });
 
-  it("keeps rows equal when the focus holds files directly", () => {
+  it("keeps the focus row short even when the focus holds files directly (they sit in the next row)", () => {
     const f = computeRectFrame(makeState(deep), "partition", "", 600, 800);
-    const row = 800 / 9; // nine rows: the root, then eight levels down to x.ts
-    expect(f.layout.get("")!.box!.y1).toBeCloseTo(row);
-    expect(f.layout.get("top.ts")!.box).toMatchObject({ y0: expect.closeTo(row), y1: expect.closeTo(2 * row) });
+    const row = (800 - PARTITION_FOCUS_ROW_PX) / 8; // eight levels below the root, down to x.ts
+    expect(f.layout.get("")!.box!.y1).toBeCloseTo(PARTITION_FOCUS_ROW_PX);
+    expect(f.layout.get("top.ts")!.box).toMatchObject({ y0: expect.closeTo(PARTITION_FOCUS_ROW_PX), y1: expect.closeTo(PARTITION_FOCUS_ROW_PX + row) });
   });
 
   it("gives children at most their parent's width", () => {
