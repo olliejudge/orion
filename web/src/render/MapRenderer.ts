@@ -626,7 +626,7 @@ export class MapRenderer implements MapView {
       if (body) {
         v.body.tint = body.tint;
         // A star never fades to a smudge: even the oldest stays visible (still dimmer the older it is).
-        v.body.alpha = (0.25 + 0.75 * body.alpha) * (twinkle ? 0.75 + 0.25 * twinkle.alpha : 1);
+        v.body.alpha = (0.45 + 0.55 * body.alpha) * (twinkle ? 0.75 + 0.25 * twinkle.alpha : 1);
         v.body.width = v.body.height = (R / STAR_TIP_FRAC) * 2 * (twinkle ? twinkle.scale : 1);
       }
     }

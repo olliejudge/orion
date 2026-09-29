@@ -65,7 +65,7 @@ async function openOrion(page: Page, url = env("ORION_URL")): Promise<void> {
  * page (createImageBitmap) so no image library is needed.
  */
 async function litFraction(page: Page, threshold: number): Promise<number> {
-  const png = await page.getByTestId("map").screenshot({ mask: MAP_MASK(page), maskColor: "#000000", animations: "disabled", scale: "css" });
+  const png = await mapShot(page);
   return page.evaluate(
     async ({ b64, threshold }) => {
       const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
@@ -90,6 +90,46 @@ async function litFraction(page: Page, threshold: number): Promise<number> {
       return lit / inside;
     },
     { b64: png.toString("base64"), threshold },
+  );
+}
+
+/** The map as a PNG at CSS scale, with the chrome panels masked black. */
+async function mapShot(page: Page): Promise<Buffer> {
+  return page.getByTestId("map").screenshot({ mask: MAP_MASK(page), maskColor: "#000000", animations: "disabled", scale: "css" });
+}
+
+/**
+ * How much two map shots differ: of the pixels lit (brightest channel above
+ * `threshold`) in either, the fraction lit in only one of them. 0 = the same
+ * stars in the same places, 1 = nothing in common. Unlike a lit-pixel count,
+ * this notices a re-layout that moves things without changing how much is lit.
+ */
+async function litChange(page: Page, a: Buffer, b: Buffer, threshold: number): Promise<number> {
+  return page.evaluate(
+    async ({ a64, b64, threshold }) => {
+      const lit = async (b64s: string): Promise<{ w: number; h: number; on: Uint8Array }> => {
+        const bytes = Uint8Array.from(atob(b64s), (c) => c.charCodeAt(0));
+        const bmp = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+        const canvas = new OffscreenCanvas(bmp.width, bmp.height);
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("no 2d context");
+        ctx.drawImage(bmp, 0, 0);
+        const { data } = ctx.getImageData(0, 0, bmp.width, bmp.height);
+        const on = new Uint8Array(bmp.width * bmp.height);
+        for (let i = 0; i < on.length; i++) on[i] = Math.max(data[i * 4], data[i * 4 + 1], data[i * 4 + 2]) > threshold ? 1 : 0;
+        return { w: bmp.width, h: bmp.height, on };
+      };
+      const [x, y] = await Promise.all([lit(a64), lit(b64)]);
+      if (x.w !== y.w || x.h !== y.h) return 1;
+      let either = 0;
+      let one = 0;
+      for (let i = 0; i < x.on.length; i++) {
+        if (x.on[i] || y.on[i]) either++;
+        if (x.on[i] !== y.on[i]) one++;
+      }
+      return either === 0 ? 0 : one / either;
+    },
+    { a64: a.toString("base64"), b64: b.toString("base64"), threshold },
   );
 }
 
@@ -227,10 +267,13 @@ test("unticking a folder changes the map's bubbles; Show all restores them", asy
   // "how much of the disc is drawn", not a faithful lit-pixel count, and it
   // must survive both a lively Vision map and a near-black Night one.
   const threshold = 40;
-  const baseline = await litFraction(page, threshold);
+  await expectLit(page, "before hiding", 120, 0.002);
 
   const panel = page.getByTestId("dir-filter");
   await panel.getByRole("button", { name: /Folders/ }).click();
+  // The open panel takes room from the map, which re-lays out: compare against the map with it open.
+  await page.waitForTimeout(1_500);
+  const baseline = await mapShot(page);
   // "web" is the demo's biggest top-level area (see scripts/demo/gen.go's
   // `areas`), so hiding it makes a large, reliably detectable change; which
   // way the fraction moves depends on how the rest re-packs, so the test
@@ -241,16 +284,17 @@ test("unticking a folder changes the map's bubbles; Show all restores them", asy
   await expect(checkbox).not.toBeChecked();
   await expect(panel.getByText(/^\d+ hidden$/)).toBeVisible();
   await page.waitForTimeout(1_500); // let the layout spring settle
-  const hidden = await litFraction(page, threshold);
-  expect(Math.abs(hidden - baseline), "hiding the map's biggest area should visibly change it").toBeGreaterThan(0.02);
+  // The rest re-packs to fill the space, so compare where things are lit, not how much.
+  const hiddenChange = await litChange(page, baseline, await mapShot(page), threshold);
+  expect(hiddenChange, "hiding the map's biggest area should visibly change it").toBeGreaterThan(0.05);
 
   await panel.getByRole("button", { name: "Show all" }).click();
   await expect(checkbox).toBeChecked();
   await page.waitForTimeout(1_500);
-  const restored = await litFraction(page, threshold);
   // Close to the original, allowing for the demo's own simulated activity
   // (new commits, edits) drifting file sizes a little in the meantime.
-  expect(Math.abs(restored - baseline), "Show all should bring the map back close to how it looked before").toBeLessThan(0.02);
+  const restoredChange = await litChange(page, baseline, await mapShot(page), threshold);
+  expect(restoredChange, "Show all should bring the map back close to how it looked before").toBeLessThan(hiddenChange / 2);
 });
 
 /** Axis-aligned overlap test for two Playwright bounding boxes. */
