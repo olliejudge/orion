@@ -131,24 +131,6 @@ export function idleTint(theme: Theme, r: number): number {
   return r < 0.5 ? mixColor([old, mid], r * 2) : mixColor([mid, fresh], r * 2 - 1);
 }
 
-// ---- stars ------------------------------------------------------------------
-
-/**
- * A file's star core radius on screen for a packed circle of radius R: half
- * the circle for small files, then growing only with √R, so big files read as
- * brighter, larger stars rather than filling their whole circle. The rest of
- * the circle is dark sky (and the star's glow), which keeps the map legible.
- */
-export function starCoreR(R: number): number {
-  return Math.max(1.2, Math.min(R * 0.5, 3 + Math.sqrt(R) * 1.1));
-}
-
-/** A folder's nebula: its tint and alpha (plain folders), by theme and depth. */
-export function nebulaLook(theme: Theme, depth: number): { color: number; alpha: number } {
-  if (depth === 0) return { color: theme === "night" ? 0x5a5f8c : 0x6d64b8, alpha: theme === "night" ? 0.05 : 0.07 };
-  return { color: theme === "night" ? 0x6c72a6 : 0x8a7fd6, alpha: theme === "night" ? 0.07 : 0.1 };
-}
-
 // ---- what: marks -----------------------------------------------------------
 
 export type GlyphShape = "plus" | "cross";
