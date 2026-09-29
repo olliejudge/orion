@@ -4,7 +4,7 @@ import type { NodeVisual } from "../layout/encoding";
 import type { Circle } from "../layout/pack";
 import type { WorktreeId } from "../protocol";
 import type { Change } from "../store";
-import { WHOLE, clipFor, dashed, outline, solidArc, type Clip } from "./draw";
+import { WHOLE, clipFor, dashed, disk, outline, solidArc, type Clip } from "./draw";
 import {
   fitCamera,
   labelNames,
@@ -178,13 +178,20 @@ export class MapRenderer implements MapView {
   #reportedK = 1; // last scale sent to onZoom (culling)
   #firstPick: string | null = null; // the path under a double click's first click
   #idleFrames = 0;
+  readonly #stars: boolean; // the star-map look (see the constructor)
   #breathing = false; // a breathing glow was drawn this frame
   #lastHover: string | null = null;
   #motion: Motion = motionPolicy(false);
   #stopMotionWatch = (): void => {};
 
-  constructor(host: HTMLElement) {
+  /**
+   * `look` "bubbles" draws files as flat discs filling their circles and
+   * folders as outlined circles; "stars" draws files as four-pointed stars
+   * sized by file size and folders as bare clusters (only their name).
+   */
+  constructor(host: HTMLElement, look: "bubbles" | "stars" = "bubbles") {
     this.#host = host;
+    this.#stars = look === "stars";
     const { width, height } = this.#size();
     this.#cam = this.#snapped({ cx: width / 2, cy: height / 2, k: 1 });
   }
@@ -523,7 +530,7 @@ export class MapRenderer implements MapView {
     let body: Sprite | null = null;
     let halo: Sprite | null = null;
     let cloud: Sprite | null = null;
-    if (n.isDir && n.aggregate !== undefined) {
+    if (this.#stars && n.isDir && n.aggregate !== undefined) {
       cloud = new Sprite(bank.nebula);
       cloud.anchor.set(0.5);
       root.addChild(cloud);
@@ -535,7 +542,7 @@ export class MapRenderer implements MapView {
       root.addChild(halo);
     }
     if (!n.isDir) {
-      body = new Sprite(bank.star);
+      body = new Sprite(this.#stars ? bank.star : bank.disc);
       body.anchor.set(0.5);
       root.addChild(body);
     }
@@ -607,9 +614,9 @@ export class MapRenderer implements MapView {
     const agg = n.aggregate !== undefined ? (this.#look(vis, true) as AggregateLook) : null;
     // A file is a four-pointed star spanning its packed circle, so its size is its file size;
     // its marks (rings, glow, + and ×) hug the star's bright middle.
-    const Rs = n.isDir ? R : R * STAR_MARK_FRAC;
+    const Rs = n.isDir || !this.#stars ? R : R * STAR_MARK_FRAC;
     // Live work twinkles: its star swells and brightens with the glow's breath.
-    const twinkle = look?.halo ? f.breath : null;
+    const twinkle = this.#stars && look?.halo ? f.breath : null;
 
     // Folders are drawn as nothing but their stars and name (a star cluster); a collapsed
     // one is a soft haze, in its worktree's colour when something inside it changed, under its file count.
@@ -626,8 +633,13 @@ export class MapRenderer implements MapView {
       if (body) {
         v.body.tint = body.tint;
         // A star never fades to a smudge: even the oldest stays visible (still dimmer the older it is).
-        v.body.alpha = (0.45 + 0.55 * body.alpha) * (twinkle ? 0.75 + 0.25 * twinkle.alpha : 1);
-        v.body.width = v.body.height = (R / STAR_TIP_FRAC) * 2 * (twinkle ? twinkle.scale : 1);
+        if (this.#stars) {
+          v.body.alpha = (0.45 + 0.55 * body.alpha) * (twinkle ? 0.75 + 0.25 * twinkle.alpha : 1);
+          v.body.width = v.body.height = (R / STAR_TIP_FRAC) * 2 * (twinkle ? twinkle.scale : 1);
+        } else {
+          v.body.alpha = body.alpha;
+          v.body.width = v.body.height = R * 2;
+        }
       }
     }
 
@@ -653,15 +665,16 @@ export class MapRenderer implements MapView {
     if (gKey !== v.gKey) {
       v.gKey = gKey;
       v.g.clear();
-      if (n.isDir) this.#drawDir(v.g, n, R, clip);
+      if (n.isDir) this.#drawDir(v.g, n, R, clip, sx, sy, f, gap);
       else if (look) this.#drawFileMarks(v.g, look, Rs, clip);
     }
     v.g.alpha = look ? look.marks : 1;
     if (look) this.#drawGlyph(v, look, Rs, f);
 
     if (n.aggregate !== undefined) this.#drawCount(v, n, n.aggregate, R, f);
-    this.#drawShimmer(v, n, n.isDir ? R : Rs * 1.6, f);
-    this.#drawPing(v, n, n.isDir ? R : Rs * 1.5, f, look ? (look.halo?.color ?? look.body?.tint ?? look.outline?.color) : (agg?.halo?.color ?? agg?.fill.color));
+    const star = this.#stars && !n.isDir;
+    this.#drawShimmer(v, n, star ? Rs * 1.6 : R, f);
+    this.#drawPing(v, n, star ? Rs * 1.5 : R, f, look ? (look.halo?.color ?? look.body?.tint ?? look.outline?.color) : (agg?.halo?.color ?? agg?.fill.color));
   }
 
   /** A fresh touch: a soft ring in the worktree's colour travelling out from the bubble. */
@@ -706,13 +719,27 @@ export class MapRenderer implements MapView {
     v.count.scale.set(1 / dpr);
   }
 
-  #drawDir(g: Graphics, n: SceneNode, R: number, clip: Clip): void {
-    if (n.aggregate !== undefined) {
-      // The haze is a sprite (see #draw); only the worktree rings are drawn.
-      const look = this.#look(n.visual, true) as AggregateLook;
-      this.#drawRings(g, R, clip, look.rings);
+  #drawDir(g: Graphics, n: SceneNode, R: number, clip: Clip, sx: number, sy: number, f: FrameCtx, gap: number): void {
+    if (this.#stars) {
+      if (n.aggregate !== undefined) {
+        // The haze is a sprite (see #draw); only the worktree rings are drawn.
+        const look = this.#look(n.visual, true) as AggregateLook;
+        this.#drawRings(g, R, clip, look.rings);
+      }
+      // An open folder draws no edge at all: it is its cluster of stars and its floating name.
+      return;
     }
-    // An open folder draws no edge at all: it is its cluster of stars and its floating name.
+    const night = this.#theme === "night";
+    if (n.aggregate !== undefined) {
+      const look = this.#look(n.visual, true) as AggregateLook;
+      disk(g, R, clip, sx, sy, f.rect, look.fill);
+      outline(g, R, clip, look.outline.color, look.outline.alpha, 1);
+      this.#drawRings(g, R, clip, look.rings);
+      return;
+    }
+    const isRoot = n.depth === 0;
+    if (!night) disk(g, R, clip, sx, sy, f.rect, { color: 0xffffff, alpha: isRoot ? 0.02 : 0.03 });
+    outline(g, R, clip, 0xffffff, night ? (isRoot ? 0.1 : 0.08) : isRoot ? 0.16 : 0.12, 1, gap);
   }
 
   /** A file's vector marks: a deletion's rim and the worktree rings. */

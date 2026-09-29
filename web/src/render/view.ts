@@ -5,13 +5,23 @@ import type { WorktreeId } from "../protocol";
 import type { Change } from "../store";
 import type { Theme } from "./style";
 
-/** Which map the page draws: circle packing (MapRenderer), or rectangles (RectRenderer). */
-export type ViewKind = "bubbles" | "treemap" | "partition";
+/**
+ * Which map the page draws: circle packing (MapRenderer) as bubbles or as a
+ * star map (files as stars sized by file size, folders as bare clusters), or
+ * rectangles (RectRenderer).
+ */
+export type ViewKind = "bubbles" | "stars" | "treemap" | "partition";
 
-export const VIEW_KINDS: readonly ViewKind[] = ["bubbles", "treemap", "partition"];
+export const VIEW_KINDS: readonly ViewKind[] = ["bubbles", "stars", "treemap", "partition"];
+
+/** The views drawn by MapRenderer, with its camera (the others re-lay out the folder in view). */
+export function isPacked(v: ViewKind): v is "bubbles" | "stars" {
+  return v === "bubbles" || v === "stars";
+}
 
 export const VIEW_LABELS: Readonly<Record<ViewKind, string>> = {
-  bubbles: "Constellations", // Orion's namesake: files are stars, folders nebulae (kept as "bubbles" so stored choices still load)
+  bubbles: "Bubbles",
+  stars: "Stars", // after Orion's namesake
   treemap: "Tree map",
   partition: "Partition",
 };

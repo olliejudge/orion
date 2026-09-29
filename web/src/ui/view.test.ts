@@ -26,8 +26,9 @@ describe("view choice", () => {
     expect(loadView(null)).toBe("bubbles");
   });
 
-  it("V cycles bubbles → tree map → partition → bubbles", () => {
-    expect(nextView("bubbles")).toBe("treemap");
+  it("V cycles bubbles → stars → tree map → partition → bubbles", () => {
+    expect(nextView("bubbles")).toBe("stars");
+    expect(nextView("stars")).toBe("treemap");
     expect(nextView("treemap")).toBe("partition");
     expect(nextView("partition")).toBe("bubbles");
   });

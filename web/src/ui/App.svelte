@@ -12,7 +12,7 @@
   import { labelNames } from "../render/geometry";
   import { MapRenderer } from "../render/MapRenderer";
   import { RectRenderer } from "../render/RectRenderer";
-  import type { MapView, ViewKind } from "../render/view";
+  import { isPacked, type MapView, type ViewKind } from "../render/view";
   import { computeRectFrame, TREEMAP_HEADER_PX } from "../layout/rects";
   import { SHIMMER_MS } from "../render/scene";
   import { RepoStore, type Change, type RepoState } from "../store";
@@ -53,7 +53,7 @@
   let repo: RepoState | null = $state.raw(null);
   let status: ConnectionStatus = $state("connecting");
   let theme: Theme = $state(loadTheme());
-  // Constellations ("bubbles") zoom with a camera; the rectangle views re-lay out the folder in view to fill the map.
+  // Bubbles and Stars zoom with a camera; the rectangle views re-lay out the folder in view to fill the map.
   let view: ViewKind = $state(loadView());
   let isolated: WorktreeId | null = $state(null);
   let now = $state(Date.now());
@@ -165,7 +165,7 @@
 
   /** The current view's frame for state `s` in a w×h map. */
   function frameFor(s: RepoState, w: number, h: number): ReturnType<typeof computeFrame> {
-    return view === "bubbles"
+    return isPacked(view)
       ? computeFrame(s, w, h, scale, mapInsets(theme, w, h, legendBox, bottomLeftBox), linger.paths(), excluded)
       : computeRectFrame(s, view, zoomPath, w, h, rectInsets(theme, w, h, legendBox, bottomLeftBox), linger.paths(), excluded);
   }
@@ -269,7 +269,7 @@
     zoomPath = path;
     renderer?.zoomTo(path);
     // The rectangle views have no camera: the folder in view is laid out afresh to fill the map.
-    if (view !== "bubbles") queue.request(NO_CHANGE);
+    if (!isPacked(view)) queue.request(NO_CHANGE);
   }
 
   function setView(v: ViewKind): void {
@@ -317,7 +317,7 @@
     const old = renderer;
     renderer = null;
     old?.destroy();
-    const r: MapView = view === "bubbles" ? new MapRenderer(mapEl) : new RectRenderer(mapEl, view, { headerPx: TREEMAP_HEADER_PX, rootName: () => repo?.repo.name ?? "" });
+    const r: MapView = isPacked(view) ? new MapRenderer(mapEl, view) : new RectRenderer(mapEl, view, { headerPx: TREEMAP_HEADER_PX, rootName: () => repo?.repo.name ?? "" });
     r.init().then(
       () => {
         if (gen !== rendererGen) {
