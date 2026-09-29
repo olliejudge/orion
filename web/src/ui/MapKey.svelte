@@ -72,6 +72,7 @@
         <circle cx={m.cx} {cy} r={(m.r + HALO_PX) / HALO_RING_FRAC} fill={`url(#${gid}-halo)`} opacity={halo.alpha} />
       {/if}
       {#if body}
+        {#if view === "bubbles"}<circle cx={m.cx} {cy} r={m.r * 1.9} fill={hexOf(body.tint)} opacity={body.alpha * 0.2} />{/if}
         <circle class="body" cx={m.cx} {cy} r={m.r} fill={hexOf(body.tint)} opacity={body.alpha} />
       {/if}
       <!-- Rim and rings age together, as the map sets their alpha as a group. -->
@@ -164,7 +165,7 @@
         <span>{counted.label}</span>
       </li>
     </ul>
-    <p class="note">{view === "bubbles" ? "Circles" : "Boxes"} are folders, sized by the files in them. Colours are worktrees; a split ring means several. Brightness is recency.</p>
+    <p class="note">{view === "bubbles" ? "Stars are files; clouds are folders." : "Boxes are folders, sized by the files in them."} Colours are worktrees; a split ring means several. Brightness is recency.</p>
     <p class="note">Click: in one level · Double-click: straight in · Scroll: zoom · Esc: out · 0: home</p>
   </div>
 </section>

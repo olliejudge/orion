@@ -21,6 +21,10 @@ export default defineConfig({
     viewport: { width: 1440, height: 900 },
     deviceScaleFactor: 2,
     colorScheme: "dark",
+    // Live glows breathe and stars twinkle at 30 fps whenever work is uncommitted, which under
+    // software WebGL (GPU-less CI) slows every screenshot and interaction toward the test timeout.
+    // Reduced motion lets the canvas idle; the motion itself is unit-tested (motion.test.ts).
+    reducedMotion: "reduce",
     trace: "retain-on-failure",
     launchOptions: {
       // Lets Chromium fall back to SwiftShader WebGL on GPU-less CI runners.

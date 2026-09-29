@@ -53,7 +53,7 @@
   let repo: RepoState | null = $state.raw(null);
   let status: ConnectionStatus = $state("connecting");
   let theme: Theme = $state(loadTheme());
-  // Bubbles zoom with a camera; the rectangle views re-lay out the folder in view to fill the map.
+  // Constellations ("bubbles") zoom with a camera; the rectangle views re-lay out the folder in view to fill the map.
   let view: ViewKind = $state(loadView());
   let isolated: WorktreeId | null = $state(null);
   let now = $state(Date.now());
