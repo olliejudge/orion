@@ -35,7 +35,7 @@ import {
   type LabelCandidate,
   type LabelSpot,
 } from "./labels";
-import { HALO_RING_FRAC, STAR_CORE_FRAC, TextureBank, labelWidth, renderArcLabel, renderStraightLabel } from "./sprites";
+import { HALO_RING_FRAC, STAR_TIP_FRAC, TextureBank, labelWidth, renderArcLabel, renderStraightLabel } from "./sprites";
 import { SETTLE_EPS, SPRING_OMEGA, isSettled, makeSpring, retarget, snapSpring, stepSpring, type Spring } from "./springs";
 import {
   DELETED_RIM_W_PX,
@@ -47,13 +47,15 @@ import {
   type AggregateLook,
   type FileLook,
   type Rings,
-  type Theme, nebulaLook, starCoreR } from "./style";
+  type Theme } from "./style";
 
 export type { Theme } from "./style";
 
 const LABEL_FADE_MS = 200; // labels fade in over time once placed at rest
 const LABEL_GAP_PAD_PX = 4; // outline clearance either side of a rim label
 const HALO_PX = 5; // halo peak this far outside the bubble, on screen
+/** A file's marks (rings, glow, glyph) sit at this fraction of its packed radius: around the star's bright middle. */
+const STAR_MARK_FRAC = 0.55;
 const SPLIT_GAP_PX = 3;
 const LOGK_EPS = 1e-4; // camera scale settles within 0.01%
 /** How often bubbles re-age (their brightness is how long ago they were touched); the curve moves far slower than this. */
@@ -72,7 +74,7 @@ interface View {
   root: Container;
   body: Sprite | null; // files only
   halo: Sprite | null;
-  cloud: Sprite | null; // folders: the nebula behind their contents
+  cloud: Sprite | null; // collapsed folders: the haze their file count sits on
   flash: Sprite | null; // merge shimmer
   ping: Sprite | null; // a fresh touch's ring, made on first use
   glyph: Sprite | null; // a file's state mark ("+", "×"), made on first use
@@ -521,7 +523,7 @@ export class MapRenderer implements MapView {
     let body: Sprite | null = null;
     let halo: Sprite | null = null;
     let cloud: Sprite | null = null;
-    if (n.isDir) {
+    if (n.isDir && n.aggregate !== undefined) {
       cloud = new Sprite(bank.nebula);
       cloud.anchor.set(0.5);
       root.addChild(cloud);
@@ -603,16 +605,17 @@ export class MapRenderer implements MapView {
     const vis = n.visual;
     const look = n.isDir ? null : (this.#look(vis, false) as FileLook);
     const agg = n.aggregate !== undefined ? (this.#look(vis, true) as AggregateLook) : null;
-    // A file is a star: a small bright core (its marks hug it) in the dark of its packed circle.
-    const Rs = n.isDir ? R : starCoreR(R);
+    // A file is a four-pointed star spanning its packed circle, so its size is its file size;
+    // its marks (rings, glow, + and ×) hug the star's bright middle.
+    const Rs = n.isDir ? R : R * STAR_MARK_FRAC;
     // Live work twinkles: its star swells and brightens with the glow's breath.
     const twinkle = look?.halo ? f.breath : null;
 
-    // Folders are nebulae: a soft cloud, in its worktree's colour when collapsed with changes inside.
-    if (v.cloud) {
-      const neb = agg ? { color: agg.fill.color, alpha: Math.min(0.85, agg.fill.alpha * 1.4) } : nebulaLook(this.#theme, n.depth);
-      v.cloud.tint = neb.color;
-      v.cloud.alpha = neb.alpha;
+    // Folders are drawn as nothing but their stars and name (a star cluster); a collapsed
+    // one is a soft haze, in its worktree's colour when something inside it changed, under its file count.
+    if (v.cloud && agg) {
+      v.cloud.tint = agg.fill.color;
+      v.cloud.alpha = Math.min(0.7, agg.fill.alpha * 1.2);
       v.cloud.width = v.cloud.height = R * 2;
     }
 
@@ -622,9 +625,9 @@ export class MapRenderer implements MapView {
       v.body.visible = body !== null;
       if (body) {
         v.body.tint = body.tint;
-        // A star is never a smudge: even the oldest keeps a visible core (still dimmer the older it is).
+        // A star never fades to a smudge: even the oldest stays visible (still dimmer the older it is).
         v.body.alpha = (0.25 + 0.75 * body.alpha) * (twinkle ? 0.75 + 0.25 * twinkle.alpha : 1);
-        v.body.width = v.body.height = (Rs / STAR_CORE_FRAC) * 2 * (twinkle ? twinkle.scale : 1);
+        v.body.width = v.body.height = (R / STAR_TIP_FRAC) * 2 * (twinkle ? twinkle.scale : 1);
       }
     }
 
@@ -650,7 +653,7 @@ export class MapRenderer implements MapView {
     if (gKey !== v.gKey) {
       v.gKey = gKey;
       v.g.clear();
-      if (n.isDir) this.#drawDir(v.g, n, R, clip, sx, sy, f, gap);
+      if (n.isDir) this.#drawDir(v.g, n, R, clip);
       else if (look) this.#drawFileMarks(v.g, look, Rs, clip);
     }
     v.g.alpha = look ? look.marks : 1;
@@ -703,18 +706,13 @@ export class MapRenderer implements MapView {
     v.count.scale.set(1 / dpr);
   }
 
-  #drawDir(g: Graphics, n: SceneNode, R: number, clip: Clip, sx: number, sy: number, f: FrameCtx, gap: number): void {
-    const night = this.#theme === "night";
+  #drawDir(g: Graphics, n: SceneNode, R: number, clip: Clip): void {
     if (n.aggregate !== undefined) {
-      // The disc itself is the nebula sprite (see #draw); only a whisper of a rim, and the rings.
+      // The haze is a sprite (see #draw); only the worktree rings are drawn.
       const look = this.#look(n.visual, true) as AggregateLook;
-      outline(g, R, clip, look.outline.color, look.outline.alpha * 0.4, 1);
       this.#drawRings(g, R, clip, look.rings);
-      return;
     }
-    // A folder is a nebula (see #draw): no hard edge, just a faint rim so its extent still reads.
-    const isRoot = n.depth === 0;
-    outline(g, R, clip, 0xffffff, night ? (isRoot ? 0.05 : 0.04) : isRoot ? 0.07 : 0.055, 1, gap);
+    // An open folder draws no edge at all: it is its cluster of stars and its floating name.
   }
 
   /** A file's vector marks: a deletion's rim and the worktree rings. */

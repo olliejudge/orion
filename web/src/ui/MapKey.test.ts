@@ -42,7 +42,7 @@ describe("MapKey", () => {
       expect(r.querySelector("svg.swatch")).toHaveAttribute("aria-hidden", "true");
       expect(r.getAttribute("title")?.length).toBeGreaterThan(20);
     }
-    expect(within(key).getByText(/Stars are files; clouds are folders/)).toBeVisible();
+    expect(within(key).getByText(/Stars are files, sized by file size; each cluster is a folder/)).toBeVisible();
     expect(within(key).getByText(/Click: in one level/)).toHaveTextContent("Click: in one level · Double-click: straight in · Scroll: zoom · Esc: out · 0: home");
   });
 

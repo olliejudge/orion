@@ -165,7 +165,7 @@
         <span>{counted.label}</span>
       </li>
     </ul>
-    <p class="note">{view === "bubbles" ? "Stars are files; clouds are folders." : "Boxes are folders, sized by the files in them."} Colours are worktrees; a split ring means several. Brightness is recency.</p>
+    <p class="note">{view === "bubbles" ? "Stars are files, sized by file size; each cluster is a folder." : "Boxes are folders, sized by the files in them."} Colours are worktrees; a split ring means several. Brightness is recency.</p>
     <p class="note">Click: in one level · Double-click: straight in · Scroll: zoom · Esc: out · 0: home</p>
   </div>
 </section>

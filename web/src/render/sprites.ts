@@ -8,8 +8,8 @@ const GLYPH_TEX_PX = 128; // glyphs stop growing at GLYPH_MAX_R_PX (48 px wide),
 
 /** Radius of the bright band in the halo texture, as a fraction of the texture's half-size. */
 export const HALO_RING_FRAC = 0.7;
-/** Radius of a star's solid core in the star texture, as a fraction of its half-size (the rest is its glow). */
-export const STAR_CORE_FRAC = 0.3;
+/** Where a star's points end, as a fraction of the star texture's half-size (the rest is soft glow). */
+export const STAR_TIP_FRAC = 0.96;
 
 function makeCanvas(w: number, h: number): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
   const canvas = document.createElement("canvas");
@@ -118,18 +118,36 @@ export class TextureBank {
     return bankTexture(canvas);
   }
 
-  /** A white star: a solid core out to STAR_CORE_FRAC, then a glow falling off to nothing at the edge; tinted per file. */
+  /**
+   * A white four-pointed star filling the texture (points at STAR_TIP_FRAC),
+   * with concave sides, a round bright middle and a faint glow; tinted per
+   * file. It takes its bubble's place, so a file reads as a star at any size.
+   */
   #starTexture(): Texture {
     const { canvas, ctx } = makeCanvas(TEX_PX, TEX_PX);
     const R = TEX_PX / 2;
-    const g = ctx.createRadialGradient(R, R, 0, R, R, R);
-    g.addColorStop(0, "rgba(255,255,255,1)");
-    g.addColorStop(STAR_CORE_FRAC * 0.8, "rgba(255,255,255,1)");
-    g.addColorStop(STAR_CORE_FRAC, "rgba(255,255,255,0.35)");
-    g.addColorStop(0.55, "rgba(255,255,255,0.07)");
-    g.addColorStop(1, "rgba(255,255,255,0)");
-    ctx.fillStyle = g;
+    const glow = ctx.createRadialGradient(R, R, 0, R, R, R);
+    glow.addColorStop(0, "rgba(255,255,255,0.35)");
+    glow.addColorStop(0.6, "rgba(255,255,255,0.08)");
+    glow.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = glow;
     ctx.fillRect(0, 0, TEX_PX, TEX_PX);
+    const tip = STAR_TIP_FRAC * R;
+    const waist = 0.3 * R; // how far the concave sides pull in towards the middle
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    for (let i = 0; i < 4; i++) {
+      const a = (i * Math.PI) / 2 - Math.PI / 2;
+      const b = a + Math.PI / 2;
+      const mid = (a + b) / 2;
+      if (i === 0) ctx.moveTo(R + tip * Math.cos(a), R + tip * Math.sin(a));
+      ctx.quadraticCurveTo(R + waist * Math.cos(mid) * 0.35, R + waist * Math.sin(mid) * 0.35, R + tip * Math.cos(b), R + tip * Math.sin(b));
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(R, R, 0.3 * R, 0, Math.PI * 2);
+    ctx.fill();
     return bankTexture(canvas);
   }
 
