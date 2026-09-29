@@ -4,7 +4,7 @@ import type { NodeVisual } from "../layout/encoding";
 import type { Circle } from "../layout/pack";
 import type { WorktreeId } from "../protocol";
 import type { Change } from "../store";
-import { WHOLE, clipFor, dashed, disk, outline, solidArc, type Clip } from "./draw";
+import { WHOLE, clipFor, dashed, outline, solidArc, type Clip } from "./draw";
 import {
   fitCamera,
   labelNames,
@@ -35,7 +35,7 @@ import {
   type LabelCandidate,
   type LabelSpot,
 } from "./labels";
-import { HALO_RING_FRAC, TextureBank, labelWidth, renderArcLabel, renderStraightLabel } from "./sprites";
+import { HALO_RING_FRAC, STAR_CORE_FRAC, TextureBank, labelWidth, renderArcLabel, renderStraightLabel } from "./sprites";
 import { SETTLE_EPS, SPRING_OMEGA, isSettled, makeSpring, retarget, snapSpring, stepSpring, type Spring } from "./springs";
 import {
   DELETED_RIM_W_PX,
@@ -47,8 +47,7 @@ import {
   type AggregateLook,
   type FileLook,
   type Rings,
-  type Theme,
-} from "./style";
+  type Theme, nebulaLook, starCoreR } from "./style";
 
 export type { Theme } from "./style";
 
@@ -73,6 +72,7 @@ interface View {
   root: Container;
   body: Sprite | null; // files only
   halo: Sprite | null;
+  cloud: Sprite | null; // folders: the nebula behind their contents
   flash: Sprite | null; // merge shimmer
   ping: Sprite | null; // a fresh touch's ring, made on first use
   glyph: Sprite | null; // a file's state mark ("+", "×"), made on first use
@@ -520,6 +520,12 @@ export class MapRenderer implements MapView {
     const g = new Graphics();
     let body: Sprite | null = null;
     let halo: Sprite | null = null;
+    let cloud: Sprite | null = null;
+    if (n.isDir) {
+      cloud = new Sprite(bank.nebula);
+      cloud.anchor.set(0.5);
+      root.addChild(cloud);
+    }
     if (!n.isDir || n.aggregate !== undefined) {
       halo = new Sprite(bank.halo);
       halo.anchor.set(0.5);
@@ -527,7 +533,7 @@ export class MapRenderer implements MapView {
       root.addChild(halo);
     }
     if (!n.isDir) {
-      body = new Sprite(bank.disc);
+      body = new Sprite(bank.star);
       body.anchor.set(0.5);
       root.addChild(body);
     }
@@ -538,6 +544,7 @@ export class MapRenderer implements MapView {
       root,
       body,
       halo,
+      cloud,
       flash: null,
       ping: null,
       glyph: null,
@@ -596,6 +603,18 @@ export class MapRenderer implements MapView {
     const vis = n.visual;
     const look = n.isDir ? null : (this.#look(vis, false) as FileLook);
     const agg = n.aggregate !== undefined ? (this.#look(vis, true) as AggregateLook) : null;
+    // A file is a star: a small bright core (its marks hug it) in the dark of its packed circle.
+    const Rs = n.isDir ? R : starCoreR(R);
+    // Live work twinkles: its star swells and brightens with the glow's breath.
+    const twinkle = look?.halo ? f.breath : null;
+
+    // Folders are nebulae: a soft cloud, in its worktree's colour when collapsed with changes inside.
+    if (v.cloud) {
+      const neb = agg ? { color: agg.fill.color, alpha: Math.min(0.85, agg.fill.alpha * 1.4) } : nebulaLook(this.#theme, n.depth);
+      v.cloud.tint = neb.color;
+      v.cloud.alpha = neb.alpha;
+      v.cloud.width = v.cloud.height = R * 2;
+    }
 
     // Body (files): one flat disc texture, tinted; none for deletions (hollow).
     if (v.body) {
@@ -603,8 +622,9 @@ export class MapRenderer implements MapView {
       v.body.visible = body !== null;
       if (body) {
         v.body.tint = body.tint;
-        v.body.alpha = body.alpha;
-        v.body.width = v.body.height = R * 2;
+        // A star is never a smudge: even the oldest keeps a visible core (still dimmer the older it is).
+        v.body.alpha = (0.25 + 0.75 * body.alpha) * (twinkle ? 0.75 + 0.25 * twinkle.alpha : 1);
+        v.body.width = v.body.height = (Rs / STAR_CORE_FRAC) * 2 * (twinkle ? twinkle.scale : 1);
       }
     }
 
@@ -613,7 +633,7 @@ export class MapRenderer implements MapView {
       const glow = look ? look.halo : (agg?.halo ?? null);
       v.halo.visible = glow !== null;
       if (glow) {
-        v.halo.width = v.halo.height = ((R + HALO_PX) / HALO_RING_FRAC) * 2 * f.breath.scale;
+        v.halo.width = v.halo.height = ((Rs + HALO_PX) / HALO_RING_FRAC) * 2 * f.breath.scale;
         v.halo.tint = glow.color;
         v.halo.alpha = glow.alpha * f.breath.alpha;
         if (this.#motion.breathes && !n.leaving) this.#breathing = true;
@@ -626,19 +646,19 @@ export class MapRenderer implements MapView {
     // Vector parts, redrawn only when their inputs change.
     const clip = R > f.big ? clipFor(sx, sy, R, f.rect) : WHOLE;
     // (A file's marks age through the Graphics' alpha; an aggregate's disc through its fill, part of the key.)
-    const gKey = `${Math.round(R * 2)}|${clip.key}|${this.#styleGen}|${touchSig(vis)}|${vis.state}|${n.aggregate ?? -1}|${agg?.fill.alpha.toFixed(2) ?? ""}|${gap.toFixed(3)}`;
+    const gKey = `${Math.round(Rs * 2)}|${clip.key}|${this.#styleGen}|${touchSig(vis)}|${vis.state}|${n.aggregate ?? -1}|${agg?.fill.alpha.toFixed(2) ?? ""}|${gap.toFixed(3)}`;
     if (gKey !== v.gKey) {
       v.gKey = gKey;
       v.g.clear();
       if (n.isDir) this.#drawDir(v.g, n, R, clip, sx, sy, f, gap);
-      else if (look) this.#drawFileMarks(v.g, look, R, clip);
+      else if (look) this.#drawFileMarks(v.g, look, Rs, clip);
     }
     v.g.alpha = look ? look.marks : 1;
-    if (look) this.#drawGlyph(v, look, R, f);
+    if (look) this.#drawGlyph(v, look, Rs, f);
 
     if (n.aggregate !== undefined) this.#drawCount(v, n, n.aggregate, R, f);
-    this.#drawShimmer(v, n, R, f);
-    this.#drawPing(v, n, R, f, look ? (look.halo?.color ?? look.body?.tint ?? look.outline?.color) : (agg?.halo?.color ?? agg?.fill.color));
+    this.#drawShimmer(v, n, n.isDir ? R : Rs * 1.6, f);
+    this.#drawPing(v, n, n.isDir ? R : Rs * 1.5, f, look ? (look.halo?.color ?? look.body?.tint ?? look.outline?.color) : (agg?.halo?.color ?? agg?.fill.color));
   }
 
   /** A fresh touch: a soft ring in the worktree's colour travelling out from the bubble. */
@@ -686,15 +706,15 @@ export class MapRenderer implements MapView {
   #drawDir(g: Graphics, n: SceneNode, R: number, clip: Clip, sx: number, sy: number, f: FrameCtx, gap: number): void {
     const night = this.#theme === "night";
     if (n.aggregate !== undefined) {
+      // The disc itself is the nebula sprite (see #draw); only a whisper of a rim, and the rings.
       const look = this.#look(n.visual, true) as AggregateLook;
-      disk(g, R, clip, sx, sy, f.rect, look.fill);
-      outline(g, R, clip, look.outline.color, look.outline.alpha, 1);
+      outline(g, R, clip, look.outline.color, look.outline.alpha * 0.4, 1);
       this.#drawRings(g, R, clip, look.rings);
       return;
     }
+    // A folder is a nebula (see #draw): no hard edge, just a faint rim so its extent still reads.
     const isRoot = n.depth === 0;
-    if (!night) disk(g, R, clip, sx, sy, f.rect, { color: 0xffffff, alpha: isRoot ? 0.02 : 0.03 });
-    outline(g, R, clip, 0xffffff, night ? (isRoot ? 0.1 : 0.08) : isRoot ? 0.16 : 0.12, 1, gap);
+    outline(g, R, clip, 0xffffff, night ? (isRoot ? 0.05 : 0.04) : isRoot ? 0.07 : 0.055, 1, gap);
   }
 
   /** A file's vector marks: a deletion's rim and the worktree rings. */

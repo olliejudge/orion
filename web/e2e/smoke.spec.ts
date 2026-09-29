@@ -316,7 +316,7 @@ test("V cycles the tree map and partition views, which draw, zoom and are rememb
   await openOrion(page);
   const view = page.getByTestId("view-switch");
   const crumbs = page.getByTestId("breadcrumbs").locator("ol").first().getByRole("button");
-  await expect(view.getByRole("radio", { name: "Bubbles" })).toHaveAttribute("aria-checked", "true");
+  await expect(view.getByRole("radio", { name: "Constellations" })).toHaveAttribute("aria-checked", "true");
 
   await page.keyboard.press("v");
   await expect(view.getByRole("radio", { name: "Tree map" })).toHaveAttribute("aria-checked", "true");
@@ -338,8 +338,8 @@ test("V cycles the tree map and partition views, which draw, zoom and are rememb
 
   await page.reload();
   await expect(page.getByTestId("view-switch").getByRole("radio", { name: "Partition" })).toHaveAttribute("aria-checked", "true");
-  await page.getByTestId("view-switch").getByRole("radio", { name: "Bubbles" }).click();
-  await expect(page.getByTestId("view-switch").getByRole("radio", { name: "Bubbles" })).toHaveAttribute("aria-checked", "true");
+  await page.getByTestId("view-switch").getByRole("radio", { name: "Constellations" }).click();
+  await expect(page.getByTestId("view-switch").getByRole("radio", { name: "Constellations" })).toHaveAttribute("aria-checked", "true");
   await expectLit(page, "bubbles again", 120, 0.005);
 });
 

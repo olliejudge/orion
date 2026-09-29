@@ -8,6 +8,8 @@ const GLYPH_TEX_PX = 128; // glyphs stop growing at GLYPH_MAX_R_PX (48 px wide),
 
 /** Radius of the bright band in the halo texture, as a fraction of the texture's half-size. */
 export const HALO_RING_FRAC = 0.7;
+/** Radius of a star's solid core in the star texture, as a fraction of its half-size (the rest is its glow). */
+export const STAR_CORE_FRAC = 0.3;
 
 function makeCanvas(w: number, h: number): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
   const canvas = document.createElement("canvas");
@@ -36,11 +38,15 @@ export class TextureBank {
   #counts = new Map<string, Texture>();
   readonly disc: Texture;
   readonly halo: Texture;
+  readonly star: Texture;
+  readonly nebula: Texture;
   readonly glyphs: Readonly<Record<GlyphShape, Texture>>;
 
   constructor() {
     this.disc = this.#discTexture();
     this.halo = this.#haloTexture();
+    this.star = this.#starTexture();
+    this.nebula = this.#nebulaTexture();
     this.glyphs = { plus: this.#glyphTexture("plus"), cross: this.#glyphTexture("cross") };
   }
 
@@ -77,6 +83,8 @@ export class TextureBank {
     this.#counts.clear();
     this.disc.destroy(true);
     this.halo.destroy(true);
+    this.star.destroy(true);
+    this.nebula.destroy(true);
     this.glyphs.plus.destroy(true);
     this.glyphs.cross.destroy(true);
   }
@@ -107,6 +115,35 @@ export class TextureBank {
     ctx.beginPath();
     ctx.arc(R, R, R - 1, 0, Math.PI * 2);
     ctx.fill();
+    return bankTexture(canvas);
+  }
+
+  /** A white star: a solid core out to STAR_CORE_FRAC, then a glow falling off to nothing at the edge; tinted per file. */
+  #starTexture(): Texture {
+    const { canvas, ctx } = makeCanvas(TEX_PX, TEX_PX);
+    const R = TEX_PX / 2;
+    const g = ctx.createRadialGradient(R, R, 0, R, R, R);
+    g.addColorStop(0, "rgba(255,255,255,1)");
+    g.addColorStop(STAR_CORE_FRAC * 0.8, "rgba(255,255,255,1)");
+    g.addColorStop(STAR_CORE_FRAC, "rgba(255,255,255,0.35)");
+    g.addColorStop(0.55, "rgba(255,255,255,0.07)");
+    g.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, TEX_PX, TEX_PX);
+    return bankTexture(canvas);
+  }
+
+  /** A soft cloud, densest in the middle and fading out at the rim: a folder as a nebula; tinted per theme or worktree. */
+  #nebulaTexture(): Texture {
+    const { canvas, ctx } = makeCanvas(TEX_PX, TEX_PX);
+    const R = TEX_PX / 2;
+    const g = ctx.createRadialGradient(R, R, 0, R, R, R);
+    g.addColorStop(0, "rgba(255,255,255,0.75)");
+    g.addColorStop(0.55, "rgba(255,255,255,0.5)");
+    g.addColorStop(0.9, "rgba(255,255,255,0.18)");
+    g.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, TEX_PX, TEX_PX);
     return bankTexture(canvas);
   }
 

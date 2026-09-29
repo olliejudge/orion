@@ -33,12 +33,15 @@
   --pill-border: rgba(255, 255, 255, 0.1);
 }
 
+/* The page background lives on <html> only: a body background would paint over the sky's stars (body::before/after). */
+html {
+  background: var(--bg);
+}
 html,
 body {
   margin: 0;
   height: 100%;
   overflow: hidden;
-  background: var(--bg);
   color: var(--text);
   font: 12px/1.45 var(--font);
   -webkit-font-smoothing: antialiased;
@@ -67,6 +70,47 @@ button {
   font: inherit;
   color: inherit;
 }
+/* The sky behind the map: two tiled layers of faint background stars (so the
+   repeat doesn't read as a grid), the nearer one slowly twinkling. */
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1; /* above the page background, below the map and panels */
+}
+body::before {
+  background-image:
+    radial-gradient(1.5px 1.5px at 23px 41px, rgba(255, 255, 255, 0.85), transparent),
+    radial-gradient(1.5px 1.5px at 131px 87px, rgba(210, 220, 255, 0.75), transparent),
+    radial-gradient(1.5px 1.5px at 71px 173px, rgba(255, 240, 220, 0.70), transparent),
+    radial-gradient(1.5px 1.5px at 191px 19px, rgba(255, 255, 255, 0.65), transparent),
+    radial-gradient(1.5px 1.5px at 157px 151px, rgba(255, 255, 255, 0.80), transparent);
+  background-size: 211px 197px;
+  opacity: 0.6;
+}
+body::after {
+  background-image:
+    radial-gradient(1.5px 1.5px at 61px 113px, rgba(255, 255, 255, 0.95), transparent),
+    radial-gradient(1.5px 1.5px at 283px 47px, rgba(200, 215, 255, 0.90), transparent),
+    radial-gradient(2px 2px at 199px 271px, rgba(255, 235, 210, 0.80), transparent),
+    radial-gradient(1.5px 1.5px at 331px 199px, rgba(255, 255, 255, 0.85), transparent);
+  background-size: 373px 347px;
+  animation: sky-twinkle 7s ease-in-out infinite alternate;
+}
+@keyframes sky-twinkle {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 0.85;
+  }
+}
+:root[data-theme="night"] body::before {
+  opacity: 0.35;
+}
+
 button:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;

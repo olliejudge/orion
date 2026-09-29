@@ -11,7 +11,7 @@ export type ViewKind = "bubbles" | "treemap" | "partition";
 export const VIEW_KINDS: readonly ViewKind[] = ["bubbles", "treemap", "partition"];
 
 export const VIEW_LABELS: Readonly<Record<ViewKind, string>> = {
-  bubbles: "Bubbles",
+  bubbles: "Constellations", // Orion's namesake: files are stars, folders nebulae (kept as "bubbles" so stored choices still load)
   treemap: "Tree map",
   partition: "Partition",
 };
