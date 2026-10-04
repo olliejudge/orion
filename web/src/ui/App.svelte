@@ -3,7 +3,7 @@
   import { servedBuildChanged } from "../build";
   import { connect, repoIdentity, type ConnectionStatus } from "../connection";
   import { directoryEntries, isExcluded, loadExcluded, nearestVisibleAncestor, saveExcluded } from "../layout/exclude";
-  import { computeFrame } from "../layout/frame";
+  import { computeFrame, freeArea } from "../layout/frame";
   import { Linger } from "../layout/linger";
   import { buildTree } from "../layout/nodes";
   import type { Circle } from "../layout/pack";
@@ -42,7 +42,7 @@
   import { setNavigateHandler } from "./navigate";
   import { applyTheme, loadTheme, saveTheme, type Theme } from "./theme";
   import Tooltip from "./Tooltip.svelte";
-  import { loadView, nextView, saveView } from "./view";
+  import { keyColorIndex, loadView, nextView, saveView } from "./view";
   import ViewSwitch from "./ViewSwitch.svelte";
 
   const DIRFILTER_GAP = 8; // gap between the map key and the filter panel stacked above it
@@ -180,7 +180,7 @@
     layout = f.layout;
     labels = labelNames(f.layout);
     pillX = (f.free.x0 + f.free.x1) / 2;
-    renderer.setFreeArea(f.free);
+    renderer.setFreeArea(f.free, freeArea(w, h, rectInsets(theme, w, h, legendBox, bottomLeftBox)));
     renderer.update(f.layout, f.visuals, change);
     if (!restoredHash) {
       restoredHash = true;
@@ -294,7 +294,12 @@
   function onKey(e: KeyboardEvent): void {
     const action = keyAction(e);
     if (action === "theme") theme = theme === "vision" ? "night" : "vision";
-    else if (action === "view") setView(nextView(view));
+    else if (action === "view") {
+      // A keyboard switch: don't leave a focus ring on the switch button that was last clicked.
+      const el = document.activeElement;
+      if (el instanceof HTMLElement && el.closest("[data-testid='view-switch']")) el.blur();
+      setView(nextView(view));
+    }
     else if (action === "zoomOut") {
       // Esc backs out one step: first the isolation, then the zoom.
       if (isolated !== null) isolated = null;
@@ -482,7 +487,7 @@
     treeMaxHeight={dirFilterTreeMax} />
 {/if}
 {#if !noWebGL}
-  <MapKey {theme} {view} onFootprint={(b) => (keyBox = b)} />
+  <MapKey {theme} {view} colorIndex={keyColorIndex(repo, isolated)} onFootprint={(b) => (keyBox = b)} />
 {/if}
 {#if !noWebGL}
   <ViewSwitch {view} centerX={pillX} onSelect={setView} />

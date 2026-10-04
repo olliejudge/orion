@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { hexToNumber, worktreeColor } from "../colors";
 import { TONES, glyphSize, idleTint } from "../render/style";
-import { AGE_SAMPLES_MS, KEY_OPEN_KEY, SWATCH_W, hexOf, keyEntries, loadKeyOpen, saveKeyOpen, type KeyEntry, type KeyEntryId } from "./encodingKey";
+import { AGE_SAMPLES_MS, KEY_OPEN_KEY, SWATCH_W, hexOf, keyEntries, loadKeyOpen, saveKeyOpen, starPath, type KeyEntry, type KeyEntryId } from "./encodingKey";
 
 const MAIN = worktreeColor(0);
 
@@ -139,5 +139,22 @@ describe("key open/closed persistence", () => {
     expect(() => saveKeyOpen(false, broken)).not.toThrow();
     expect(loadKeyOpen(null)).toBe(true);
     expect(() => saveKeyOpen(false, null)).not.toThrow();
+  });
+});
+
+describe("starPath", () => {
+  it("draws four points reaching r from the centre", () => {
+    const d = starPath(10, 10, 5);
+    expect(d.startsWith("M10.00 5.00")).toBe(true); // the top point
+    expect(d.match(/Q/g)).toHaveLength(4);
+    expect(d.endsWith("Z")).toBe(true);
+  });
+});
+
+describe("keyEntries colour", () => {
+  it("fills changed-file swatches in the given worktree colour, and leaves unchanged ones neutral", () => {
+    const tint = (ci: number, id: KeyEntryId) => keyEntries("vision", ci).find((e) => e.id === id)!.marks[0]!.look.body!.tint;
+    expect(tint(1, "edited")).not.toBe(tint(0, "edited"));
+    expect(tint(1, "unchanged")).toBe(tint(0, "unchanged"));
   });
 });

@@ -8,6 +8,7 @@ import { WHOLE, clipFor, dashed, disk, outline, solidArc, type Clip } from "./dr
 import {
   fitCamera,
   labelNames,
+  parentDir,
   pick,
   rimView,
   screenToWorld,
@@ -163,7 +164,8 @@ export class MapRenderer implements MapView {
   #looks = new WeakMap<NodeVisual, { gen: number; ageGen: number; look: FileLook | AggregateLook }>();
 
   #zoomPath = "";
-  #free: Rect | undefined; // where zoom targets are fitted (see fitCamera)
+  #free: Rect | undefined;
+  #zoomFree: Rect | undefined; // where zoomed-in targets are fitted: clear of every side panel (see setFreeArea) // where zoom targets are fitted (see fitCamera)
   #cam: CameraAnim;
 
   #hoverFns: ((path: string | null, screen: { x: number; y: number }) => void)[] = [];
@@ -283,7 +285,8 @@ export class MapRenderer implements MapView {
   }
 
   /** The viewport rect (CSS px) the layout was fitted into; zoom targets are centred in it. */
-  setFreeArea(rect: Rect): void {
+  setFreeArea(rect: Rect, zoomRect?: Rect): void {
+    this.#zoomFree = zoomRect;
     const f = this.#free;
     // A resize repacks the whole map: refit the focused folder rather than follow it.
     if (!f || f.x0 !== rect.x0 || f.y0 !== rect.y0 || f.x1 !== rect.x1 || f.y1 !== rect.y1) this.#freeView = null;
@@ -398,7 +401,8 @@ export class MapRenderer implements MapView {
     const c = this.#layout.get(this.#zoomPath);
     if (!c) return;
     const { width, height } = this.#size();
-    const target = fitCamera(c, width, height, this.#free);
+    // Zoomed in, the view fills the screen's corners, so it is fitted clear of the side panels too.
+    const target = fitCamera(this.#stars ? this.#clusterCircle(c) : c, width, height, c.depth > 0 ? (this.#zoomFree ?? this.#free) : this.#free);
     const prev = this.#cam.target;
     const changed = Math.abs(Math.log(target.k / prev.k)) > 1e-3;
     if (target.cx !== prev.cx || target.cy !== prev.cy || target.k !== prev.k) {
@@ -407,6 +411,28 @@ export class MapRenderer implements MapView {
       this.#aim(target, zoomPath(this.#camera(), target));
     }
     if (changed || userInitiated) this.#reportZoom(target.k);
+  }
+
+  /**
+   * Stars draw no folder edge, so a zoom frames what is drawn: the circle
+   * around the folder's children (squared off from their bounding box), not
+   * the folder's own, emptier circle.
+   */
+  #clusterCircle(c: Circle): Circle {
+    if (!c.isDir || c.depth === 0) return c;
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const k of this.#layout.values()) {
+      if (k.depth !== c.depth + 1 || parentDir(k.path) !== c.path) continue;
+      x0 = Math.min(x0, k.x - k.r);
+      y0 = Math.min(y0, k.y - k.r);
+      x1 = Math.max(x1, k.x + k.r);
+      y1 = Math.max(y1, k.y + k.r);
+    }
+    if (!Number.isFinite(x0)) return c;
+    return { ...c, x: (x0 + x1) / 2, y: (y0 + y1) / 2, r: Math.min(c.r, Math.max(x1 - x0, y1 - y0) / 2) };
   }
 
   /** Advances the camera; returns true while it is still moving. */
@@ -661,7 +687,7 @@ export class MapRenderer implements MapView {
     // Vector parts, redrawn only when their inputs change.
     const clip = R > f.big ? clipFor(sx, sy, R, f.rect) : WHOLE;
     // (A file's marks age through the Graphics' alpha; an aggregate's disc through its fill, part of the key.)
-    const gKey = `${Math.round(Rs * 2)}|${clip.key}|${this.#styleGen}|${touchSig(vis)}|${vis.state}|${n.aggregate ?? -1}|${agg?.fill.alpha.toFixed(2) ?? ""}|${gap.toFixed(3)}`;
+    const gKey = `${Math.round(Rs * 2)}|${clip.key}|${this.#styleGen}|${touchSig(vis)}|${vis.state}|${n.aggregate ?? -1}|${agg?.fill.alpha.toFixed(2) ?? ""}|${gap.toFixed(3)}|${this.#stars && plainDir && this.#nextLevels().has(n.path) ? "t" : ""}`;
     if (gKey !== v.gKey) {
       v.gKey = gKey;
       v.g.clear();
@@ -725,8 +751,12 @@ export class MapRenderer implements MapView {
         // The haze is a sprite (see #draw); only the worktree rings are drawn.
         const look = this.#look(n.visual, true) as AggregateLook;
         this.#drawRings(g, R, clip, look.rings);
+      } else if (this.#nextLevels().has(n.path)) {
+        // An open folder has no edge; the folders one click in get a faint tint, so the
+        // clusters in view read as groups.
+        const night = this.#theme === "night";
+        disk(g, R, clip, sx, sy, f.rect, { color: night ? 0x6c72a6 : 0x8a7fd6, alpha: night ? 0.05 : 0.065 });
       }
-      // An open folder draws no edge at all: it is its cluster of stars and its floating name.
       return;
     }
     const night = this.#theme === "night";
@@ -806,6 +836,19 @@ export class MapRenderer implements MapView {
     return w;
   }
 
+  /**
+   * A folder's label. With no circles to show nesting (Stars), a folder below
+   * the next level is named with its labelled parent in front ("apps/core"),
+   * so a deep cluster never reads as a top-level one.
+   */
+  #labelText(path: string): string | undefined {
+    const name = this.#labels.get(path);
+    if (name === undefined || !this.#stars) return name;
+    let p = parentDir(path);
+    while (p !== "" && !this.#labels.has(p)) p = parentDir(p);
+    return p === "" || p === this.#zoomPath ? name : `${this.#labels.get(p)}/${name}`;
+  }
+
   /** The next level below the folder in view: the folders a click lands in (see nextLevels). */
   #nextLevels(): Set<string> {
     const c = this.#next;
@@ -839,7 +882,7 @@ export class MapRenderer implements MapView {
         if (rimView(x, y, R, f.rect).kind !== "hidden") counts.push({ path: n.path, x, y, digits, font });
         continue;
       }
-      const name = this.#labels.get(n.path);
+      const name = this.#labelText(n.path);
       if (name === undefined) continue;
       const tier = labelTier(n.path, this.#zoomPath, next);
       if (R < labelMinR(tier)) continue;
@@ -861,7 +904,7 @@ export class MapRenderer implements MapView {
 
   /** Draws a folder's name; returns the half-angle to break its outline by (0 if none). */
   #drawLabel(v: View, n: SceneNode, R: number, sx: number, sy: number, f: FrameCtx): number {
-    const name = this.#labels.get(n.path);
+    const name = this.#labelText(n.path);
     const spot = f.spots.get(n.path);
     if (name === undefined || spot === undefined || n.leaving || R < labelMinR(spot.tier)) {
       this.#hideLabel(v);

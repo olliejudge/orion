@@ -42,11 +42,14 @@ const DAY = 24 * HOUR;
 /** Ages along the age strip: now, a day, a week, a month, half a year, a year (style.ts AGE_STOPS). */
 export const AGE_SAMPLES_MS = [0, DAY, 7 * DAY, 30 * DAY, 180 * DAY, 365 * DAY] as const;
 
-/** The main worktree ("you", always blue) stands in for any worktree. */
-const MAIN: Worktree = { id: "key", path: "", label: "main", head: "", isMain: true, locked: false, colorIndex: 0 };
+/** A worktree in colour `colorIndex` stands in for any worktree (the key shows a real one's colour; 0 is main's blue). */
+function keyWorktree(colorIndex: number): Worktree {
+  return { id: "key", path: "", label: "main", head: "", isMain: true, locked: false, colorIndex };
+}
 
 /** A file in the given state, touched `age` ms before the key's clock, encoded exactly as the map encodes a real one. */
-function sample(age: number, change?: { stage: Stage; kind: Kind }): NodeVisual {
+function sample(age: number, change?: { stage: Stage; kind: Kind }, colorIndex = 0): NodeVisual {
+  const MAIN = keyWorktree(colorIndex);
   const path = "sample.ts";
   const touched = KEY_NOW - age;
   const overlay = change ? new Map([[path, { path, size: 1, touched, ...change }]]) : null;
@@ -66,8 +69,28 @@ function mark(vis: NodeVisual, theme: Theme, r = R, cx = CX, shimmer = false): K
   return { cx, r, look: fileLook(vis, theme, null, KEY_NOW), glyph: glyphSize(r), shimmer };
 }
 
-export function keyEntries(theme: Theme): KeyEntry[] {
+/**
+ * SVG path of the Stars view's file mark (sprites.ts's star texture): four
+ * points reaching `r` from (cx, cy), with concave sides.
+ */
+export function starPath(cx: number, cy: number, r: number): string {
+  const pull = 0.105 * r; // the texture's concave sides pass this close to the middle
+  const pts: string[] = [];
+  for (let i = 0; i < 4; i++) {
+    const a = (i * Math.PI) / 2 - Math.PI / 2;
+    const b = a + Math.PI / 2;
+    const m = (a + b) / 2;
+    const f = (n: number) => n.toFixed(2);
+    if (i === 0) pts.push(`M${f(cx + r * Math.cos(a))} ${f(cy + r * Math.sin(a))}`);
+    pts.push(`Q${f(cx + pull * Math.cos(m))} ${f(cy + pull * Math.sin(m))} ${f(cx + r * Math.cos(b))} ${f(cy + r * Math.sin(b))}`);
+  }
+  return `${pts.join("")}Z`;
+}
+
+/** The key's rows; changed-file swatches take worktree colour `colorIndex` (pass the colour of a worktree on the map). */
+export function keyEntries(theme: Theme, colorIndex = 0): KeyEntry[] {
   const step = SWATCH_W / AGE_SAMPLES_MS.length;
+  const changed = (stage: Stage, kind: Kind): NodeVisual => sample(0, { stage, kind }, colorIndex);
   return [
     {
       id: "unchanged",
@@ -80,26 +103,26 @@ export function keyEntries(theme: Theme): KeyEntry[] {
       id: "edited",
       label: "Edited, uncommitted",
       hint: "Changed in a worktree but not committed yet: filled in the worktree's colour, with a glow while the work is live.",
-      marks: [mark(sample(0, { stage: "uncommitted", kind: "modified" }), theme)],
+      marks: [mark(changed("uncommitted", "modified"), theme)],
     },
     {
       id: "added",
       label: "New, uncommitted",
       hint: "A new file (or the new name of a moved one), not committed yet: filled in the worktree's colour with a +.",
-      marks: [mark(sample(0, { stage: "uncommitted", kind: "added" }), theme)],
+      marks: [mark(changed("uncommitted", "added"), theme)],
     },
     {
       id: "committed",
       label: "Committed on branch",
       hint: "Committed on the worktree's branch but not in base yet: filled in the worktree's colour, with a thin solid ring.",
-      marks: [mark(sample(0, { stage: "committed", kind: "modified" }), theme)],
+      marks: [mark(changed("committed", "modified"), theme)],
     },
     {
       id: "deleted",
       label: "Deleted",
       hint: "Deleted (or moved away) in a worktree: a hollow rim with a × in the worktree's colour, until the deletion reaches base.",
       // Shrunk as on the map, from a bubble just big enough that the × still shows.
-      marks: [mark(sample(0, { stage: "uncommitted", kind: "deleted" }), theme, (R + 0.5) * DELETED_SCALE)],
+      marks: [mark(changed("uncommitted", "deleted"), theme, (R + 0.5) * DELETED_SCALE)],
     },
     {
       id: "merged",

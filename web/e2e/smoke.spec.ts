@@ -367,6 +367,12 @@ test("V cycles the stars, tree map and partition views, which draw, zoom and are
   await expectLit(page, "stars", 120, 0.002);
   await page.waitForTimeout(800);
   await page.screenshot({ path: path.join(SHOTS, "stars.png") });
+  await page.keyboard.press("+");
+  await expect(crumbs).not.toHaveCount(1);
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: path.join(SHOTS, "stars-zoomed.png") });
+  await page.keyboard.press("0");
+  await expect(crumbs).toHaveCount(1);
 
   await page.keyboard.press("v");
   await expect(view.getByRole("radio", { name: "Tree map" })).toHaveAttribute("aria-checked", "true");
