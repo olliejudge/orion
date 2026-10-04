@@ -487,7 +487,7 @@
     treeMaxHeight={dirFilterTreeMax} />
 {/if}
 {#if !noWebGL}
-  <MapKey {theme} {view} colorIndex={keyColorIndex(repo, isolated)} onFootprint={(b) => (keyBox = b)} />
+  <MapKey {theme} {view} colorIndex={keyColorIndex(repo, isolated)} version={repo?.version} onFootprint={(b) => (keyBox = b)} />
 {/if}
 {#if !noWebGL}
   <ViewSwitch {view} centerX={pillX} onSelect={setView} />

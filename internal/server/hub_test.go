@@ -14,8 +14,9 @@ import (
 )
 
 type msg struct {
-	Type string `json:"type"`
-	Seq  uint64 `json:"seq"`
+	Type    string `json:"type"`
+	Seq     uint64 `json:"seq"`
+	Version string `json:"version"`
 }
 
 // dial opens /ws with the given Origin and cookie ("" = header absent). It
@@ -94,8 +95,8 @@ func TestWSAcceptsQueryToken(t *testing.T) {
 func TestWSSnapshotThenPatches(t *testing.T) {
 	h := startServer(t, Options{})
 	c := h.mustDial(t)
-	if m := read(t, c); m.Type != "snapshot" || m.Seq != 5 {
-		t.Fatalf("first message %+v, want snapshot seq 5", m)
+	if m := read(t, c); m.Type != "snapshot" || m.Seq != 5 || m.Version != "dev" {
+		t.Fatalf("first message %+v, want snapshot seq 5 with version dev", m)
 	}
 	waitSubs(t, h.src, 1)
 	h.src.publish(model.Patch{Type: "patch", Seq: 5}) // already covered by the snapshot: dropped

@@ -32,17 +32,20 @@ export function saveView(v: ViewKind, storage: Storage | null = defaultStorage()
 
 /**
  * The worktree colour the map key shows: the isolated worktree's, else the
- * one with the newest activity, else any worktree with changes, else main's
- * (0). So the key's swatches match what is actually on the map.
+ * first worktree with changes in the legend's order (lowest colour first),
+ * else main's (0). Stable while you read it: it doesn't follow each new
+ * activity row.
  */
 export function keyColorIndex(state: RepoState | null, isolated: WorktreeId | null): number {
   if (!state) return 0;
-  const ci = (id: WorktreeId | undefined): number | undefined => {
-    const c = id === undefined ? undefined : state.worktrees.get(id)?.colorIndex;
-    return c !== undefined && c >= 0 ? c : undefined;
-  };
-  const changed = [...state.overlays].find(([, entries]) => entries.size > 0)?.[0];
-  return ci(isolated ?? undefined) ?? ci(state.activity.at(-1)?.worktree) ?? ci(changed) ?? 0;
+  const iso = isolated === null ? undefined : state.worktrees.get(isolated)?.colorIndex;
+  if (iso !== undefined && iso >= 0) return iso;
+  let best = Infinity;
+  for (const [id, entries] of state.overlays) {
+    const c = state.worktrees.get(id)?.colorIndex ?? -1;
+    if (entries.size > 0 && c >= 0) best = Math.min(best, c);
+  }
+  return Number.isFinite(best) ? best : 0;
 }
 
 /** The view after `v` (the V key cycles through them). */

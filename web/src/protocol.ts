@@ -58,6 +58,8 @@ export interface Snapshot {
   tree: FileEntry[];
   overlays: Record<WorktreeId, ChangeEntry[]>;
   activity: Activity[];
+  /** The serving orion's version (absent from older servers). */
+  version?: string;
 }
 
 export interface Patch {

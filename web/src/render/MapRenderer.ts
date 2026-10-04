@@ -55,6 +55,8 @@ export type { Theme } from "./style";
 const LABEL_FADE_MS = 200; // labels fade in over time once placed at rest
 const LABEL_GAP_PAD_PX = 4; // outline clearance either side of a rim label
 const HALO_PX = 5; // halo peak this far outside the bubble, on screen
+/** Alpha of everything outside the folder zoomed into (see #outside). */
+const OUTSIDE_DIM = 0.22;
 /** A file's marks (rings, glow, glyph) sit at this fraction of its packed radius: around the star's bright middle. */
 const STAR_MARK_FRAC = 0.55;
 const SPLIT_GAP_PX = 3;
@@ -633,7 +635,10 @@ export class MapRenderer implements MapView {
     const v = this.#view(n, f.bank);
     v.root.visible = true;
     v.root.position.set(sx, sy);
-    v.root.alpha = n.alpha.value;
+    // Zoomed into a folder, everything outside it recedes, so the folder reads as framed
+    // even when it fills most of the repo and its neighbours stay on screen.
+    const outside = this.#outside(n.path);
+    v.root.alpha = n.alpha.value * (outside ? OUTSIDE_DIM : 1);
 
     const vis = n.visual;
     const look = n.isDir ? null : (this.#look(vis, false) as FileLook);
@@ -837,6 +842,17 @@ export class MapRenderer implements MapView {
   }
 
   /**
+   * Whether `path` lies outside the folder zoomed into (by a click, key or
+   * breadcrumb; a free wheel zoom dims nothing). Ancestors count as outside:
+   * their rims and names belong to the view you left.
+   */
+  #outside(path: string): boolean {
+    const z = this.#zoomPath;
+    if (z === "" || this.#freeView !== null) return false;
+    return path !== z && !path.startsWith(`${z}/`);
+  }
+
+  /**
    * A folder's label. With no circles to show nesting (Stars), a folder below
    * the next level is named with its labelled parent in front ("apps/core"),
    * so a deep cluster never reads as a top-level one.
@@ -868,7 +884,7 @@ export class MapRenderer implements MapView {
     const cands: LabelCandidate[] = [];
     const counts: CountCandidate[] = [];
     for (const n of this.#scene.nodes.values()) {
-      if (!n.isDir || n.leaving) continue;
+      if (!n.isDir || n.leaving || this.#outside(n.path)) continue;
       // Wait until the folder stops growing/shrinking so labels never balloon.
       if (Math.abs(n.r.value - n.r.target) > 0.05 * Math.max(n.r.target, 1e-6)) continue;
       const R = n.r.value * f.k;
@@ -906,7 +922,7 @@ export class MapRenderer implements MapView {
   #drawLabel(v: View, n: SceneNode, R: number, sx: number, sy: number, f: FrameCtx): number {
     const name = this.#labelText(n.path);
     const spot = f.spots.get(n.path);
-    if (name === undefined || spot === undefined || n.leaving || R < labelMinR(spot.tier)) {
+    if (name === undefined || spot === undefined || n.leaving || this.#outside(n.path) || R < labelMinR(spot.tier)) {
       this.#hideLabel(v);
       return 0;
     }
