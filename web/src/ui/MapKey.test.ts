@@ -122,4 +122,12 @@ describe("MapKey", () => {
     await userEvent.click(button);
     expect(button).toHaveAttribute("aria-expanded", "false");
   });
+
+  it("shows the serving orion's version at its foot, when known", () => {
+    const { unmount } = render(MapKey, { theme: "vision", version: "0.1.0-16-g7be2194", storage: null });
+    expect(screen.getByTestId("orion-version")).toHaveTextContent("Orion 0.1.0-16-g7be2194");
+    unmount();
+    render(MapKey, { theme: "vision", storage: null });
+    expect(screen.queryByTestId("orion-version")).toBeNull();
+  });
 });

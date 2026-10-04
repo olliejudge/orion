@@ -7,6 +7,8 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
+
+	"github.com/olliejudge/orion/internal/version"
 )
 
 const writeTimeout = 10 * time.Second
@@ -103,6 +105,7 @@ func (s *Server) stream(c *websocket.Conn) {
 
 func (s *Server) sendSnapshot(c *websocket.Conn) (uint64, error) {
 	snap := s.src.Snapshot()
+	snap.Version = version.Version
 	return snap.Seq, write(c, snap)
 }
 

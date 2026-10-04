@@ -120,6 +120,9 @@ type Snapshot struct {
 	Tree      []File                       `json:"tree"`     // sorted by path
 	Overlays  map[WorktreeID][]ChangeEntry `json:"overlays"` // sorted by path
 	Activity  []Activity                   `json:"activity"` // oldest→newest, ≤200
+	// Version is the serving orion's version, set by the server when it sends
+	// a snapshot (the engine leaves it empty); the UI shows it in the key.
+	Version string `json:"version,omitempty"`
 }
 
 // Patch is an incremental update; absent fields mean "unchanged".

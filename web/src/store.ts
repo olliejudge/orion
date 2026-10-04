@@ -11,6 +11,8 @@ export interface RepoState {
   touched: Map<string, number>;
   overlays: Map<WorktreeId, Map<string, ChangeEntry>>;
   activity: Activity[]; // newest LAST, ≤200
+  /** The serving orion's version, from the last snapshot. */
+  version?: string;
 }
 
 export interface Change {
@@ -78,6 +80,7 @@ function fromSnapshot(s: Snapshot): RepoState {
     touched: new Map((s.tree ?? []).flatMap((f): [string, number][] => (f.touched ? [[f.path, f.touched]] : []))),
     overlays,
     activity: (s.activity ?? []).slice(-ACTIVITY_LIMIT),
+    ...(s.version ? { version: s.version } : {}),
   };
 }
 

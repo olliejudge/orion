@@ -10,12 +10,14 @@
     view?: ViewKind;
     /** Worktree colour for the changed-file swatches (see keyColorIndex). */
     colorIndex?: number;
+    /** The serving orion's version, shown at the foot of the key. */
+    version?: string | undefined;
     /** Reports the panel's size whenever it changes (the map keeps clear of it). */
     onFootprint?: (size: Footprint) => void;
     /** Where the open/closed choice is remembered (defaults to localStorage). */
     storage?: Storage | null;
   }
-  let { theme, view = "bubbles", colorIndex = 0, onFootprint, storage }: Props = $props();
+  let { theme, view = "bubbles", colorIndex = 0, version, onFootprint, storage }: Props = $props();
 
   const uid = $props.id();
   // Read once, on mount: afterwards `open` is the panel's own state. An
@@ -172,7 +174,8 @@
       </li>
     </ul>
     <p class="note">{view === "stars" ? "Stars are files, sized by file size; each cluster is a folder." : view === "bubbles" ? "Circles are folders." : "Boxes are folders, sized by the files in them."} Colours are worktrees; a split ring means several. Brightness is recency.</p>
-    <p class="note">Click: in one level · Double-click: straight in · Scroll: zoom · Esc: out · 0: home</p>
+    <p class="note">Click: in one level · Double-click: straight in · Scroll: zoom · Esc: out · 0: home · V: view</p>
+    {#if version}<p class="note version" data-testid="orion-version">Orion {version}</p>{/if}
   </div>
 </section>
 

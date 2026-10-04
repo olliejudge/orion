@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { VIEW_KEY, loadView, nextView, saveView } from "./view";
+import { VIEW_KEY, keyColorIndex, loadView, nextView, saveView } from "./view";
 
 function memory(): Storage {
   const m = new Map<string, string>();
@@ -31,5 +31,22 @@ describe("view choice", () => {
     expect(nextView("stars")).toBe("treemap");
     expect(nextView("treemap")).toBe("partition");
     expect(nextView("partition")).toBe("bubbles");
+  });
+});
+
+describe("keyColorIndex", () => {
+  const wt = (id: string, colorIndex: number) => ({ id, path: "", label: id, head: "", isMain: id === "m", locked: false, colorIndex });
+  const state = (overlays: Record<string, number>, activityFrom?: string) =>
+    ({
+      worktrees: new Map([wt("m", 0), wt("a", 3), wt("b", 1)].map((w) => [w.id, w])),
+      overlays: new Map(Object.entries(overlays).map(([id, n]) => [id, new Map(Array.from({ length: n }, (_, i) => [`f${i}`, {}]))])),
+      activity: activityFrom ? [{ ts: 0, worktree: activityFrom, kind: "modified" }] : [],
+    }) as unknown as Parameters<typeof keyColorIndex>[0];
+
+  it("uses the isolated worktree, else the lowest colour with changes, ignoring the newest activity", () => {
+    expect(keyColorIndex(state({ a: 2, b: 1 }, "a"), null)).toBe(1);
+    expect(keyColorIndex(state({ a: 2, b: 1 }), "a")).toBe(3);
+    expect(keyColorIndex(state({}), null)).toBe(0);
+    expect(keyColorIndex(null, null)).toBe(0);
   });
 });
