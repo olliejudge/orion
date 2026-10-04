@@ -1,6 +1,6 @@
 <script lang="ts">
   import { DELETED_RIM_W_PX, GLYPH_ARM, GLYPH_STROKE, type Theme } from "../render/style";
-  import { SWATCH_H, SWATCH_W, countSwatch, hexOf, keyEntries, loadKeyOpen, saveKeyOpen, type KeyMark } from "./encodingKey";
+  import { SWATCH_H, SWATCH_W, countSwatch, hexOf, keyEntries, starPath, loadKeyOpen, saveKeyOpen, type KeyMark } from "./encodingKey";
   import type { Footprint } from "./models";
   import type { ViewKind } from "../render/view";
 
@@ -8,12 +8,14 @@
     theme: Theme;
     /** Circles are folders in the bubble view; boxes are in the tree map and partition. */
     view?: ViewKind;
+    /** Worktree colour for the changed-file swatches (see keyColorIndex). */
+    colorIndex?: number;
     /** Reports the panel's size whenever it changes (the map keeps clear of it). */
     onFootprint?: (size: Footprint) => void;
     /** Where the open/closed choice is remembered (defaults to localStorage). */
     storage?: Storage | null;
   }
-  let { theme, view = "bubbles", onFootprint, storage }: Props = $props();
+  let { theme, view = "bubbles", colorIndex = 0, onFootprint, storage }: Props = $props();
 
   const uid = $props.id();
   // Read once, on mount: afterwards `open` is the panel's own state. An
@@ -23,7 +25,7 @@
   const narrow = typeof matchMedia === "function" && matchMedia("(max-width: 720px)").matches;
   // svelte-ignore state_referenced_locally
   let open = $state(loadKeyOpen(storage, !narrow));
-  const entries = $derived(keyEntries(theme));
+  const entries = $derived(keyEntries(theme, colorIndex));
   const counted = $derived(countSwatch(theme));
 
   // Mirrors the renderer's halo sprite (sprites.ts HALO_RING_FRAC; MapRenderer
@@ -73,7 +75,11 @@
       {/if}
       {#if body}
         {#if view === "stars"}<circle cx={m.cx} {cy} r={m.r * 1.9} fill={hexOf(body.tint)} opacity={body.alpha * 0.2} />{/if}
-        <circle class="body" cx={m.cx} {cy} r={m.r} fill={hexOf(body.tint)} opacity={body.alpha} />
+        {#if view === "stars"}
+          <path class="body" d={starPath(m.cx, cy, m.r * 1.15)} fill={hexOf(body.tint)} opacity={0.45 + 0.55 * body.alpha} />
+        {:else}
+          <circle class="body" cx={m.cx} {cy} r={m.r} fill={hexOf(body.tint)} opacity={body.alpha} />
+        {/if}
       {/if}
       <!-- Rim and rings age together, as the map sets their alpha as a group. -->
       <g opacity={m.look.marks}>

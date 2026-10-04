@@ -40,7 +40,8 @@ export interface MapView {
   isolate(worktree: WorktreeId | null): void;
   highlight(path: string | null): void;
   zoomTo(path: string): void;
-  setFreeArea(rect: FreeArea): void;
+  /** `zoomRect`: where zoomed-in folders are fitted, clear of the side panels (bubbles and stars; others ignore it). */
+  setFreeArea(rect: FreeArea, zoomRect?: FreeArea): void;
   onHover(fn: (path: string | null, screen: { x: number; y: number }) => void): void;
   onClick(fn: (path: string | null) => void): void;
   onZoom(fn: (scale: number) => void): void;
