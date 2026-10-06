@@ -93,6 +93,16 @@ func TestRunHelpExitsZero(t *testing.T) {
 	}
 }
 
+func TestRunHelpMentionsSystemdSocket(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--help"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	if !strings.Contains(stderr.String(), "LISTEN_FDS") {
+		t.Fatalf("--help %q does not mention serving on a socket from systemd (LISTEN_FDS)", stderr.String())
+	}
+}
+
 func TestRunTwoPathsIsUsageError(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"a", "b"}, &stdout, &stderr); code != 2 {
