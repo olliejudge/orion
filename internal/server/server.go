@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"strconv"
 	"strings"
@@ -93,7 +94,7 @@ func Start(ctx context.Context, src Source, opt Options) (*Server, error) {
 		}
 	}
 	opt.AllowHosts = hosts
-	ln, err := listen(opt.Port)
+	ln, err := openListener(opt.Port)
 	if err != nil {
 		return nil, err
 	}
@@ -137,6 +138,31 @@ func Start(ctx context.Context, src Source, opt Options) (*Server, error) {
 		_ = s.http.Shutdown(sctx)
 	}()
 	return s, nil
+}
+
+// systemdSocket is the socket systemd passed this process, if any (see
+// inherited; fd 3 per sd_listen_fds(3)). Tests replace it.
+var systemdSocket = func() (net.Listener, bool, error) {
+	return inherited(os.Getenv, os.Unsetenv, os.Getpid(), 3)
+}
+
+// openListener uses the socket systemd passed (see systemdSocket), which must
+// be on `port` unless port is 0, and otherwise binds 127.0.0.1:port (see
+// listen). An error about the passed socket is returned as is: falling back
+// to binding a port would defeat systemd holding it.
+func openListener(port int) (net.Listener, error) {
+	ln, ok, err := systemdSocket()
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return listen(port)
+	}
+	if got := ln.Addr().(*net.TCPAddr).Port; port != 0 && port != got {
+		_ = ln.Close()
+		return nil, fmt.Errorf("--port %d does not match the systemd socket's port %d", port, got)
+	}
+	return ln, nil
 }
 
 // Wait blocks until the server has stopped and every WebSocket has closed.

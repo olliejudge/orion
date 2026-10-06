@@ -52,7 +52,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "usage: orion [path] [--port N] [--no-open] [--base BRANCH] [--allow-host HOST]... [--dev] [--version]")
 		fs.PrintDefaults()
 	}
-	port := fs.Int("port", 7070, "port to listen on (the next free port is used if taken)")
+	port := fs.Int("port", 7070, "port to listen on (the next free port is used if taken); with a socket from systemd (LISTEN_FDS), that socket, which must be on this port")
 	noOpen := fs.Bool("no-open", false, "do not open the browser")
 	base := fs.String("base", "", "branch to compare against (default: origin/HEAD, main, master, current)")
 	dev := fs.Bool("dev", false, "serve only /ws; the UI comes from the Vite dev server")

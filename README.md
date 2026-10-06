@@ -69,7 +69,7 @@ orion [path] [--port N] [--no-open] [--base BRANCH] [--allow-host HOST]... [--de
 | Flag | Meaning |
 |---|---|
 | `path` | Any directory inside the repo, including inside a linked worktree. Default: the current directory. |
-| `--port N` | Port to listen on. Default 7070; if it is taken, the next free port is used. |
+| `--port N` | Port to listen on. Default 7070; if it is taken, the next free port is used. With a socket from systemd, it must be that socket's port (see below). |
 | `--no-open` | Print the URL but don't open a browser. |
 | `--base BRANCH` | Branch to compare against. Default: `origin`'s default branch, then `main`, then `master`, then the main worktree's current branch. |
 | `--allow-host HOST` | Also accept requests for this exact hostname, e.g. when a reverse proxy such as `tailscale serve` forwards to Orion. Repeatable. No wildcards; the token is still required. |
@@ -77,6 +77,25 @@ orion [path] [--port N] [--no-open] [--base BRANCH] [--allow-host HOST]... [--de
 | `--version` | Print the version and exit. |
 
 `orion -h` prints the usage.
+
+### Under systemd socket activation
+
+Orion can serve on a listening socket that systemd passes it (`LISTEN_FDS`, see `sd_listen_fds(3)`), so systemd holds the port even while Orion restarts or upgrades, and no other process can take it. With a socket from systemd, Orion never binds or falls back to another port: it must get exactly one loopback TCP socket, and `--port` must match that socket's port. For example:
+
+```ini
+# orion.socket
+[Socket]
+ListenStream=127.0.0.1:7070
+
+[Install]
+WantedBy=sockets.target
+```
+
+```ini
+# orion.service
+[Service]
+ExecStart=/usr/local/bin/orion --no-open --port 7070 /path/to/repo
+```
 
 ## Getting around
 
