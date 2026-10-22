@@ -27,6 +27,7 @@ type Engine struct {
 	mainRoot     string // canonical
 	commonDir    string // canonical
 	name         string
+	logName      string // set by a Workspace: prefixes this repo's log lines
 
 	work    sync.Mutex // serialises recomputes; guards the fields below
 	baseRef string
@@ -295,6 +296,9 @@ func (e *Engine) computeBaseTouched(ctx context.Context, sha string, want map[st
 // just the cancellation).
 func (e *Engine) logf(ctx context.Context, format string, args ...any) {
 	if ctx.Err() == nil {
+		if e.logName != "" {
+			format = e.logName + ": " + format
+		}
 		log.Printf("orion: "+format, args...)
 	}
 }

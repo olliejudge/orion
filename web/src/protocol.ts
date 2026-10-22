@@ -31,9 +31,13 @@ export interface Worktree {
   isMain: boolean;
   locked: boolean;
   colorIndex: number;
+  /** The repo's key when several repos are served. */
+  repo?: string;
 }
 
 export interface RepoInfo {
+  /** In `Snapshot.repos` only: the repo's path prefix in the combined tree. */
+  key?: string;
   name: string;
   base: string;
   baseSha: string;
@@ -60,6 +64,8 @@ export interface Snapshot {
   activity: Activity[];
   /** The serving orion's version (absent from older servers). */
   version?: string;
+  /** Every repo, when several are served; `repo` then names the project and has no base. */
+  repos?: RepoInfo[];
 }
 
 export interface Patch {
@@ -69,6 +75,8 @@ export interface Patch {
   base?: { sha: string; upsert: FileEntry[]; remove: string[] };
   overlays?: Record<WorktreeId, { upsert: ChangeEntry[]; remove: string[] }>;
   activity?: Activity[];
+  /** The full repo list, sent with several repos when a base moves (`base.sha` is then empty). */
+  repos?: RepoInfo[];
 }
 
 export type ServerMessage = Snapshot | Patch;

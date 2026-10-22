@@ -583,3 +583,20 @@ test("screenshots both themes of a fresh demo with live agent edits", async ({ p
     await orion.stop();
   }
 });
+
+test("serves several repos as one map, with the key grouped by repo", async ({ page }) => {
+  const orion = await startOrion({ names: ["nebula", "quasar"] });
+  try {
+    await page.goto(orion.url);
+    await expect(page.getByTestId("legend").locator("h1")).toHaveText("nebula + quasar");
+    const more = page.getByTestId("legend").getByRole("button", { name: /idle$/ });
+    if (await more.count()) await more.click();
+    for (const repo of ["nebula", "quasar"]) {
+      await expect(page.getByTestId("legend-repo").filter({ hasText: new RegExp(`^${repo}$`) }).first()).toBeVisible();
+    }
+    await page.waitForTimeout(1_500);
+    await page.screenshot({ path: path.join(SHOTS, "multi-repo.png") });
+  } finally {
+    await orion.stop();
+  }
+});

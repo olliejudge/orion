@@ -87,6 +87,15 @@ describe("repoIdentity", () => {
     expect(repoIdentity(s)).toBe("/repo/main");
   });
 
+  it("uses every main worktree's path with several repos", () => {
+    const s: Pick<Snapshot, "repo" | "worktrees" | "repos"> = {
+      repo: { name: "acme", base: "", baseSha: "" },
+      repos: [],
+      worktrees: [worktree({ id: "a", path: "/acme-api", isMain: true }), worktree({ id: "b", path: "/acme-web/wt", isMain: false }), worktree({ id: "c", path: "/acme-web", isMain: true })],
+    };
+    expect(repoIdentity(s)).toBe("/acme-api\n/acme-web");
+  });
+
   it("falls back to repo.name when no worktree is main", () => {
     const s: Pick<Snapshot, "repo" | "worktrees"> = {
       repo: { name: "sample-app", base: "main", baseSha: "b" },

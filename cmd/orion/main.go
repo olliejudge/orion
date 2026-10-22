@@ -39,6 +39,12 @@ var tokenPath = func() (string, error) {
 	return filepath.Join(dir, "orion", "token"), nil
 }
 
+// source is a repo.Engine or, for several repos, a repo.Workspace.
+type source interface {
+	server.Source
+	Run(ctx context.Context) error
+}
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -49,7 +55,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("orion", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: orion [path] [--port N] [--no-open] [--base BRANCH] [--allow-host HOST]... [--dev] [--version]")
+		fmt.Fprintln(stderr, "usage: orion [path...] [--name NAME] [--port N] [--no-open] [--base BRANCH] [--allow-host HOST]... [--dev] [--version]")
 		fs.PrintDefaults()
 	}
 	port := fs.Int("port", 7070, "port to listen on (the next free port is used if taken); with a socket from systemd (LISTEN_FDS), that socket, which must be on this port")
@@ -57,6 +63,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	base := fs.String("base", "", "branch to compare against (default: origin/HEAD, main, master, current)")
 	dev := fs.Bool("dev", false, "serve only /ws; the UI comes from the Vite dev server")
 	showVersion := fs.Bool("version", false, "print the version and exit")
+	name := fs.String("name", "", "with several repos, the project name (default: the repo names' common prefix)")
 	var allowHosts []string
 	fs.Func("allow-host", "also accept this exact hostname, e.g. behind a reverse proxy (repeatable)", func(v string) error {
 		h, err := server.CheckAllowHost(v)
@@ -86,29 +93,36 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "orion %s\n", version.Version)
 		return 0
 	}
-	if len(positional) > 1 {
-		fs.Usage()
-		return 2
-	}
 	if *port < 0 || *port > server.MaxPort {
 		fmt.Fprintf(stderr, "orion: invalid --port %d: must be 1-%d\n", *port, server.MaxPort)
 		return 2
 	}
-	path := "."
-	if len(positional) == 1 {
-		path = positional[0]
+	paths := positional
+	if len(paths) == 0 {
+		paths = []string{"."}
 	}
 
 	ctx, stop := signal.NotifyContext(baseContext(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	eng, err := repo.Open(ctx, path, *base, gitx.Runner{})
+	engines, dups, err := repo.OpenAll(ctx, paths, *base, gitx.Runner{})
 	if err != nil {
 		if ctx.Err() != nil {
 			return 0 // Ctrl-C during startup interrupted git: not a failure
 		}
 		fmt.Fprintln(stderr, "orion:", firstLine(err))
 		return 1
+	}
+	for _, d := range dups {
+		fmt.Fprintf(stderr, "orion: skipping %s: its repo is already listed\n", d)
+	}
+	// One repo is served as-is; several are combined by a Workspace.
+	var eng source = engines[0]
+	served := engines[0].Snapshot().Repo.Name
+	if len(engines) > 1 {
+		ws := repo.NewWorkspace(*name, engines)
+		eng = ws
+		served = fmt.Sprintf("%s (%s)", ws.Name(), strings.Join(ws.Keys(), ", "))
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -136,7 +150,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "orion: port %d is in use; --dev does not fall back to another port, as Vite proxies /ws to this one\n", *port)
 		return 1
 	}
-	fmt.Fprintf(stdout, "orion %s serving %s\n  %s\n", version.Version, eng.Snapshot().Repo.Name, srv.URL)
+	fmt.Fprintf(stdout, "orion %s serving %s\n  %s\n", version.Version, served, srv.URL)
 	if *dev {
 		fmt.Fprintf(stdout, "  dev UI (Vite): http://localhost:%d/?t=%s\n", server.VitePort, u.Query().Get("t"))
 	}

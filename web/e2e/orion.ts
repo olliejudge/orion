@@ -84,7 +84,9 @@ function stopProcess(proc: ChildProcess): Promise<void> {
  * Builds a fresh synthetic demo repo (`scripts/demo --once`) in a temp dir and
  * starts `bin/orion` on it. Whatever fails, nothing is left running or on disk.
  */
-export async function startOrion(): Promise<Orion> {
+export async function startOrion(opts: { names?: string[] } = {}): Promise<Orion> {
+  // Several names serve several demo repos (seeds 1, 2, …) as one project.
+  const names = opts.names ?? ["nebula"];
   const bin = path.join(repoRoot, "bin", "orion");
   if (!existsSync(bin)) {
     throw new Error(`${bin} does not exist. Run \`make build\` in ${repoRoot} first.`);
@@ -96,13 +98,16 @@ export async function startOrion(): Promise<Orion> {
     rmSync(work, { recursive: true, force: true });
   };
   try {
-    // The demo also creates a sibling `nebula.wt`, so removing `work` cleans up both.
-    const demoDir = path.join(work, "nebula");
-    execFileSync("go", ["run", "./scripts/demo", "--once", "--dir", demoDir, "--seed", "1"], {
-      cwd: repoRoot,
-      stdio: ["ignore", "ignore", "inherit"],
-      timeout: 120_000,
+    // The demo also creates a sibling `<name>.wt`, so removing `work` cleans up both.
+    const dirs = names.map((n) => path.join(work, n));
+    dirs.forEach((dir, i) => {
+      execFileSync("go", ["run", "./scripts/demo", "--once", "--dir", dir, "--seed", String(i + 1)], {
+        cwd: repoRoot,
+        stdio: ["ignore", "ignore", "inherit"],
+        timeout: 120_000,
+      });
     });
+    const demoDir = dirs[0]!;
     const port = await freePort();
     // Orion persists its auth token under the OS config dir (see
     // cmd/orion/main.go's tokenPath, derived from os.UserConfigDir()), which
@@ -113,7 +118,7 @@ export async function startOrion(): Promise<Orion> {
     // equivalent).
     const fakeHome = path.join(work, "home");
     mkdirSync(fakeHome, { recursive: true });
-    proc = spawn(bin, [demoDir, "--no-open", "--port", String(port)], {
+    proc = spawn(bin, [...dirs, "--no-open", "--port", String(port)], {
       stdio: ["ignore", "pipe", "inherit"],
       env: { ...process.env, HOME: fakeHome, XDG_CONFIG_HOME: fakeHome },
     });

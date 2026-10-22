@@ -5,7 +5,7 @@ import { encode } from "../layout/encoding";
 import { isExcluded } from "../layout/exclude";
 import { freeArea, type Insets } from "../layout/frame";
 import type { Circle } from "../layout/pack";
-import type { Activity, WorktreeId } from "../protocol";
+import type { Activity, Worktree, WorktreeId } from "../protocol";
 import { parentDir } from "../render/geometry";
 import type { RepoState } from "../store";
 import { folderStats } from "./folderStats";
@@ -23,6 +23,39 @@ export interface LegendItem {
   changed: number;
   isMain: boolean;
   path: string;
+  /** The repo's key when several repos are served. */
+  repo?: string;
+}
+
+/** A worktree's name for the chrome: its label, prefixed by its repo when several repos are served. */
+export function worktreeName(w: Pick<Worktree, "label" | "repo">): string {
+  return w.repo ? `${w.repo} ▸ ${w.label}` : w.label;
+}
+
+/** The base a worktree's changes are compared with: its own repo's, with several repos. */
+export function baseOf(state: Pick<RepoState, "repo" | "repos">, w: Pick<Worktree, "repo"> | undefined): string {
+  return state.repos?.find((r) => r.key === w?.repo)?.base || state.repo.base;
+}
+
+/** What the key's "Compared with" line names: one base, or each repo's when they differ. */
+export function baseLine(state: Pick<RepoState, "repo" | "repos">): string {
+  const repos = state.repos;
+  if (!repos || repos.length === 0) return state.repo.base || "HEAD";
+  const bases = new Set(repos.map((r) => r.base || "HEAD"));
+  if (bases.size === 1) return [...bases][0]!;
+  return repos.map((r) => `${r.key}: ${r.base || "HEAD"}`).join(", ");
+}
+
+/** Splits legend items, already in display order, into one run per repo (one unnamed run for a single repo). */
+export function legendGroups(items: LegendItem[]): { repo: string; items: LegendItem[] }[] {
+  const groups: { repo: string; items: LegendItem[] }[] = [];
+  for (const it of items) {
+    const repo = it.repo ?? "";
+    const last = groups[groups.length - 1];
+    if (last && last.repo === repo) last.items.push(it);
+    else groups.push({ repo, items: [it] });
+  }
+  return groups;
 }
 
 export function legendModel(state: RepoState, now: number, excluded?: ReadonlySet<string>): { active: LegendItem[]; idle: LegendItem[] } {
@@ -38,17 +71,23 @@ export function legendModel(state: RepoState, now: number, excluded?: ReadonlySe
     let changed = 0;
     for (const path of state.overlays.get(w.id)?.keys() ?? []) if (!excluded || !isExcluded(path, excluded)) changed++;
     const item: LegendItem = { id: w.id, label: w.label, color: worktreeColor(w.colorIndex), changed, isMain: w.isMain, path: w.path };
+    if (w.repo !== undefined) item.repo = w.repo;
     if (changed > 0 || recent.has(w.id)) active.push(item);
     else idle.push(item);
   }
+  // With several repos, items keep their repo's order first, so each repo's
+  // worktrees sit together under its heading.
+  const repoRank = new Map((state.repos ?? []).map((r, i) => [r.key, i]));
+  const byRepo = (a: LegendItem, b: LegendItem): number => (repoRank.get(a.repo) ?? 0) - (repoRank.get(b.repo) ?? 0);
   const order = (a: LegendItem, b: LegendItem): number =>
+    byRepo(a, b) ||
     Number(b.isMain) - Number(a.isMain) || (a.label < b.label ? -1 : a.label > b.label ? 1 : 0);
   // Unassigned colours (-1) sort after every assigned one, so main stays first.
   const rank = (id: WorktreeId): number => {
     const i = state.worktrees.get(id)?.colorIndex ?? -1;
     return i < 0 ? Number.MAX_SAFE_INTEGER : i;
   };
-  const colorOrder = (a: LegendItem, b: LegendItem): number => rank(a.id) - rank(b.id) || order(a, b);
+  const colorOrder = (a: LegendItem, b: LegendItem): number => byRepo(a, b) || rank(a.id) - rank(b.id) || order(a, b);
   active.sort(colorOrder);
   idle.sort(order);
   return { active, idle };
@@ -146,7 +185,7 @@ export function tooltipInfo(state: RepoState, c: Circle, excluded?: ReadonlySet<
     if (t.kind === "renamed" && entry?.from) verb = `Moved from ${entry.from}`;
     else if (!entry && t.kind === "deleted") verb = "Moved away";
     const when = t.touched ? ` · ${timeAgo(t.touched, now)}` : "";
-    return { color: worktreeColor(t.colorIndex), label: w?.label ?? t.worktree, text: `${verb}, ${stageText(t.stage)}${when}` };
+    return { color: worktreeColor(t.colorIndex), label: w ? worktreeName(w) : t.worktree, text: `${verb}, ${stageText(t.stage)}${when}` };
   });
   let size = state.tree.get(c.path) ?? 0;
   for (const m of state.overlays.values()) {
@@ -168,7 +207,7 @@ function folderInfo(state: RepoState, path: string, excluded?: ReadonlySet<strin
   const touches = ids.map((id) => {
     const w = state.worktrees.get(id);
     const { count, stage } = stats.changed.get(id)!;
-    return { color: worktreeColor(w?.colorIndex ?? -1), label: w?.label ?? id, text: `${count} changed, ${stageText(stage)}` };
+    return { color: worktreeColor(w?.colorIndex ?? -1), label: w ? worktreeName(w) : id, text: `${count} changed, ${stageText(stage)}` };
   });
   const { dir, name } = splitPath(path);
   return { dir, name: `${name}/`, detail: plural(stats.files, "file"), touches };

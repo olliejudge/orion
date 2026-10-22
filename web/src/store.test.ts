@@ -51,6 +51,19 @@ describe("RepoStore", () => {
     expect(s.worktrees.get("w1")?.label).toBe("feat/a");
   });
 
+  it("keeps the repo list from a multi-repo snapshot, and replaces it when a base moves", () => {
+    const store = new RepoStore();
+    const repos = [
+      { key: "acme-api", name: "acme-api", base: "main", baseSha: "a1" },
+      { key: "acme-web", name: "acme-web", base: "main", baseSha: "w1" },
+    ];
+    store.apply(snapshot({ repo: { name: "acme", base: "", baseSha: "" }, repos }));
+    expect(store.state!.repos?.map((r) => r.baseSha)).toEqual(["a1", "w1"]);
+    store.apply(patch(6, { base: { sha: "", upsert: [], remove: [] }, repos: [repos[0]!, { ...repos[1]!, baseSha: "w2" }] }));
+    expect(store.state!.repos?.map((r) => r.baseSha)).toEqual(["a1", "w2"]);
+    expect(store.state!.repo).toEqual({ name: "acme", base: "", baseSha: "" });
+  });
+
   it("rejects a patch before any snapshot", () => {
     expect(new RepoStore().apply(patch(1))).toEqual({ ok: false, needsResync: true });
   });

@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { WorktreeId } from "../protocol";
   import type { RepoState } from "../store";
-  import { legendModel, type Footprint, type LegendItem } from "./models";
+  import { baseLine, legendGroups, legendModel, type Footprint, type LegendItem } from "./models";
 
   interface Props {
     repo: RepoState;
@@ -55,6 +55,15 @@
   </li>
 {/snippet}
 
+{#snippet pills(items: LegendItem[], cls: string)}
+  {#each legendGroups(items) as g (g.repo)}
+    {#if g.repo}<h2 class="repo" data-testid="legend-repo">{g.repo}</h2>{/if}
+    <ul class={cls}>
+      {#each g.items as w (w.id)}{@render pill(w)}{/each}
+    </ul>
+  {/each}
+{/snippet}
+
 <section
   class="legend glass"
   data-testid="legend"
@@ -62,19 +71,15 @@
   style:--legend-reserve={`${reserveBottom}px`}
   bind:this={panel}>
   <h1>{repo.repo.name}</h1>
-  <p class="base">Compared with {repo.repo.base || "HEAD"}</p>
+  <p class="base">Compared with {baseLine(repo)}</p>
   <div class="night-reveal scroll" data-testid="legend-list">
-    <ul>
-      {#each model.active as w (w.id)}{@render pill(w)}{/each}
-    </ul>
+    {@render pills(model.active, "")}
     {#if model.idle.length > 0}
       <button class="more" aria-expanded={showIdle} onclick={() => (showIdle = !showIdle)}>
         {showIdle ? "Hide idle" : `+${model.idle.length} idle`}
       </button>
       {#if showIdle}
-        <ul class="idle">
-          {#each model.idle as w (w.id)}{@render pill(w)}{/each}
-        </ul>
+        {@render pills(model.idle, "idle")}
       {/if}
     {/if}
   </div>
@@ -115,6 +120,15 @@
     font-size: 13px;
     font-weight: 600;
     letter-spacing: -0.01em;
+  }
+  .repo {
+    margin: 8px 0 4px;
+    color: var(--text-faint);
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .repo:first-child {
+    margin-top: 0;
   }
   .base {
     margin: 1px 0 8px;
