@@ -32,4 +32,4 @@ This repo is public. Repos we test against locally may be private: never copy th
   - `go (ubuntu-latest)` / `go (macos-latest)`: `go vet ./...`, `golangci-lint run`, `go test -race -count=1 ./...`.
   - `web`: `pnpm -C web lint`, `pnpm -C web test`, `pnpm -C web build`.
   - `e2e (Playwright, macOS)`: `make build`, then `pnpm -C web e2e` against the synthetic demo repo.
-- Toolchain: Go 1.27, git ≥ 2.30, golangci-lint v2.13.2 (`brew install golangci-lint` or `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2`), and pnpm 12 + Node ≥ 22.12 (CI uses Node 24) for `web/`.
+- Toolchain: Go 1.27, git ≥ 2.30, golangci-lint v2.15.0 (`brew install golangci-lint` or `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0`), and pnpm 12 + Node ≥ 22.12 (CI uses Node 24) for `web/`.
