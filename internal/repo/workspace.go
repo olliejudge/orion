@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/olliejudge/orion/internal/gitx"
 	"github.com/olliejudge/orion/internal/model"
@@ -150,7 +151,8 @@ func DefaultName(keys []string) string {
 	prefix := keys[0]
 	for _, k := range keys[1:] {
 		for !strings.HasPrefix(k, prefix) {
-			prefix = prefix[:len(prefix)-1]
+			_, n := utf8.DecodeLastRuneInString(prefix) // whole runes, so a name never ends mid-character
+			prefix = prefix[:len(prefix)-n]
 		}
 	}
 	if prefix = strings.TrimRight(prefix, "-_."); prefix == "" {

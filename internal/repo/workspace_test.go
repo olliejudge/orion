@@ -32,6 +32,7 @@ func TestDefaultName(t *testing.T) {
 		{[]string{"acme_api", "acme.web", "acme-game"}, "acme"},
 		{[]string{"api", "web"}, "api + web"},
 		{[]string{"app", "apple"}, "app"},
+		{[]string{"café-x", "cafè-y"}, "caf"},
 	} {
 		if got := DefaultName(tc.keys); got != tc.want {
 			t.Errorf("DefaultName(%q) = %q, want %q", tc.keys, got, tc.want)
