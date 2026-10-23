@@ -2,7 +2,7 @@
   import { worktreeColor } from "../colors";
   import type { RepoState } from "../store";
   import { relativeTime, splitPath } from "./format";
-  import { activityRows, rowFade, type ActivityRow } from "./models";
+  import { activityRows, baseOf, rowFade, worktreeName, type ActivityRow } from "./models";
 
   interface Props {
     repo: RepoState;
@@ -21,7 +21,8 @@
     return worktreeColor(repo.worktrees.get(row.worktree)?.colorIndex ?? -1);
   }
   function who(row: ActivityRow): string {
-    return repo.worktrees.get(row.worktree)?.label ?? "removed worktree";
+    const w = repo.worktrees.get(row.worktree);
+    return w ? worktreeName(w) : "removed worktree";
   }
   function files(n: number | undefined): string {
     return n === undefined ? "" : ` ${n} ${n === 1 ? "file" : "files"}`;
@@ -62,7 +63,7 @@
             <div class="hit" title={who(row)}>
               <span class="dot"></span>
               <span class="path">
-                <span class="name">{row.kind === "commit" ? `Committed${files(row.files)}` : `Merged${files(row.files)} into ${repo.repo.base || "base"}`}</span>
+                <span class="name">{row.kind === "commit" ? `Committed${files(row.files)}` : `Merged${files(row.files)} into ${baseOf(repo, repo.worktrees.get(row.worktree)) || "base"}`}</span>
                 {#if row.subject}<span class="subject">{row.subject}</span>{/if}
               </span>
               <time datetime={new Date(row.ts).toISOString()}>{relativeTime(row.ts, now)}</time>

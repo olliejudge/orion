@@ -10,6 +10,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -103,11 +104,73 @@ func TestRunHelpMentionsSystemdSocket(t *testing.T) {
 	}
 }
 
-func TestRunTwoPathsIsUsageError(t *testing.T) {
+func TestRunTwoPathsOneNotARepo(t *testing.T) {
+	r, _ := testRepo(t)
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"a", "b"}, &stdout, &stderr); code != 2 {
-		t.Fatalf("exit code = %d, want 2", code)
+	if code := run([]string{"--no-open", "--port", "0", r.Path(), t.TempDir()}, &stdout, &stderr); code != 1 {
+		t.Fatalf("exit code = %d, want 1; stderr %q", code, stderr.String())
 	}
+}
+
+func TestRunTwoRepos(t *testing.T) {
+	api, agent := testRepo(t)
+	web := testrepo.New(t)
+	web.Write("index.html", "<p>hi</p>\n")
+	web.Add("index.html")
+	web.Commit("init")
+	// The linked worktree is in api's repo, so it is skipped.
+	rn := startRun(t, "--no-open", "--port", "0", "--name", "acme", api.Path(), web.Path(), agent.Path())
+	if !strings.Contains(rn.errOut.String(), "skipping "+agent.Path()) {
+		t.Errorf("stderr %q does not report skipping the duplicate", rn.errOut.String())
+	}
+	if !strings.Contains(rn.out.String(), "serving acme (") {
+		t.Errorf("stdout %q does not name the project", rn.out.String())
+	}
+	m := newMirror(t, dialWS(t, rn))
+	apiKey, webKey := filepath.Base(api.Path()), filepath.Base(web.Path())
+	if _, ok := m.base[apiKey+"/README.md"]; !ok {
+		t.Fatalf("base %v lacks %s/README.md", m.base, apiKey)
+	}
+	if _, ok := m.base[webKey+"/index.html"]; !ok {
+		t.Fatalf("base %v lacks %s/index.html", m.base, webKey)
+	}
+	if len(m.worktrees) != 3 {
+		t.Fatalf("snapshot has %d worktrees, want 3", len(m.worktrees))
+	}
+	webID := model.IDFor(web.Path())
+	web.Write("app.js", "x\n")
+	m.await("app.js uncommitted in the second repo", func() bool {
+		e, ok := m.overlays[webID][webKey+"/app.js"]
+		return ok && e.Kind == model.Added &&
+			m.hasActivity(func(a model.Activity) bool { return a.Worktree == webID && a.Path == webKey+"/app.js" })
+	})
+}
+
+// dialWS opens rn's WebSocket the way the browser does: ?t= → cookie → /ws.
+func dialWS(t *testing.T, rn *running) *websocket.Conn {
+	t.Helper()
+	u, err := url.Parse(rn.url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jar, _ := cookiejar.New(nil)
+	resp, err := (&http.Client{Jar: jar}).Get(rn.url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	hdr := http.Header{"Origin": {"http://" + u.Host}}
+	for _, c := range jar.Cookies(&url.URL{Scheme: "http", Host: u.Host, Path: "/"}) {
+		hdr.Add("Cookie", c.Name+"="+c.Value)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws://"+u.Host+"/ws", &websocket.DialOptions{HTTPHeader: hdr}) //nolint:bodyclose // coder/websocket owns resp.Body
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.CloseNow() })
+	return conn
 }
 
 func TestRunNotARepo(t *testing.T) {
@@ -393,6 +456,7 @@ type mirror struct {
 	base      map[string]int64
 	overlays  map[model.WorktreeID]map[string]model.ChangeEntry
 	activity  []model.Activity
+	seq       uint64
 }
 
 // newMirror reads the snapshot that opens every connection.
@@ -443,7 +507,7 @@ func (m *mirror) read(timeout time.Duration) string {
 		if err := json.Unmarshal(data, &s); err != nil {
 			m.t.Fatal(err)
 		}
-		m.worktrees, m.activity = s.Worktrees, s.Activity
+		m.worktrees, m.activity, m.seq = s.Worktrees, s.Activity, s.Seq
 		m.base = map[string]int64{}
 		for _, f := range s.Tree {
 			m.base[f.Path] = f.Size
@@ -460,6 +524,10 @@ func (m *mirror) read(timeout time.Duration) string {
 		if err := json.Unmarshal(data, &p); err != nil {
 			m.t.Fatal(err)
 		}
+		if p.Seq != m.seq+1 {
+			m.t.Fatalf("patch seq %d after %d: the browser would resync", p.Seq, m.seq)
+		}
+		m.seq = p.Seq
 		if p.Worktrees != nil {
 			m.worktrees = p.Worktrees
 		}

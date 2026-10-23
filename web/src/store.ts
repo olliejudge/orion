@@ -13,6 +13,8 @@ export interface RepoState {
   activity: Activity[]; // newest LAST, ≤200
   /** The serving orion's version, from the last snapshot. */
   version?: string;
+  /** Every repo, when several are served (see `Snapshot.repos`). */
+  repos?: RepoInfo[];
 }
 
 export interface Change {
@@ -81,6 +83,7 @@ function fromSnapshot(s: Snapshot): RepoState {
     overlays,
     activity: (s.activity ?? []).slice(-ACTIVITY_LIMIT),
     ...(s.version ? { version: s.version } : {}),
+    ...(s.repos ? { repos: s.repos.map((r) => ({ ...r })) } : {}),
   };
 }
 
@@ -108,8 +111,9 @@ function applyPatch(prev: RepoState, p: Patch): { state: RepoState; merged: stri
     }
     next.tree = tree;
     next.touched = touched;
-    next.repo = { ...prev.repo, baseSha: p.base.sha };
+    if (!p.repos) next.repo = { ...prev.repo, baseSha: p.base.sha };
   }
+  if (p.repos) next.repos = p.repos.map((r) => ({ ...r }));
 
   // Entries removed by this patch, remembered with their previous stage.
   // Only worktrees still present after the patch contribute: the server

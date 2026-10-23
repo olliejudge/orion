@@ -67,12 +67,15 @@ type Worktree struct {
 	Head        string     `json:"head"`
 	IsMain      bool       `json:"isMain"`
 	Locked      bool       `json:"locked"`
-	ColorIndex  int        `json:"colorIndex"` // assigned by Store; -1 = not yet active
-	HeadSubject string     `json:"-"`          // filled by repo; used for commit activity
+	ColorIndex  int        `json:"colorIndex"`     // assigned by Store; -1 = not yet active
+	Repo        string     `json:"repo,omitempty"` // the repo's key when several repos are served
+	HeadSubject string     `json:"-"`              // filled by repo; used for commit activity
 }
 
-// RepoInfo names the repo and its base branch.
+// RepoInfo names the repo and its base branch. Key is set only in a
+// multi-repo Snapshot.Repos: the repo's path prefix in the combined tree.
 type RepoInfo struct {
+	Key     string `json:"key,omitempty"`
 	Name    string `json:"name"`
 	Base    string `json:"base"`
 	BaseSha string `json:"baseSha"`
@@ -123,6 +126,9 @@ type Snapshot struct {
 	// Version is the serving orion's version, set by the server when it sends
 	// a snapshot (the engine leaves it empty); the UI shows it in the key.
 	Version string `json:"version,omitempty"`
+	// Repos lists every repo when several are served (see repo.Workspace);
+	// Repo then names the project and has no base.
+	Repos []RepoInfo `json:"repos,omitempty"`
 }
 
 // Patch is an incremental update; absent fields mean "unchanged".
@@ -133,4 +139,7 @@ type Patch struct {
 	Base      *BasePatch                  `json:"base,omitempty"`
 	Overlays  map[WorktreeID]OverlayPatch `json:"overlays,omitempty"`
 	Activity  []Activity                  `json:"activity,omitempty"`
+	// Repos is the full repo list, sent by a multi-repo Workspace whenever a
+	// repo's base moves (Base.Sha is then empty).
+	Repos []RepoInfo `json:"repos,omitempty"`
 }

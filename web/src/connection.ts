@@ -30,7 +30,9 @@ export function wsUrlFromLocation(loc: Pick<Location, "protocol" | "host" | "sea
  * the same repo. The main worktree's path is stable across restarts of the
  * same repo; `repo.name` is a fallback for the case no worktree is main.
  */
-export function repoIdentity(s: Pick<Snapshot, "repo" | "worktrees">): string {
+export function repoIdentity(s: Pick<Snapshot, "repo" | "worktrees" | "repos">): string {
+  // Several repos: every main worktree's path, in order.
+  if (s.repos) return s.worktrees.filter((w) => w.isMain).map((w) => w.path).join("\n") || s.repo.name;
   return s.worktrees.find((w) => w.isMain)?.path ?? s.repo.name;
 }
 
