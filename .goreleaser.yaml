@@ -120,9 +120,12 @@ release:
   prerelease: auto
 
 # GoReleaser deprecated `brews` (formulae) in v2.10 in favour of casks for
-# pre-built binaries. `brew install olliejudge/tap/orion` resolves the cask.
+# pre-built binaries. The cask is `orion-cli`, not `orion`: Homebrew's own
+# `orion` cask is the Kagi Orion browser, so a bare `orion` would install the
+# browser instead. The binary is still `orion`. The tap's cask_renames.json
+# migrates installs of the old `orion` cask.
 homebrew_casks:
-  - name: orion
+  - name: orion-cli
     ids: [orion]
     binaries: [orion]
     homepage: https://github.com/olliejudge/orion
