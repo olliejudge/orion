@@ -63,12 +63,13 @@ orion
 Orion prints a URL like `http://127.0.0.1:7070/?t=…`, opens it in your browser and keeps the map live until you press Ctrl-C. The URL stays the same from run to run, so you can bookmark it (or, once it has loaded, just `http://127.0.0.1:7070/`, as long as Orion gets the same port). An open tab reconnects by itself when Orion restarts, and reloads if Orion was upgraded.
 
 ```
-orion [path] [--port N] [--no-open] [--base BRANCH] [--allow-host HOST]... [--dev] [--version]
+orion [path...] [--name NAME] [--port N] [--no-open] [--base BRANCH] [--allow-host HOST]... [--dev] [--version]
 ```
 
 | Flag | Meaning |
 |---|---|
-| `path` | Any directory inside the repo, including inside a linked worktree. Default: the current directory. |
+| `path` | Any directory inside the repo, including inside a linked worktree. Default: the current directory. Give several to map several repos together (see below). |
+| `--name NAME` | With several repos, the project name shown in the key. Default: the repo folders' common prefix (`acme-api` and `acme-web` give `acme`), else their names joined with ` + `. |
 | `--port N` | Port to listen on. Default 7070; if it is taken, the next free port is used. With a socket from systemd, it must be that socket's port (see below). |
 | `--no-open` | Print the URL but don't open a browser. |
 | `--base BRANCH` | Branch to compare against. Default: `origin`'s default branch, then `main`, then `master`, then the main worktree's current branch. |
@@ -77,6 +78,16 @@ orion [path] [--port N] [--no-open] [--base BRANCH] [--allow-host HOST]... [--de
 | `--version` | Print the version and exit. |
 
 `orion -h` prints the usage.
+
+### Several repos as one map
+
+A project split across sibling repos can be watched in one map:
+
+```sh
+orion ~/acme-api ~/acme-web ~/acme-game
+```
+
+Each repo becomes a top-level folder of the map, with all of its worktrees, so every view, zoom and the folder filter work per repo. The key lists the worktrees under one heading per repo, worktrees in different repos never share a colour, and each repo is compared with its own base branch (`--base` applies to all of them). A path inside a repo that is already listed, such as one of its linked worktrees, is skipped with a warning.
 
 ### Under systemd socket activation
 
