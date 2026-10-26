@@ -46,8 +46,12 @@ With `prefers-reduced-motion` set, bubbles and the camera jump instead of animat
 macOS and Linux, with `git` 2.30 or newer:
 
 ```sh
+brew tap olliejudge/tap
+brew trust --cask olliejudge/tap/orion-cli
 brew install --cask olliejudge/tap/orion-cli
 ```
+
+The trust step authorizes only this cask, on Homebrew versions that check tap trust; older versions without `brew trust` can skip it.
 
 The cask is `orion-cli`, and the command it installs is `orion`. Always use the full name: Homebrew's own `orion` cask is the Kagi Orion browser, so a bare `brew install orion` or `brew upgrade orion` installs the browser. To upgrade, run `brew upgrade olliejudge/tap/orion-cli`.
 
